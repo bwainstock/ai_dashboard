@@ -1,0 +1,3 @@
+# Use a Cloudflare-backed TRMNL BYOS architecture
+
+The dashboard will keep the open TRMNL firmware on the Seeed 7.5-inch OG DIY Kit and use a custom BYOS-compatible Cloudflare Worker rather than TRMNL's paid hosted service, Home Assistant, or fully custom device firmware. The Worker will aggregate household data, render cached display images on a sparse schedule, and serve them through the TRMNL device protocol; D1 will hold encrypted credentials, configuration, and normalized snapshots, while private R2 will hold immutable display images. This preserves the firmware's provisioning, sleep, update, and image-fetch behavior while fitting the no-BYOD-license, low-maintenance, and Cloudflare free-tier constraints.
