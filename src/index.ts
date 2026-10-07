@@ -1,4 +1,9 @@
 import puppeteer from "@cloudflare/puppeteer";
+import {
+  authorizeAdministration,
+  handleAuthorizedAdministration,
+  isAdministrationHost
+} from "./admin";
 import { dailyBriefHtml } from "./daily-brief";
 import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
 import { lunchViewHtml, type LunchViewModel } from "./lunch-view";
@@ -140,6 +145,12 @@ async function display(request: Request, env: Env): Promise<Response> {
   }
 
   const deviceId = request.headers.get("ID")!.trim().toUpperCase();
+  await env.DB.prepare(
+    `UPDATE devices SET last_check_in_at = CURRENT_TIMESTAMP,
+       updated_at = CURRENT_TIMESTAMP WHERE device_id = ?`
+  )
+    .bind(deviceId)
+    .run();
   const device = await env.DB.prepare(
     "SELECT view_cursor FROM devices WHERE device_id = ?"
   )
@@ -235,6 +246,9 @@ function readPngDimensions(bytes: Uint8Array): [number, number] | null {
 }
 
 function isAdministrator(request: Request, env: Env): boolean {
+  if (request.headers.get("X-Administration-Role") === "administrator") {
+    return true;
+  }
   const authorization = request.headers.get("Authorization");
   return (
     request.headers.get("X-Admin-Token") === env.GENERATION_SECRET ||
@@ -463,14 +477,36 @@ async function accessTokenForAccount(
     if (!account.encrypted_refresh_token) {
       throw new Error("Calendar account is disconnected");
     }
-    return refreshCalendarAccessToken({
-      clientId: secrets.clientId,
-      clientSecret: secrets.clientSecret,
-      refreshToken: await decryptRefreshToken(
-        account.encrypted_refresh_token,
-        secrets.encryptionKey
-      )
-    });
+    try {
+      return await refreshCalendarAccessToken({
+        clientId: secrets.clientId,
+        clientSecret: secrets.clientSecret,
+        refreshToken: await decryptRefreshToken(
+          account.encrypted_refresh_token,
+          secrets.encryptionKey
+        )
+      });
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "CALENDAR_OAUTH_REVOKED"
+      ) {
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE calendar_accounts
+             SET oauth_status = 'revoked', updated_at = CURRENT_TIMESTAMP
+             WHERE account_id = ?`
+          ).bind(account.account_id),
+          env.DB.prepare(
+            `INSERT INTO operational_incidents (error_code)
+             VALUES ('CALENDAR_OAUTH_REVOKED')`
+          )
+        ]);
+      }
+      throw error;
+    }
   }
 
 async function discoverCalendars(
@@ -780,7 +816,7 @@ async function publishGeneration(env: Env, publication: Publication) {
     ).bind(publication.generationId, publication.generatedAt),
     env.DB.prepare(
       `UPDATE scheduled_generation_slots
-       SET status = 'published', completed_at = ?
+       SET status = 'published', completed_at = ?, retry_at = NULL
        WHERE slot_key = ?`
     ).bind(publication.generatedAt, publication.slotKey)
   ]);
@@ -829,7 +865,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         const result = await env.DB.prepare(
           `UPDATE scheduled_generation_slots
            SET status = 'running', retry_claimed_at = ?, attempt_count = 2,
-               completed_at = NULL
+               completed_at = NULL, retry_at = NULL
            WHERE slot_key = ? AND status = 'failed'
              AND retry_claimed_at IS NULL AND attempt_count = 1`
         )
@@ -860,6 +896,13 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         )
           .bind(snapshot.observedAt, fetchedAt, JSON.stringify(snapshot))
           .run();
+        await env.DB.prepare(
+          `UPDATE source_status SET state = 'fresh', last_success_at = ?,
+             error_code = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE source = 'weather'`
+        )
+          .bind(fetchedAt)
+          .run();
       },
       async fetchLunch() {
         if (!env.MEALVIEWER_MENU_URL) {
@@ -888,6 +931,13 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         )
           .bind(fetchedAt, JSON.stringify(snapshot))
           .run();
+        await env.DB.prepare(
+          `UPDATE source_status SET state = 'fresh', last_success_at = ?,
+             error_code = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE source = 'lunch'`
+        )
+          .bind(fetchedAt)
+          .run();
       },
       async loadCachedLunchIcon(entreeKey) {
         const row = await env.DB.prepare(
@@ -913,21 +963,53 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
       classifyLunchWithAi:
         env.AI && env.LUNCH_AI_MODEL
           ? async ({ entree, allowedIcons }) => {
-              const result = await env.AI!.run(env.LUNCH_AI_MODEL!, {
-                messages: [
-                  {
-                    role: "system",
-                    content:
-                      "Return exactly one allowed lunch icon token and nothing else. If uncertain, return generic."
-                  },
-                  {
-                    role: "user",
-                    content: `Allowed: ${allowedIcons.join(",")}\nEntree: ${entree}`
-                  }
-                ],
-                max_tokens: 5,
-                temperature: 0
-              });
+              let result: unknown;
+              try {
+                result = await env.AI!.run(env.LUNCH_AI_MODEL!, {
+                  messages: [
+                    {
+                      role: "system",
+                      content:
+                        "Return exactly one allowed lunch icon token and nothing else. If uncertain, return generic."
+                    },
+                    {
+                      role: "user",
+                      content: `Allowed: ${allowedIcons.join(",")}\nEntree: ${entree}`
+                    }
+                  ],
+                  max_tokens: 5,
+                  temperature: 0
+                });
+                await env.DB.prepare(
+                  `UPDATE operational_status SET status_value = 'available',
+                     updated_at = CURRENT_TIMESTAMP
+                   WHERE status_key = 'ai_quota'`
+                ).run();
+              } catch (error) {
+                const quotaExhausted =
+                  error !== null &&
+                  typeof error === "object" &&
+                  (("status" in error && error.status === 429) ||
+                    ("code" in error &&
+                      typeof error.code === "string" &&
+                      error.code.toLowerCase().includes("quota")));
+                if (quotaExhausted) {
+                  await env.DB.batch([
+                    env.DB.prepare(
+                      `UPDATE operational_status
+                       SET status_value = 'exhausted',
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE status_key = 'ai_quota'`
+                    ),
+                    env.DB.prepare(
+                      `INSERT INTO operational_incidents
+                         (error_code, occurred_at)
+                       VALUES ('AI_QUOTA_EXHAUSTED', ?)`
+                    ).bind(now.toISOString())
+                  ]);
+                }
+                throw error;
+              }
               return result &&
                 typeof result === "object" &&
                 "response" in result
@@ -956,41 +1038,50 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         )
           .bind(fetchedAt, JSON.stringify(events))
           .run();
+        await env.DB.prepare(
+          `UPDATE source_status SET state = 'fresh', last_success_at = ?,
+             error_code = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE source = 'calendar'`
+        )
+          .bind(fetchedAt)
+          .run();
       },
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       renderCalendarView: (model) => renderCalendarView(env, model),
       renderLunchView: (model) => renderLunchView(env, model),
       publish: (publication) => publishGeneration(env, publication),
       async recordSourceFailure(slotKey, source, code, message) {
-        await env.DB.prepare(
-          `INSERT INTO generation_source_failures
-             (slot_key, source, error_code, error_message, occurred_at)
-           VALUES (?, ?, ?, ?, ?)`
-        )
-          .bind(
-            slotKey,
-            source,
-            code,
-            message.slice(0, 500),
-            now.toISOString()
-          )
-          .run();
+        void message;
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO generation_source_failures
+               (slot_key, source, error_code, error_message, occurred_at)
+             VALUES (?, ?, ?, ?, ?)`
+          ).bind(slotKey, source, code, code, now.toISOString()),
+          env.DB.prepare(
+            `UPDATE source_status SET state = 'stale', error_code = ?,
+               updated_at = CURRENT_TIMESTAMP WHERE source = ?`
+          ).bind(code, source),
+          env.DB.prepare(
+            `INSERT INTO operational_incidents (error_code, occurred_at)
+             VALUES (?, ?)`
+          ).bind(code, now.toISOString())
+        ]);
       },
       async failGeneration(slotKey, code, message, retryAt) {
-        await env.DB.prepare(
-          `UPDATE scheduled_generation_slots
-           SET status = 'failed', completed_at = ?, error_code = ?,
-               error_message = ?, retry_at = ?
-           WHERE slot_key = ?`
-        )
-          .bind(
-            now.toISOString(),
-            code,
-            message.slice(0, 500),
-            retryAt,
-            slotKey
-          )
-          .run();
+        void message;
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE scheduled_generation_slots
+             SET status = 'failed', completed_at = ?, error_code = ?,
+                 error_message = ?, retry_at = ?
+             WHERE slot_key = ?`
+          ).bind(now.toISOString(), code, code, retryAt, slotKey),
+          env.DB.prepare(
+            `INSERT INTO operational_incidents (error_code, occurred_at)
+             VALUES (?, ?)`
+          ).bind(code, now.toISOString())
+        ]);
       }
     }
   );
@@ -999,6 +1090,30 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/admin")) {
+      if (!isAdministrationHost(request, env)) {
+        return json({ error: "Not found" }, 404);
+      }
+      const identity = await authorizeAdministration(request, env);
+      if (identity instanceof Response) return identity;
+      if (
+        url.pathname === "/admin" ||
+        url.pathname === "/admin/app.js" ||
+        url.pathname === "/admin/configuration" ||
+        url.pathname === "/admin/status"
+      ) {
+        return handleAuthorizedAdministration(request, env, identity);
+      }
+      if (identity.role !== "administrator") {
+        return json({ error: "Administrator role required" }, 403);
+      }
+      const headers = new Headers(request.headers);
+      headers.set("X-Administration-Role", identity.role);
+      request = new Request(request, { headers });
+    }
+    if (!url.pathname.startsWith("/admin") && isAdministrationHost(request, env)) {
+      return json({ error: "Not found" }, 404);
+    }
     if (request.method === "GET" && url.pathname === "/api/setup") {
       return setup(request, env);
     }

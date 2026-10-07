@@ -1,7 +1,7 @@
 name = "family-dashboard-device"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
-workers_dev = true
+workers_dev = false
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -32,6 +32,8 @@ binding = "AI"
 
 # Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and CALENDAR_TOKEN_ENCRYPTION_KEY
 # with `wrangler secret put`; never place OAuth credentials in this file.
+# Route ADMIN_ORIGIN through a Cloudflare Access application. Route
+# DEVICE_ORIGIN separately without an interactive Access policy.
 
 [observability]
 enabled = true

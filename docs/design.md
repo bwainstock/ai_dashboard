@@ -198,6 +198,15 @@ Deterministic exact/keyword mappings and cached decisions run first. Workers AI 
 
 The protected status page shows device check-in, last successful render, per-source freshness, OAuth health, Workers AI quota state, and fixed error codes. It never displays raw email content, tokens, or Gmail prompts.
 
+The administration hostname is enforced by the Worker as well as by routing.
+Cloudflare Access authenticates the browser identity, while D1 maps that
+identity to the administrator or reviewer role. Device credentials are never
+accepted at this boundary. Operational incidents retain fixed codes and
+timestamps only; exception text and upstream or household content are omitted.
+Status reads the atomic current-generation pointer rather than inferring
+success from individual image rows, and exposes retry attempts without
+displaying stored diagnostic text.
+
 ## Authentication and roles
 
 Two Google consumer accounts authorize read-only Calendar access. Phase 2 adds `gmail.readonly` for both accounts.
