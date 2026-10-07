@@ -17,6 +17,12 @@ class TestDatabase {
   publishedGeneration:
     | { filename: string; objectKey: string; byteSize: number }
     | undefined;
+  configuration = {
+    latitude: 37.3382,
+    longitude: -121.8863,
+    timezone: "America/Los_Angeles",
+    slotsJson: '["06:30","10:30","15:00","19:00"]'
+  };
 
   prepare(query: string) {
     let parameters: unknown[] = [];
@@ -57,6 +63,14 @@ class TestDatabase {
               }
             : null) as T | null;
         }
+        if (query.includes("FROM dashboard_configuration")) {
+          return {
+            latitude: this.configuration.latitude,
+            longitude: this.configuration.longitude,
+            timezone: this.configuration.timezone,
+            slots_json: this.configuration.slotsJson
+          } as T;
+        }
         return null;
       },
       run: async () => {
@@ -71,6 +85,12 @@ class TestDatabase {
             objectKey: String(objectKey),
             byteSize: Number(byteSize)
           };
+        }
+        if (query.includes("UPDATE dashboard_configuration")) {
+          const [latitude, longitude, slotsJson] = parameters();
+          this.configuration.latitude = Number(latitude);
+          this.configuration.longitude = Number(longitude);
+          this.configuration.slotsJson = String(slotsJson);
         }
         return { success: true };
       }
@@ -182,7 +202,7 @@ describe("TRMNL BYOS device service", () => {
       image_url:
         "https://dashboard-device.example.com/images/daily-brief-20261007T170000Z.png",
       filename: "daily-brief-20261007T170000Z.png",
-      refresh_rate: 900,
+      refresh_rate: expect.any(Number),
       reset_firmware: false,
       update_firmware: false,
       firmware_url: "",
@@ -200,6 +220,40 @@ describe("TRMNL BYOS device service", () => {
     );
 
     expect(response.status).toBe(401);
+  });
+
+  test("display schedules the next wake for the next Los Angeles slot", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-07T17:30:00Z"));
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/daily-brief.png",
+      byteSize: 12_345
+    };
+    const env = testEnv(database);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: "AA:BB:CC:DD:EE:FF" }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: {
+          ID: "AA:BB:CC:DD:EE:FF",
+          "Access-Token": token
+        }
+      }),
+      env
+    );
+
+    expect((await response.json<{ refresh_rate: number }>()).refresh_rate).toBe(
+      16_200
+    );
+    vi.useRealTimers();
   });
 
   test("display rejects an invalid device token", async () => {
@@ -336,5 +390,50 @@ describe("TRMNL BYOS device service", () => {
         decoded.data[offset + 3] === 255;
     }
     expect(isMonochrome).toBe(true);
+  });
+
+  test("an administrator can manage weather coordinates without changing deployment secrets", async () => {
+    const database = new TestDatabase();
+    const env = testEnv(database);
+
+    const update = await worker.fetch(
+      new Request("https://device.test/admin/weather-configuration", {
+        method: "PUT",
+        headers: {
+          Authorization: "******",
+          "Content-Type": "application/json",
+          "X-Admin-Token": env.GENERATION_SECRET
+        },
+        body: JSON.stringify({
+          latitude: 37.7749,
+          longitude: -122.4194,
+          slots: ["06:30", "10:30", "15:00", "19:00"]
+        })
+      }),
+      env
+    );
+    const unauthorizedRead = await worker.fetch(
+      new Request("https://device.test/admin/weather-configuration", {
+        headers: { Authorization: "******" }
+      }),
+      env
+    );
+
+    const authenticatedRead = await worker.fetch(
+      new Request("https://device.test/admin/weather-configuration", {
+        headers: { "X-Admin-Token": env.GENERATION_SECRET }
+      }),
+      env
+    );
+
+    expect(update.status).toBe(200);
+    expect(unauthorizedRead.status).toBe(401);
+    expect(authenticatedRead.status).toBe(200);
+    expect(await authenticatedRead.json()).toEqual({
+      latitude: 37.7749,
+      longitude: -122.4194,
+      timezone: "America/Los_Angeles",
+      slots: ["06:30", "10:30", "15:00", "19:00"]
+    });
   });
 });
