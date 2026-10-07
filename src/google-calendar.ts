@@ -155,7 +155,24 @@ export async function refreshCalendarAccessToken(
       code: "CALENDAR_OAUTH_REVOKED"
     });
   }
+
   return result.access_token;
+}
+
+export async function revokeGoogleAccess(
+  refreshToken: string,
+  request: Fetch = fetch
+): Promise<void> {
+  const response = await request("https://oauth2.googleapis.com/revoke", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: refreshToken }).toString()
+  });
+  if (!response.ok && response.status !== 400) {
+    throw Object.assign(new Error("Google access revocation failed"), {
+      code: "GOOGLE_REVOCATION_FAILED"
+    });
+  }
 }
 
 export async function listGoogleCalendars(

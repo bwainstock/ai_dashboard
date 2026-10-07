@@ -1,7 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import worker, { type Env } from "../src/index";
 import { noticesViewHtml } from "../src/notices-view";
 import type { DailyBriefNotice } from "../src/generation";
+import { encryptRefreshToken } from "../src/calendar-oauth";
 
 type Role = "administrator" | "reviewer";
 
@@ -37,6 +38,8 @@ class AdminDatabase {
     }
   ];
   publishedNotices: Array<Record<string, unknown>> = [];
+  encryptedRefreshTokens = new Map<string, string>();
+  deletedAccountArtifacts: string[] = [];
 
   prepare(query: string) {
     let parameters: unknown[] = [];
@@ -66,6 +69,19 @@ class AdminDatabase {
             generation_id: "generation-20261007T150000Z",
             published_at: "2026-10-07T15:00:00.000Z"
           } as T;
+        }
+        if (
+          query.includes("encrypted_refresh_token") &&
+          query.includes("WHERE account_id = ?")
+        ) {
+          const token = this.encryptedRefreshTokens.get(String(parameters[0]));
+          return (token
+            ? {
+                account_id: parameters[0],
+                encrypted_refresh_token: token,
+                oauth_status: "connected"
+              }
+            : null) as T | null;
         }
         if (query.includes("FROM scheduled_generation_slots")) {
           return {
@@ -189,6 +205,29 @@ class AdminDatabase {
           this.protectedReviews = this.protectedReviews.filter(
             ({ id }) => id !== Number(parameters[0])
           );
+          this.deletedAccountArtifacts.push("gmail_protected_reviews");
+        }
+        if (query.includes("DELETE FROM selected_calendars")) {
+          this.deletedAccountArtifacts.push("selected_calendars");
+        }
+        if (query.includes("DELETE FROM calendar_snapshots")) {
+          this.deletedAccountArtifacts.push("calendar_snapshots");
+        }
+        if (query.includes("DELETE FROM household_notices")) {
+          this.deletedAccountArtifacts.push("household_notices");
+        }
+        if (query.includes("DELETE FROM gmail_review_records")) {
+          this.deletedAccountArtifacts.push("gmail_review_records");
+        }
+        if (query.includes("DELETE FROM render_generations")) {
+          this.deletedAccountArtifacts.push("render_generations");
+        }
+        if (
+          query.includes("UPDATE calendar_accounts") &&
+          query.includes("encrypted_refresh_token = NULL")
+        ) {
+          this.encryptedRefreshTokens.delete(String(parameters[0]));
+          this.deletedAccountArtifacts.push("calendar_account_credentials");
         }
         return { success: true };
       }
@@ -205,14 +244,18 @@ class AdminDatabase {
   }
 }
 
-function env(database = new AdminDatabase()): Env {
+function env(
+  database = new AdminDatabase(),
+  overrides: Partial<Env> = {}
+): Env {
   return {
     DB: database as unknown as D1Database,
     IMAGES: {} as R2Bucket,
     BROWSER: {} as Fetcher,
     GENERATION_SECRET: "generation-secret",
     DEVICE_ORIGIN: "https://dashboard-device.example.com",
-    ADMIN_ORIGIN: "https://dashboard-admin.example.com"
+    ADMIN_ORIGIN: "https://dashboard-admin.example.com",
+    ...overrides
   };
 }
 
@@ -235,6 +278,16 @@ describe("Access-protected browser administration", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(await response.text()).toContain("Configuration");
+    await expect(
+      (
+        await worker.fetch(
+          new Request("https://dashboard-admin.example.com/admin", {
+            headers: accessHeaders("admin@example.com")
+          }),
+          env()
+        )
+      ).text()
+    ).resolves.toContain("Disconnect Mom Google");
     expect(
       (
         await worker.fetch(
@@ -494,6 +547,62 @@ describe("Access-protected browser administration", () => {
 
     expect(response.status).toBe(200);
     expect(database.protectedReviews).toEqual([]);
+  });
+
+  test("administrator disconnect revokes Google and removes retained account data and images", async () => {
+    const database = new AdminDatabase();
+    const encryptionKey = btoa("0123456789abcdef0123456789abcdef");
+    database.encryptedRefreshTokens.set(
+      "mom",
+      await encryptRefreshToken("refresh-token", encryptionKey)
+    );
+    const imageKeys = ["generations/one.png", "generations/two.png"];
+    const imageBucket = {
+      list: vi.fn().mockResolvedValue({
+        objects: imageKeys.map((key) => ({ key })),
+        truncated: false
+      }),
+      delete: vi.fn().mockResolvedValue(undefined)
+    };
+    const revoke = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    const response = await worker.fetch(
+      new Request(
+        "https://dashboard-admin.example.com/admin/gmail-accounts/mom/disconnect",
+        {
+          method: "POST",
+          headers: accessHeaders("admin@example.com")
+        }
+      ),
+      env(database, {
+        CALENDAR_TOKEN_ENCRYPTION_KEY: encryptionKey,
+        IMAGES: imageBucket as unknown as R2Bucket
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(revoke).toHaveBeenCalledWith(
+      "https://oauth2.googleapis.com/revoke",
+      expect.objectContaining({
+        method: "POST",
+        body: "token=refresh-token"
+      })
+    );
+    expect(imageBucket.delete).toHaveBeenCalledWith(imageKeys);
+    expect(database.deletedAccountArtifacts.sort()).toEqual(
+      [
+        "calendar_account_credentials",
+        "calendar_snapshots",
+        "gmail_protected_reviews",
+        "gmail_review_records",
+        "household_notices",
+        "render_generations",
+        "selected_calendars"
+      ].sort()
+    );
+    revoke.mockRestore();
   });
 
   test("administrators can update weather, slots, calendars, and household labels", async () => {
