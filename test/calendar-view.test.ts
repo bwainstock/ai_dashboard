@@ -60,6 +60,18 @@ describe("Calendar View", () => {
     expect(html).toContain('data-missing-state>No events');
   });
 
+  test("distinguishes an unavailable source from an empty valid calendar", () => {
+    const html = calendarViewHtml({
+      calendar: [],
+      timezone: "America/Los_Angeles",
+      unavailable: true,
+      updatedAt: "2026-10-07T17:30:00.000Z"
+    });
+
+    expect(html).toContain("Calendar unavailable");
+    expect(html).not.toContain(">No events<");
+  });
+
   test("shows twelve events and reports overflow without leaking unsafe fields", () => {
     const calendar = Array.from({ length: 14 }, (_, index) =>
       event(

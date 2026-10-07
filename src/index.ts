@@ -47,6 +47,7 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   CALENDAR_TOKEN_ENCRYPTION_KEY?: string;
   MAX_IMAGE_BYTES?: string;
+  GENERATION_RETRY_MINUTES?: string;
   MEALVIEWER_MENU_URL?: string;
   AI?: {
     run(model: string, input: unknown): Promise<unknown>;
@@ -159,9 +160,10 @@ async function display(request: Request, env: Env): Promise<Response> {
 
   const generation = await env.DB.prepare(
     `SELECT filename, object_key, byte_size
-     FROM render_generations
-     WHERE view_type = ? AND published_at IS NOT NULL
-     ORDER BY published_at DESC, id DESC
+     FROM current_render_generation AS current_pointer
+     JOIN render_generations AS generation
+       ON generation.generation_id = current_pointer.generation_id
+     WHERE current_pointer.id = 1 AND generation.view_type = ?
      LIMIT 1`
   )
     .bind(viewType)
@@ -743,21 +745,39 @@ async function publishGeneration(env: Env, publication: Publication) {
     )
   );
   await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO render_generation_sets
+         (generation_id, slot_key, generated_at, published_at)
+       VALUES (?, ?, ?, ?)`
+    ).bind(
+      publication.generationId,
+      publication.slotKey,
+      publication.generatedAt,
+      publication.generatedAt
+    ),
     ...publication.views.map((view) =>
       env.DB.prepare(
         `INSERT INTO render_generations
            (filename, object_key, byte_size, width, height, slot_key,
-            view_type, published_at)
-         VALUES (?, ?, ?, 800, 480, ?, ?, ?)`
+            view_type, published_at, generation_id)
+         VALUES (?, ?, ?, 800, 480, ?, ?, ?, ?)`
       ).bind(
         view.filename,
         view.objectKey,
         view.image.byteLength,
         publication.slotKey,
         view.viewType,
-        publication.generatedAt
+        publication.generatedAt,
+        publication.generationId
       )
     ),
+    env.DB.prepare(
+      `INSERT INTO current_render_generation (id, generation_id, updated_at)
+       VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         generation_id = excluded.generation_id,
+         updated_at = excluded.updated_at`
+    ).bind(publication.generationId, publication.generatedAt),
     env.DB.prepare(
       `UPDATE scheduled_generation_slots
        SET status = 'published', completed_at = ?
@@ -769,6 +789,7 @@ async function publishGeneration(env: Env, publication: Publication) {
 async function runScheduled(env: Env, now: Date): Promise<void> {
   const configuration = await loadConfiguration(env);
   const configuredMaximum = Number(env.MAX_IMAGE_BYTES);
+  const configuredRetryDelay = Number(env.GENERATION_RETRY_MINUTES);
   await runScheduledWeatherGeneration(
     {
       now,
@@ -776,7 +797,11 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
       maximumImageBytes:
         Number.isFinite(configuredMaximum) && configuredMaximum > 0
           ? configuredMaximum
-          : 1_000_000
+          : 1_000_000,
+      retryDelayMinutes:
+        Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
+          ? configuredRetryDelay
+          : 15
     },
     {
       async claimSlot(slotKey) {
@@ -789,14 +814,42 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .run();
         return (result.meta.changes ?? 0) > 0;
       },
+      async claimRetry(nowIso) {
+        const candidate = await env.DB.prepare(
+          `SELECT slot_key FROM scheduled_generation_slots
+           WHERE status = 'failed' AND retry_at IS NOT NULL
+             AND retry_at <= ? AND retry_claimed_at IS NULL
+             AND attempt_count = 1
+           ORDER BY retry_at, started_at
+           LIMIT 1`
+        )
+          .bind(nowIso)
+          .first<{ slot_key: string }>();
+        if (!candidate) return null;
+        const result = await env.DB.prepare(
+          `UPDATE scheduled_generation_slots
+           SET status = 'running', retry_claimed_at = ?, attempt_count = 2,
+               completed_at = NULL
+           WHERE slot_key = ? AND status = 'failed'
+             AND retry_claimed_at IS NULL AND attempt_count = 1`
+        )
+          .bind(nowIso, candidate.slot_key)
+          .run();
+        return (result.meta.changes ?? 0) > 0
+          ? { slotKey: candidate.slot_key }
+          : null;
+      },
       fetchWeather: (location) => fetchWeather(location),
       async loadLatestWeather() {
         const row = await env.DB.prepare(
-          `SELECT snapshot_json FROM weather_snapshots
+          `SELECT snapshot_json, fetched_at FROM weather_snapshots
            ORDER BY fetched_at DESC, id DESC LIMIT 1`
-        ).first<{ snapshot_json: string }>();
+        ).first<{ snapshot_json: string; fetched_at: string }>();
         return row
-          ? (JSON.parse(row.snapshot_json) as WeatherSnapshot)
+          ? {
+              snapshot: JSON.parse(row.snapshot_json) as WeatherSnapshot,
+              fetchedAt: row.fetched_at
+            }
           : null;
       },
       async saveWeather(snapshot, fetchedAt) {
@@ -818,10 +871,15 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
       },
       async loadLatestLunch() {
         const row = await env.DB.prepare(
-          `SELECT snapshot_json FROM lunch_snapshots
+          `SELECT snapshot_json, fetched_at FROM lunch_snapshots
            ORDER BY fetched_at DESC, id DESC LIMIT 1`
-        ).first<{ snapshot_json: string }>();
-        return row ? (JSON.parse(row.snapshot_json) as LunchSnapshot) : null;
+        ).first<{ snapshot_json: string; fetched_at: string }>();
+        return row
+          ? {
+              snapshot: JSON.parse(row.snapshot_json) as LunchSnapshot,
+              fetchedAt: row.fetched_at
+            }
+          : null;
       },
       async saveLunch(snapshot, fetchedAt) {
         await env.DB.prepare(
@@ -881,10 +939,15 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         fetchCalendarSnapshot(env, now, configuration.timezone),
       async loadLatestCalendar() {
         const row = await env.DB.prepare(
-          `SELECT events_json FROM calendar_snapshots
+          `SELECT events_json, fetched_at FROM calendar_snapshots
            ORDER BY fetched_at DESC, id DESC LIMIT 1`
-        ).first<{ events_json: string }>();
-        return row ? (JSON.parse(row.events_json) as CalendarEvent[]) : [];
+        ).first<{ events_json: string; fetched_at: string }>();
+        return row
+          ? {
+              snapshot: JSON.parse(row.events_json) as CalendarEvent[],
+              fetchedAt: row.fetched_at
+            }
+          : null;
       },
       async saveCalendar(events, fetchedAt) {
         await env.DB.prepare(
@@ -898,14 +961,35 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
       renderCalendarView: (model) => renderCalendarView(env, model),
       renderLunchView: (model) => renderLunchView(env, model),
       publish: (publication) => publishGeneration(env, publication),
-      async recordFailure(slotKey, code, message) {
+      async recordSourceFailure(slotKey, source, code, message) {
+        await env.DB.prepare(
+          `INSERT INTO generation_source_failures
+             (slot_key, source, error_code, error_message, occurred_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+          .bind(
+            slotKey,
+            source,
+            code,
+            message.slice(0, 500),
+            now.toISOString()
+          )
+          .run();
+      },
+      async failGeneration(slotKey, code, message, retryAt) {
         await env.DB.prepare(
           `UPDATE scheduled_generation_slots
            SET status = 'failed', completed_at = ?, error_code = ?,
-               error_message = ?
+               error_message = ?, retry_at = ?
            WHERE slot_key = ?`
         )
-          .bind(now.toISOString(), code, message.slice(0, 500), slotKey)
+          .bind(
+            now.toISOString(),
+            code,
+            message.slice(0, 500),
+            retryAt,
+            slotKey
+          )
           .run();
       }
     }
