@@ -86,4 +86,19 @@ describe("Lunch View", () => {
     expect(html).toContain("Next week's menu not posted");
     expect(html).not.toContain("School closed");
   });
+
+  test("shows the retained menu age independently from the generation update time", async () => {
+    const model = await lunchViewModel(
+      WEEK,
+      new Date("2026-10-07T17:30:00.000Z"),
+      "America/Los_Angeles",
+      "adapter_failure",
+      classifier,
+      75
+    );
+    const html = lunchViewHtml(model);
+
+    expect(html).toContain("Menu 1h 15m old");
+    expect(html.match(/Updated 10:30 AM/g)).toHaveLength(1);
+  });
 });

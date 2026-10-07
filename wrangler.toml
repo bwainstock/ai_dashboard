@@ -23,6 +23,7 @@ bucket_name = "family-dashboard-private-images"
 DEVICE_ORIGIN = "https://dashboard-device.example.com"
 ADMIN_ORIGIN = "https://dashboard-admin.example.com"
 MAX_IMAGE_BYTES = "1000000"
+GENERATION_RETRY_MINUTES = "15"
 MEALVIEWER_MENU_URL = "https://api.mealviewer.com/api/v4/school/SJUSDElementarySchoolsSJUSD/menu"
 LUNCH_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
 

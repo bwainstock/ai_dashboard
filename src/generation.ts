@@ -1,10 +1,7 @@
 import type { WeatherLocation, WeatherSnapshot } from "./weather";
 import type { CalendarEvent } from "./calendar";
 import type { CalendarViewModel } from "./calendar-view";
-import {
-  lunchViewModel,
-  type LunchViewModel
-} from "./lunch-view";
+import { lunchViewModel, type LunchViewModel } from "./lunch-view";
 import {
   classifyLunchEntree,
   type LunchClassifierPorts,
@@ -17,10 +14,18 @@ export interface DashboardConfiguration extends WeatherLocation {
   slots: string[];
 }
 
+export interface Snapshot<T> {
+  snapshot: T;
+  fetchedAt: string;
+}
+
 export interface DailyBriefWeatherModel {
   weather: WeatherSnapshot;
   calendar?: CalendarEvent[];
+  calendarUnavailable?: boolean;
+  calendarStaleAgeMinutes?: number;
   stale: boolean;
+  staleAgeMinutes?: number;
   lunch: DailyBriefLunchModel;
   updatedAt: string;
 }
@@ -33,10 +38,12 @@ export interface DailyBriefLunchModel {
     | "schema_failure"
     | "adapter_failure";
   stale: boolean;
+  staleAgeMinutes?: number;
   entrees: Array<{ name: string; icon: LunchIcon }>;
 }
 
 export interface Publication {
+  generationId: string;
   slotKey: string;
   views: Array<{
     viewType: "daily_brief" | "calendar" | "lunch";
@@ -53,29 +60,42 @@ export interface Publication {
 
 export interface ScheduledGenerationPorts {
   claimSlot(slotKey: string): Promise<boolean>;
+  claimRetry(now: string): Promise<{ slotKey: string } | null>;
   fetchWeather(location: WeatherLocation): Promise<WeatherSnapshot>;
-  loadLatestWeather(): Promise<WeatherSnapshot | null>;
+  loadLatestWeather(): Promise<Snapshot<WeatherSnapshot> | null>;
   saveWeather(snapshot: WeatherSnapshot, fetchedAt: string): Promise<void>;
   fetchLunch(): Promise<LunchSnapshot>;
-  loadLatestLunch(): Promise<LunchSnapshot | null>;
+  loadLatestLunch(): Promise<Snapshot<LunchSnapshot> | null>;
   saveLunch(snapshot: LunchSnapshot, fetchedAt: string): Promise<void>;
   loadCachedLunchIcon(entreeKey: string): Promise<string | null>;
   saveCachedLunchIcon(entreeKey: string, icon: LunchIcon): Promise<void>;
   classifyLunchWithAi?: NonNullable<LunchClassifierPorts["classifyWithAi"]>;
   fetchCalendar?(): Promise<CalendarEvent[]>;
-  loadLatestCalendar?(): Promise<CalendarEvent[]>;
+  loadLatestCalendar?(): Promise<Snapshot<CalendarEvent[]> | null>;
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
   renderLunchView(model: LunchViewModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
-  recordFailure(slotKey: string, code: string, message: string): Promise<void>;
+  recordSourceFailure(
+    slotKey: string,
+    source: "weather" | "calendar" | "lunch",
+    code: string,
+    message: string
+  ): Promise<void>;
+  failGeneration(
+    slotKey: string,
+    code: string,
+    message: string,
+    retryAt: string | null
+  ): Promise<void>;
 }
 
 export interface ScheduledGenerationInput {
   now: Date;
   configuration: DashboardConfiguration;
   maximumImageBytes: number;
+  retryDelayMinutes?: number;
 }
 
 export type ScheduledGenerationResult =
@@ -120,73 +140,54 @@ function localParts(date: Date, timezone: string): LocalParts {
   return values as unknown as LocalParts;
 }
 
-function instantForLocal(
-  date: Pick<LocalParts, "year" | "month" | "day">,
-  slot: string,
-  timezone: string
-): Date {
-  const [hour, minute] = slot.split(":").map(Number);
-  const desired = Date.UTC(
-    date.year,
-    date.month - 1,
-    date.day,
-    hour,
-    minute
-  );
-  let timestamp = desired;
-  for (let iteration = 0; iteration < 4; iteration += 1) {
-    const actual = localParts(new Date(timestamp), timezone);
-    const actualAsUtc = Date.UTC(
-      actual.year,
-      actual.month - 1,
-      actual.day,
-      actual.hour,
-      actual.minute
-    );
-    timestamp += desired - actualAsUtc;
-  }
-  return new Date(timestamp);
+function localMinute(parts: LocalParts): string {
+  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(
+    2,
+    "0"
+  )}-${String(parts.day).padStart(2, "0")}T${String(parts.hour).padStart(
+    2,
+    "0"
+  )}:${String(parts.minute).padStart(2, "0")}`;
 }
 
-function addLocalDays(
-  date: Pick<LocalParts, "year" | "month" | "day">,
-  days: number
-): Pick<LocalParts, "year" | "month" | "day"> {
-  const value = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
-  return {
-    year: value.getUTCFullYear(),
-    month: value.getUTCMonth() + 1,
-    day: value.getUTCDate()
-  };
+function configuredLocalMinute(
+  date: Date,
+  configuration: DashboardConfiguration
+): string | null {
+  const parts = localParts(date, configuration.timezone);
+  const time = `${String(parts.hour).padStart(2, "0")}:${String(
+    parts.minute
+  ).padStart(2, "0")}`;
+  return configuration.slots.includes(time) ? localMinute(parts) : null;
 }
 
 export function secondsUntilNextSlot(
   now: Date,
   configuration: DashboardConfiguration
 ): number {
-  const today = localParts(now, configuration.timezone);
-  const candidates = [0, 1].flatMap((days) =>
-    configuration.slots.map((slot) =>
-      instantForLocal(addLocalDays(today, days), slot, configuration.timezone)
-    )
-  );
-  const next = candidates
-    .filter((candidate) => candidate.getTime() > now.getTime())
-    .sort((left, right) => left.getTime() - right.getTime())[0];
-  if (!next) throw new Error("Weather schedule must contain a future slot");
-  return Math.ceil((next.getTime() - now.getTime()) / 1000);
+  const start = Math.floor(now.getTime() / 60_000) * 60_000 + 60_000;
+  const seen = new Set<string>();
+  for (let offset = 0; offset <= 180; offset += 1) {
+    const previous = new Date(now.getTime() - offset * 60_000);
+    const previousLocalSlot = configuredLocalMinute(previous, configuration);
+    if (previousLocalSlot) seen.add(previousLocalSlot);
+  }
+  for (let offset = 0; offset < 60 * 72; offset += 1) {
+    const candidate = new Date(start + offset * 60_000);
+    const local = configuredLocalMinute(candidate, configuration);
+    if (!local || seen.has(local)) continue;
+    seen.add(local);
+    return Math.ceil((candidate.getTime() - now.getTime()) / 1000);
+  }
+  throw new Error("Weather schedule must contain a future slot");
 }
 
-function dueSlot(
+function dueSlotKey(
   now: Date,
   configuration: DashboardConfiguration
-): Date | null {
-  const local = localParts(now, configuration.timezone);
-  const current = `${String(local.hour).padStart(2, "0")}:${String(
-    local.minute
-  ).padStart(2, "0")}`;
-  if (!configuration.slots.includes(current)) return null;
-  return new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+): string | null {
+  const minute = configuredLocalMinute(now, configuration);
+  return minute ? `${minute}[${configuration.timezone}]` : null;
 }
 
 function pngDimensions(image: Uint8Array): [number, number] | null {
@@ -214,11 +215,32 @@ function localDate(date: Date, timezone: string): string {
   }).format(date);
 }
 
+function staleAgeMinutes(now: Date, fetchedAt: string): number {
+  return Math.max(
+    0,
+    Math.floor((now.getTime() - new Date(fetchedAt).getTime()) / 60_000)
+  );
+}
+
+function errorDetails(error: unknown, fallbackCode: string, fallback: string) {
+  return {
+    code:
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : fallbackCode,
+    message: error instanceof Error ? error.message : fallback
+  };
+}
+
 async function lunchModel(
   snapshot: LunchSnapshot | null,
   date: string,
   status: DailyBriefLunchModel["status"] | null,
-  classifier: LunchClassifierPorts
+  classifier: LunchClassifierPorts,
+  age?: number
 ): Promise<DailyBriefLunchModel> {
   const day = snapshot?.days.find((candidate) => candidate.date === date);
   const entrees = await Promise.all(
@@ -227,7 +249,14 @@ async function lunchModel(
       icon: await classifyLunchEntree(name, classifier)
     }))
   );
-  if (status) return { status, stale: true, entrees };
+  if (status) {
+    return {
+      status,
+      stale: age !== undefined,
+      ...(age === undefined ? {} : { staleAgeMinutes: age }),
+      entrees
+    };
+  }
   if (!day || (day.status === "menu" && day.entrees.length === 0)) {
     return { status: "no_menu", stale: false, entrees: [] };
   }
@@ -242,37 +271,60 @@ export async function runScheduledWeatherGeneration(
   ports: ScheduledGenerationPorts
 ): Promise<ScheduledGenerationResult> {
   const nextWakeSeconds = secondsUntilNextSlot(input.now, input.configuration);
-  const slot = dueSlot(input.now, input.configuration);
-  if (!slot) return { status: "not_due", nextWakeSeconds };
+  const scheduledSlotKey = dueSlotKey(input.now, input.configuration);
+  let slotKey: string;
+  let retry = false;
 
-  const slotKey = slot.toISOString();
-  if (!(await ports.claimSlot(slotKey))) {
-    return { status: "duplicate", slotKey, nextWakeSeconds };
+  if (scheduledSlotKey) {
+    slotKey = scheduledSlotKey;
+    if (!(await ports.claimSlot(slotKey))) {
+      return { status: "duplicate", slotKey, nextWakeSeconds };
+    }
+  } else {
+    const retryClaim = await ports.claimRetry(input.now.toISOString());
+    if (!retryClaim) return { status: "not_due", nextWakeSeconds };
+    slotKey = retryClaim.slotKey;
+    retry = true;
   }
 
+  const configuredRetryDelay = input.retryDelayMinutes ?? 15;
+  const retryDelayMinutes =
+    Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
+      ? configuredRetryDelay
+      : 15;
+  const retryAt = retry
+    ? null
+    : new Date(
+        input.now.getTime() + retryDelayMinutes * 60_000
+      ).toISOString();
+  const fail = async (code: string, message: string) => {
+    await ports.failGeneration(slotKey, code, message, retryAt);
+    return { status: "failed", slotKey, code, nextWakeSeconds } as const;
+  };
+
   let weather: WeatherSnapshot;
-  let stale = false;
+  let weatherAge: number | undefined;
   try {
     weather = await ports.fetchWeather(input.configuration);
     await ports.saveWeather(weather, input.now.toISOString());
   } catch (error) {
-    const code =
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string"
-        ? error.code
-        : "WEATHER_FETCH_FAILED";
-    const message =
-      error instanceof Error ? error.message : "Weather fetch failed";
-    await ports.recordFailure(slotKey, code, message);
+    const details = errorDetails(
+      error,
+      "WEATHER_FETCH_FAILED",
+      "Weather fetch failed"
+    );
+    await ports.recordSourceFailure(
+      slotKey,
+      "weather",
+      details.code,
+      details.message
+    );
     const previous = await ports.loadLatestWeather();
-    if (!previous) {
-      return { status: "failed", slotKey, code, nextWakeSeconds };
-    }
-    weather = previous;
-    stale = true;
+    if (!previous) return fail(details.code, details.message);
+    weather = previous.snapshot;
+    weatherAge = staleAgeMinutes(input.now, previous.fetchedAt);
   }
+
   const classifier: LunchClassifierPorts = {
     loadCached: ports.loadCachedLunchIcon,
     saveCached: ports.saveCachedLunchIcon,
@@ -281,6 +333,7 @@ export async function runScheduledWeatherGeneration(
   let lunch: LunchSnapshot;
   let renderedLunch: DailyBriefLunchModel;
   let lunchFailure: "schema_failure" | "adapter_failure" | null = null;
+  let lunchAge: number | undefined;
   try {
     lunch = await ports.fetchLunch();
     await ports.saveLunch(lunch, input.now.toISOString());
@@ -291,91 +344,102 @@ export async function runScheduledWeatherGeneration(
       classifier
     );
   } catch (error) {
-    const code =
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string"
-        ? error.code
-        : "LUNCH_UPSTREAM_NETWORK";
-    await ports.recordFailure(
-      slotKey,
-      code,
-      error instanceof Error ? error.message : "Lunch fetch failed"
+    const details = errorDetails(
+      error,
+      "LUNCH_UPSTREAM_NETWORK",
+      "Lunch fetch failed"
     );
-    lunch = (await ports.loadLatestLunch()) ?? { days: [] };
+    await ports.recordSourceFailure(
+      slotKey,
+      "lunch",
+      details.code,
+      details.message
+    );
+    const previous = await ports.loadLatestLunch();
+    lunch = previous?.snapshot ?? { days: [] };
+    lunchAge = previous
+      ? staleAgeMinutes(input.now, previous.fetchedAt)
+      : undefined;
     lunchFailure =
-      code === "LUNCH_INVALID_RESPONSE"
+      details.code === "LUNCH_INVALID_RESPONSE"
         ? "schema_failure"
         : "adapter_failure";
     renderedLunch = await lunchModel(
       lunch,
       localDate(input.now, input.configuration.timezone),
       lunchFailure,
-      classifier
+      classifier,
+      lunchAge
     );
   }
+
   const model: DailyBriefWeatherModel = {
     weather,
-    stale,
+    stale: weatherAge !== undefined,
+    ...(weatherAge === undefined ? {} : { staleAgeMinutes: weatherAge }),
     lunch: renderedLunch,
     updatedAt: input.now.toISOString()
   };
   let calendar: CalendarEvent[] = [];
-  let calendarStale = false;
-  if (
-    ports.fetchCalendar &&
-    ports.loadLatestCalendar &&
-    ports.saveCalendar
-  ) {
+  let calendarAge: number | undefined;
+  let calendarUnavailable = false;
+  if (ports.fetchCalendar && ports.loadLatestCalendar && ports.saveCalendar) {
     try {
       calendar = await ports.fetchCalendar();
       await ports.saveCalendar(calendar, input.now.toISOString());
       model.calendar = calendar;
     } catch (error) {
-      calendar = await ports.loadLatestCalendar();
-      calendarStale = true;
+      const details = errorDetails(
+        error,
+        "CALENDAR_FETCH_FAILED",
+        "Calendar fetch failed"
+      );
+      const previous = await ports.loadLatestCalendar();
+      calendar = previous?.snapshot ?? [];
+      calendarUnavailable = !previous;
+      calendarAge = previous
+        ? staleAgeMinutes(input.now, previous.fetchedAt)
+        : undefined;
       model.calendar = calendar;
-      await ports.recordFailure(
+      model.calendarUnavailable = calendarUnavailable;
+      if (calendarAge !== undefined) {
+        model.calendarStaleAgeMinutes = calendarAge;
+      }
+      await ports.recordSourceFailure(
         slotKey,
-        error &&
-          typeof error === "object" &&
-          "code" in error &&
-          typeof error.code === "string"
-          ? error.code
-          : "CALENDAR_FETCH_FAILED",
-        error instanceof Error ? error.message : "Calendar fetch failed"
+        "calendar",
+        details.code,
+        details.message
       );
     }
   }
+
   let image: Uint8Array;
   try {
     image = await ports.renderDailyBrief(model);
   } catch (error) {
-    const code = "DAILY_BRIEF_RENDER_FAILED";
-    await ports.recordFailure(
-      slotKey,
-      code,
+    return fail(
+      "DAILY_BRIEF_RENDER_FAILED",
       error instanceof Error ? error.message : "Daily Brief rendering failed"
     );
-    return { status: "failed", slotKey, code, nextWakeSeconds };
   }
   let calendarImage: Uint8Array;
   try {
     calendarImage = await ports.renderCalendarView({
       calendar,
       timezone: input.configuration.timezone,
-      stale: calendarStale,
+      stale: calendarAge !== undefined,
+      ...(calendarAge === undefined
+        ? {}
+        : { staleAgeMinutes: calendarAge }),
+      ...(calendarUnavailable ? { unavailable: true } : {}),
       updatedAt: input.now.toISOString()
     });
   } catch (error) {
-    const code = "CALENDAR_VIEW_RENDER_FAILED";
-    await ports.recordFailure(
-      slotKey,
-      code,
+    return fail(
+      "CALENDAR_VIEW_RENDER_FAILED",
       error instanceof Error ? error.message : "Calendar View rendering failed"
     );
-    return { status: "failed", slotKey, code, nextWakeSeconds };
   }
   let lunchImage: Uint8Array;
   try {
@@ -385,18 +449,17 @@ export async function runScheduledWeatherGeneration(
         input.now,
         input.configuration.timezone,
         lunchFailure,
-        classifier
+        classifier,
+        lunchAge
       )
     );
   } catch (error) {
-    const code = "LUNCH_VIEW_RENDER_FAILED";
-    await ports.recordFailure(
-      slotKey,
-      code,
+    return fail(
+      "LUNCH_VIEW_RENDER_FAILED",
       error instanceof Error ? error.message : "Lunch View rendering failed"
     );
-    return { status: "failed", slotKey, code, nextWakeSeconds };
   }
+
   const images = [image, calendarImage, lunchImage];
   if (
     images.some((candidate) => {
@@ -408,37 +471,35 @@ export async function runScheduledWeatherGeneration(
       );
     })
   ) {
-    const code = "RENDERED_IMAGE_INVALID";
-    await ports.recordFailure(
-      slotKey,
-      code,
+    return fail(
+      "RENDERED_IMAGE_INVALID",
       "Every view must be an 800x480 PNG within the configured size limit"
     );
-    return { status: "failed", slotKey, code, nextWakeSeconds };
   }
 
-  const timestamp = compactTimestamp(slot);
-  const filename = `daily-brief-${timestamp}.png`;
+  const generationId = compactTimestamp(input.now);
+  const filename = `daily-brief-${generationId}.png`;
   try {
     await ports.publish({
+      generationId,
       slotKey,
       views: [
         {
           viewType: "daily_brief",
           filename,
-          objectKey: `generations/${timestamp}/daily-brief.png`,
+          objectKey: `generations/${generationId}/daily-brief.png`,
           image
         },
         {
           viewType: "calendar",
-          filename: `calendar-view-${timestamp}.png`,
-          objectKey: `generations/${timestamp}/calendar-view.png`,
+          filename: `calendar-view-${generationId}.png`,
+          objectKey: `generations/${generationId}/calendar-view.png`,
           image: calendarImage
         },
         {
           viewType: "lunch",
-          filename: `lunch-view-${timestamp}.png`,
-          objectKey: `generations/${timestamp}/lunch-view.png`,
+          filename: `lunch-view-${generationId}.png`,
+          objectKey: `generations/${generationId}/lunch-view.png`,
           image: lunchImage
         }
       ],
@@ -449,13 +510,10 @@ export async function runScheduledWeatherGeneration(
       generatedAt: input.now.toISOString()
     });
   } catch (error) {
-    const code = "GENERATION_PUBLICATION_FAILED";
-    await ports.recordFailure(
-      slotKey,
-      code,
+    return fail(
+      "GENERATION_PUBLICATION_FAILED",
       error instanceof Error ? error.message : "Generation publication failed"
     );
-    return { status: "failed", slotKey, code, nextWakeSeconds };
   }
 
   return { status: "published", slotKey, filename, nextWakeSeconds };

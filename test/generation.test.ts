@@ -51,6 +51,7 @@ function ports(
 ): ScheduledGenerationPorts {
   return {
     claimSlot: vi.fn().mockResolvedValue(true),
+    claimRetry: vi.fn().mockResolvedValue(null),
     fetchWeather: vi.fn().mockResolvedValue(WEATHER),
     loadLatestWeather: vi.fn().mockResolvedValue(null),
     saveWeather: vi.fn().mockResolvedValue(undefined),
@@ -64,7 +65,8 @@ function ports(
     renderCalendarView: vi.fn().mockResolvedValue(png()),
     renderLunchView: vi.fn().mockResolvedValue(png()),
     publish: vi.fn().mockResolvedValue(undefined),
-    recordFailure: vi.fn().mockResolvedValue(undefined),
+    recordSourceFailure: vi.fn().mockResolvedValue(undefined),
+    failGeneration: vi.fn().mockResolvedValue(undefined),
     ...overrides
   } as ScheduledGenerationPorts;
 }
@@ -89,7 +91,7 @@ describe("scheduled weather generation", () => {
 
     expect(result).toEqual({
       status: "published",
-      slotKey: "2026-10-07T17:30:00.000Z",
+      slotKey: "2026-10-07T10:30[America/Los_Angeles]",
       filename: "daily-brief-20261007T173000Z.png",
       nextWakeSeconds: 16_200
     });
@@ -127,7 +129,8 @@ describe("scheduled weather generation", () => {
       })
     );
     expect(boundary.publish).toHaveBeenCalledWith({
-      slotKey: "2026-10-07T17:30:00.000Z",
+      generationId: "20261007T173000Z",
+      slotKey: "2026-10-07T10:30[America/Los_Angeles]",
       views: [
         {
           viewType: "daily_brief",
@@ -190,7 +193,10 @@ describe("scheduled weather generation", () => {
 
     const boundary = ports({
       fetchWeather: vi.fn().mockRejectedValue(failure),
-      loadLatestWeather: vi.fn().mockResolvedValue(WEATHER)
+      loadLatestWeather: vi.fn().mockResolvedValue({
+        snapshot: WEATHER,
+        fetchedAt: "2026-10-07T19:00:00.000Z"
+      })
     });
 
     const result = await runScheduledWeatherGeneration(
@@ -211,6 +217,7 @@ describe("scheduled weather generation", () => {
     expect(boundary.renderDailyBrief).toHaveBeenCalledWith({
       weather: WEATHER,
       stale: true,
+      staleAgeMinutes: 180,
       lunch: {
         status: "available",
         stale: false,
@@ -221,8 +228,9 @@ describe("scheduled weather generation", () => {
       },
       updatedAt: "2026-10-07T22:00:00.000Z"
     });
-    expect(boundary.recordFailure).toHaveBeenCalledWith(
-      "2026-10-07T22:00:00.000Z",
+    expect(boundary.recordSourceFailure).toHaveBeenCalledWith(
+      "2026-10-07T15:00[America/Los_Angeles]",
+      "weather",
       "WEATHER_UPSTREAM_HTTP",
       "Open-Meteo returned HTTP 503"
     );
@@ -243,7 +251,10 @@ describe("scheduled weather generation", () => {
     ];
     const boundary = ports({
       fetchCalendar: vi.fn().mockResolvedValue(calendar),
-      loadLatestCalendar: vi.fn().mockResolvedValue([]),
+      loadLatestCalendar: vi.fn().mockResolvedValue({
+        snapshot: [],
+        fetchedAt: "2026-10-07T16:30:00.000Z"
+      }),
       saveCalendar: vi.fn().mockResolvedValue(undefined)
     });
 
@@ -306,7 +317,7 @@ describe("scheduled weather generation", () => {
 
     expect(result).toEqual({
       status: "failed",
-      slotKey: "2026-10-08T02:00:00.000Z",
+      slotKey: "2026-10-07T19:00[America/Los_Angeles]",
       code: "WEATHER_UPSTREAM_HTTP",
       nextWakeSeconds: 41_400
     });
@@ -359,7 +370,10 @@ describe("scheduled weather generation", () => {
         fetchLunch: vi
           .fn()
           .mockRejectedValue(Object.assign(new Error("lunch failed"), { code })),
-        loadLatestLunch: vi.fn().mockResolvedValue(LUNCH)
+        loadLatestLunch: vi.fn().mockResolvedValue({
+          snapshot: LUNCH,
+          fetchedAt: "2026-10-07T16:30:00.000Z"
+        })
       });
 
       const result = await runScheduledWeatherGeneration(
@@ -382,6 +396,7 @@ describe("scheduled weather generation", () => {
           lunch: {
             status,
             stale: true,
+            staleAgeMinutes: 60,
             entrees: [
               { name: "Cheese Pizza", icon: "pizza" },
               { name: "Vegetable Yakisoba", icon: "pasta" }
@@ -389,8 +404,9 @@ describe("scheduled weather generation", () => {
           }
         })
       );
-      expect(boundary.recordFailure).toHaveBeenCalledWith(
-        "2026-10-07T17:30:00.000Z",
+      expect(boundary.recordSourceFailure).toHaveBeenCalledWith(
+        "2026-10-07T10:30[America/Los_Angeles]",
+        "lunch",
         code,
         "lunch failed"
       );
@@ -442,10 +458,11 @@ describe("scheduled weather generation", () => {
 
     expect(result.status).toBe("failed");
     expect(boundary.publish).not.toHaveBeenCalled();
-    expect(boundary.recordFailure).toHaveBeenCalledWith(
-      "2026-10-07T17:30:00.000Z",
+    expect(boundary.failGeneration).toHaveBeenCalledWith(
+      "2026-10-07T10:30[America/Los_Angeles]",
       "RENDERED_IMAGE_INVALID",
-      expect.any(String)
+      expect.any(String),
+      "2026-10-07T17:45:00.000Z"
     );
   });
 
@@ -473,6 +490,126 @@ describe("scheduled weather generation", () => {
       code: "DAILY_BRIEF_RENDER_FAILED"
     });
     expect(boundary.publish).not.toHaveBeenCalled();
+    expect(boundary.failGeneration).toHaveBeenCalledWith(
+      "2026-10-07T10:30[America/Los_Angeles]",
+      "DAILY_BRIEF_RENDER_FAILED",
+      "browser timeout",
+      "2026-10-07T17:45:00.000Z"
+    );
+  });
+
+  test("a storage or atomic publication failure preserves the current generation and schedules one retry", async () => {
+    const boundary = ports({
+      publish: vi.fn().mockRejectedValue(new Error("R2 write failed"))
+    });
+
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "GENERATION_PUBLICATION_FAILED"
+    });
+    expect(boundary.failGeneration).toHaveBeenCalledWith(
+      "2026-10-07T10:30[America/Los_Angeles]",
+      "GENERATION_PUBLICATION_FAILED",
+      "R2 write failed",
+      "2026-10-07T17:45:00.000Z"
+    );
+  });
+
+  test("a failed generation is retried once after fifteen minutes with a new immutable generation id", async () => {
+    const slotKey = "2026-10-07T10:30[America/Los_Angeles]";
+    const first = ports({
+      renderCalendarView: vi.fn().mockRejectedValue(new Error("timeout"))
+    });
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      first
+    );
+
+    expect(first.failGeneration).toHaveBeenCalledWith(
+      slotKey,
+      "CALENDAR_VIEW_RENDER_FAILED",
+      "timeout",
+      "2026-10-07T17:45:00.000Z"
+    );
+
+    const retry = ports({
+      claimRetry: vi.fn().mockResolvedValue({ slotKey })
+    });
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:45:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      retry
+    );
+
+    expect(result).toMatchObject({ status: "published", slotKey });
+    expect(retry.claimSlot).not.toHaveBeenCalled();
+    expect(retry.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "20261007T174500Z",
+        slotKey
+      })
+    );
+  });
+
+  test("a retry failure is final and is not scheduled a second time", async () => {
+    const slotKey = "2026-10-07T10:30[America/Los_Angeles]";
+    const boundary = ports({
+      claimRetry: vi.fn().mockResolvedValue({ slotKey }),
+      renderLunchView: vi.fn().mockRejectedValue(new Error("still broken"))
+    });
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:45:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(boundary.failGeneration).toHaveBeenCalledWith(
+      slotKey,
+      "LUNCH_VIEW_RENDER_FAILED",
+      "still broken",
+      null
+    );
   });
 
   test("next wake follows local slots across daylight-saving changes", () => {
@@ -489,5 +626,63 @@ describe("scheduled weather generation", () => {
     expect(
       secondsUntilNextSlot(new Date("2026-11-01T02:00:00Z"), configuration)
     ).toBe(45_000);
+  });
+
+  test("the repeated fall-back local minute has one canonical idempotency key", async () => {
+    const claimSlot = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const boundary = ports({ claimSlot });
+    const configuration = {
+      latitude: 37.3382,
+      longitude: -121.8863,
+      timezone: "America/Los_Angeles",
+      slots: ["01:30"]
+    };
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-11-01T08:30:00Z"),
+        configuration,
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+    const duplicate = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-11-01T09:30:00Z"),
+        configuration,
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(claimSlot).toHaveBeenNthCalledWith(
+      1,
+      "2026-11-01T01:30[America/Los_Angeles]"
+    );
+    expect(claimSlot).toHaveBeenNthCalledWith(
+      2,
+      "2026-11-01T01:30[America/Los_Angeles]"
+    );
+    expect(duplicate.status).toBe("duplicate");
+    expect(
+      secondsUntilNextSlot(new Date("2026-11-01T08:30:00Z"), configuration)
+    ).toBe(90_000);
+    expect(
+      secondsUntilNextSlot(new Date("2026-11-01T09:15:00Z"), configuration)
+    ).toBe(87_300);
+  });
+
+  test("a nonexistent spring-forward local minute is skipped instead of shifted", () => {
+    expect(
+      secondsUntilNextSlot(new Date("2026-03-08T09:59:00Z"), {
+        latitude: 37.3382,
+        longitude: -121.8863,
+        timezone: "America/Los_Angeles",
+        slots: ["02:30"]
+      })
+    ).toBe(84_660);
   });
 });

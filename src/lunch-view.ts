@@ -20,6 +20,7 @@ export interface LunchViewModel {
     | "adapter_failure";
   days: LunchViewDay[];
   stale: boolean;
+  staleAgeMinutes?: number;
   timezone: string;
   updatedAt: string;
 }
@@ -72,7 +73,8 @@ export async function lunchViewModel(
   now: Date,
   timezone: string,
   failure: "schema_failure" | "adapter_failure" | null,
-  classifier: LunchClassifierPorts
+  classifier: LunchClassifierPorts,
+  staleAgeMinutes?: number
 ): Promise<LunchViewModel> {
   const target = schoolWeek(localDate(now, timezone), timezone);
   const days = await Promise.all(
@@ -100,7 +102,10 @@ export async function lunchViewModel(
         ? "upcoming_unavailable"
         : "available"),
     days,
-    stale: failure !== null,
+    stale: failure !== null && staleAgeMinutes !== undefined,
+    ...(failure !== null && staleAgeMinutes !== undefined
+      ? { staleAgeMinutes }
+      : {}),
     timezone,
     updatedAt: now.toISOString()
   };
@@ -164,6 +169,12 @@ export function lunchViewHtml(model: LunchViewModel): string {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(model.updatedAt));
+  const staleAge =
+    model.staleAgeMinutes === undefined
+      ? "age unavailable"
+      : model.staleAgeMinutes < 60
+        ? `${model.staleAgeMinutes}m old`
+        : `${Math.floor(model.staleAgeMinutes / 60)}h ${model.staleAgeMinutes % 60}m old`;
 
   return `<!doctype html>
 <html lang="en">
@@ -195,7 +206,7 @@ export function lunchViewHtml(model: LunchViewModel): string {
   <header><div class="heading"><svg viewBox="0 0 48 48" role="img" aria-label="Lunch icon"><circle cx="24" cy="25" r="15" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 7v15m0-8h7M42 7v15" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg><h1>Lunch View</h1></div><span>${model.week === "upcoming" ? "Upcoming school week" : "Current school week"}</span></header>
   ${globalState}
   <main>${days}</main>
-  <footer><span>${model.stale ? '<span class="stale">⚠ Last available menu</span>' : ""}</span><span>Updated ${updated}</span></footer>
+  <footer><span>${model.stale ? `<span class="stale">⚠ Menu ${staleAge}</span>` : ""}</span><span>Updated ${updated}</span></footer>
 </body>
 </html>`;
 }

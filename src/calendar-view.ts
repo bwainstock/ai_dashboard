@@ -5,6 +5,14 @@ export interface CalendarViewModel {
   timezone: string;
   updatedAt: string;
   stale?: boolean;
+  staleAgeMinutes?: number;
+  unavailable?: boolean;
+}
+
+function ageLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes}m old`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m old`;
 }
 
 function escapeHtml(value: string): string {
@@ -87,7 +95,12 @@ export function calendarViewHtml(model: CalendarViewModel): string {
       });
     return `<section>
       <h2>${dayHeading(date, offset, model.timezone)}<small>${escapeHtml(date)}</small></h2>
-      <ul>${events.map((event) => eventItem(event, model.timezone)).join("") || '<li class="empty" data-missing-state>No events</li>'}</ul>
+      <ul>${
+        model.unavailable
+          ? '<li class="empty" data-missing-state>Calendar unavailable</li>'
+          : events.map((event) => eventItem(event, model.timezone)).join("") ||
+            '<li class="empty" data-missing-state>No events</li>'
+      }</ul>
     </section>`;
   });
   const updated = new Intl.DateTimeFormat("en-US", {
@@ -131,7 +144,13 @@ export function calendarViewHtml(model: CalendarViewModel): string {
   <header><div class="heading"><svg viewBox="0 0 48 48" role="img" aria-label="Calendar icon"><rect x="6" y="9" width="36" height="33" rx="3" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 19h36M15 5v9m18-9v9" stroke="currentColor" stroke-width="4"/></svg><h1>Calendar View</h1></div><span>Today + next 2 days</span></header>
   <main>${days.join("")}</main>
   <footer>
-    <span>${model.stale ? '<span class="stale">⚠ Last available calendar</span>' : ""}</span>
+    <span>${
+      model.stale
+        ? `<span class="stale">⚠ Calendar ${ageLabel(model.staleAgeMinutes ?? 0)}</span>`
+        : model.unavailable
+          ? '<span class="stale">⚠ Calendar unavailable</span>'
+          : ""
+    }</span>
     <span>${overflow > 0 ? `+${overflow} more · ` : ""}Updated ${updated}</span>
   </footer>
 </body>
