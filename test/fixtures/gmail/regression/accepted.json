@@ -1,0 +1,21 @@
+{
+  "name": "accepted",
+  "candidate": {
+    "labelIds": ["INBOX"],
+    "from": "office@synthetic-school.example",
+    "subject": "Permission form",
+    "body": "Return the field trip permission form by October 10.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "modelOutput": {
+    "isNotice": true,
+    "category": "school",
+    "summary": "Field trip permission form is due.",
+    "relevantDate": "2026-10-10",
+    "action": "Return the permission form.",
+    "senderOrganization": "Synthetic School",
+    "sensitive": false,
+    "confidence": 0.96
+  },
+  "expected": "accepted"
+}

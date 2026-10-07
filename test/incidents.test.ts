@@ -15,8 +15,10 @@ const HEALTHY: IncidentSnapshot = {
   sources: [
     { source: "weather", consecutiveFailures: 0 },
     { source: "calendar", consecutiveFailures: 0 },
-    { source: "lunch", consecutiveFailures: 0 }
+    { source: "lunch", consecutiveFailures: 0 },
+    { source: "gmail", consecutiveFailures: 0 }
   ],
+  aiQuota: "available",
   latestGeneration: { state: "published", errorCode: null },
   suspiciousDeviceAuthentication: false,
   device: {
@@ -85,8 +87,10 @@ describe("operational incident state machine", () => {
       sources: [
         { source: "weather", consecutiveFailures: 2 },
         { source: "calendar", consecutiveFailures: 0 },
-        { source: "lunch", consecutiveFailures: 0 }
+        { source: "lunch", consecutiveFailures: 0 },
+        { source: "gmail", consecutiveFailures: 2 }
       ],
+      aiQuota: "exhausted",
       latestGeneration: {
         state: "failed",
         errorCode: "DAILY_BRIEF_RENDER_FAILED"
@@ -116,11 +120,13 @@ describe("operational incident state machine", () => {
         "DEVICE_AUTH_SUSPICIOUS",
         "DEVICE_CHECK_IN_MISSING",
         "GENERATION_PUBLICATION_BLOCKED",
+        "AI_QUOTA_EXHAUSTED",
         "OAUTH_REVOKED_OR_EXPIRED",
-        "SOURCE_SCHEDULED_FAILURE"
+        "SOURCE_SCHEDULED_FAILURE",
+        "GMAIL_PROCESSING_REPEATED_FAILURE"
       ].sort()
     );
-    expect(deliver).toHaveBeenCalledTimes(5);
+    expect(deliver).toHaveBeenCalledTimes(7);
   });
 
   test("suppresses one transient source failure and duplicate active alerts", async () => {
@@ -179,6 +185,48 @@ describe("operational incident state machine", () => {
 
     expect(deliver).toHaveBeenCalledTimes(2);
     expect(deliver).toHaveBeenLastCalledWith("OAUTH_REVOKED_OR_EXPIRED");
+  });
+
+  test("Gmail failure and AI quota alerts clear on recovery and recur once", async () => {
+    const repository = new MemoryIncidentRepository();
+    const deliver = vi.fn().mockResolvedValue(undefined);
+    const gmail = repository.snapshot.sources.find(
+      ({ source }) => source === "gmail"
+    )!;
+    gmail.consecutiveFailures = 2;
+    repository.snapshot.aiQuota = "exhausted";
+
+    await evaluateOperationalIncidents(
+      repository,
+      deliver,
+      new Date("2026-10-07T11:00:00.000Z")
+    );
+    await evaluateOperationalIncidents(
+      repository,
+      deliver,
+      new Date("2026-10-07T11:05:00.000Z")
+    );
+    gmail.consecutiveFailures = 0;
+    repository.snapshot.aiQuota = "available";
+    await evaluateOperationalIncidents(
+      repository,
+      deliver,
+      new Date("2026-10-07T11:10:00.000Z")
+    );
+    gmail.consecutiveFailures = 2;
+    repository.snapshot.aiQuota = "exhausted";
+    await evaluateOperationalIncidents(
+      repository,
+      deliver,
+      new Date("2026-10-07T11:15:00.000Z")
+    );
+
+    expect(deliver.mock.calls.map(([code]) => code)).toEqual([
+      "GMAIL_PROCESSING_REPEATED_FAILURE",
+      "AI_QUOTA_EXHAUSTED",
+      "GMAIL_PROCESSING_REPEATED_FAILURE",
+      "AI_QUOTA_EXHAUSTED"
+    ]);
   });
 
   test("a failed delivery remains pending and is retried without opening a duplicate", async () => {

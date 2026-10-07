@@ -5,6 +5,13 @@ authorization request grants only Calendar read-only and Gmail read-only
 scopes, requests offline access, and stores authenticated-encrypted refresh
 tokens. `GET`/`PUT /admin/gmail-configuration` manages the school and childcare
 sender-domain allowlist without exposing account addresses or tokens.
+Administrators can use the browser controls or
+`POST /admin/gmail-accounts/{mom|dad}/disconnect`. Disconnect first revokes the
+Google refresh token. It then clears encrypted credentials, Gmail scan cursors,
+selected calendars, account notices and review rows, combined calendar
+snapshots, every retained render-generation row, and every private R2 image.
+If Google revocation fails, deletion does not begin and the control reports a
+fixed error so the administrator can retry.
 
 ## Worker boundary
 
@@ -51,6 +58,47 @@ unvalidated model output. Active notices expire shortly after their date and
 are deleted 30 days later. The active grace period is configured consistently
 on both Workers with `NOTICE_GRACE_DAYS` and defaults to three days. Protected
 and failure review records expire in 14 days.
+The Gmail Worker runs retention maintenance before every scheduled scan,
+including runs with no connected account, and uses indexed lifecycle
+timestamps from migration `0013_gmail_controls.sql`.
+
+## Operational controls
+
+OAuth revocation marks the affected account revoked. AI quota exhaustion marks
+the fixed quota state exhausted. Every failed Gmail-processing run increments
+the Gmail source failure count with only a fixed code; an unreachable service
+binding does the same in the device Worker. The operational incident state
+machine sends `OAUTH_REVOKED_OR_EXPIRED`, `AI_QUOTA_EXHAUSTED`, or
+`GMAIL_PROCESSING_REPEATED_FAILURE` once while active. Successful OAuth,
+Workers AI, and Gmail processing reset the corresponding state so a later
+recurrence can alert again.
+
+## Model promotion
+
+`GMAIL_AI_MODEL` and `GMAIL_AI_MODEL_VERSION` are required deployment
+configuration. Every accepted notice stores both values, and migration
+`0013_gmail_controls.sql` rejects empty provenance. A model change must be made
+with:
+
+```sh
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... \
+  npm run gmail:model:promote -- '@cf/provider/model' 'provider-version'
+```
+
+The command first runs the complete fail-closed synthetic suite, then runs
+non-personal accepted, low-confidence, and safety fixtures against the
+candidate through the Workers AI API. It updates `wrangler.gmail.toml` only
+after every regression passes. The suite also covers prompt injection,
+malformed output, quota exhaustion, and invalid dates without personal data.
+
+## Privacy inspection
+
+Run `npm run privacy:gmail` before deployment. The inspection covers D1
+schemas, R2 object metadata and names, authenticated image URLs, Daily Brief
+and Notices View render input, fixed-code incidents, Gmail Worker
+observability/logging, and synthetic raw Gmail canaries. It fails if subjects,
+bodies, sender addresses, message/thread IDs, prompts, or unvalidated output
+can reach those retained or delivered surfaces.
 
 Cloudflare Access protects `GET /admin/gmail-review` and
 `POST /admin/gmail-review/:id`. Both household roles can inspect the minimized
@@ -69,9 +117,9 @@ authenticated upstream API request and are never logged or retained.
 
 ## Deployment
 
-Apply D1 migrations `0010_gmail_notices.sql` and
-`0011_protected_gmail_review.sql`. Set these secrets on both Workers as
-applicable:
+Apply D1 migrations `0010_gmail_notices.sql`,
+`0011_protected_gmail_review.sql`, and `0013_gmail_controls.sql`. Set these
+secrets on both Workers as applicable:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`

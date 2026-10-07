@@ -1,6 +1,8 @@
 export type IncidentCode =
   | "OAUTH_REVOKED_OR_EXPIRED"
   | "SOURCE_SCHEDULED_FAILURE"
+  | "GMAIL_PROCESSING_REPEATED_FAILURE"
+  | "AI_QUOTA_EXHAUSTED"
   | "GENERATION_PUBLICATION_BLOCKED"
   | "DEVICE_AUTH_SUSPICIOUS"
   | "DEVICE_CHECK_IN_MISSING";
@@ -11,9 +13,10 @@ export interface IncidentSnapshot {
     state: "connected" | "disconnected" | "revoked" | "expired";
   }>;
   sources: Array<{
-    source: "weather" | "calendar" | "lunch";
+    source: "weather" | "calendar" | "lunch" | "gmail";
     consecutiveFailures: number;
   }>;
+  aiQuota: "available" | "exhausted" | "not_applicable";
   latestGeneration: {
     state: "running" | "published" | "failed" | null;
     errorCode: string | null;
@@ -92,9 +95,15 @@ function desiredIncidents(
     if (source.consecutiveFailures >= 2) {
       desired.push({
         key: `source:${source.source}`,
-        code: "SOURCE_SCHEDULED_FAILURE"
+        code:
+          source.source === "gmail"
+            ? "GMAIL_PROCESSING_REPEATED_FAILURE"
+            : "SOURCE_SCHEDULED_FAILURE"
       });
     }
+  }
+  if (snapshot.aiQuota === "exhausted") {
+    desired.push({ key: "ai:quota", code: "AI_QUOTA_EXHAUSTED" });
   }
   if (
     snapshot.latestGeneration.state === "failed" &&
@@ -169,7 +178,7 @@ class D1IncidentRepository implements IncidentRepository {
   constructor(private readonly database: D1Database) {}
 
   async loadSnapshot(): Promise<IncidentSnapshot> {
-    const [oauth, sources, latestGeneration, device, authentication] =
+    const [oauth, sources, quota, latestGeneration, device, authentication] =
       await Promise.all([
         this.database
           .prepare(
@@ -186,8 +195,16 @@ class D1IncidentRepository implements IncidentRepository {
              FROM source_status ORDER BY source`
           )
           .all<{
-            source: "weather" | "calendar" | "lunch";
+            source: "weather" | "calendar" | "lunch" | "gmail";
             consecutive_failures: number;
+          }>(),
+        this.database
+          .prepare(
+            `SELECT status_value FROM operational_status
+             WHERE status_key = 'ai_quota'`
+          )
+          .first<{
+            status_value: "available" | "exhausted" | "not_applicable";
           }>(),
         this.database
           .prepare(
@@ -226,6 +243,7 @@ class D1IncidentRepository implements IncidentRepository {
         source: source.source,
         consecutiveFailures: source.consecutive_failures
       })),
+      aiQuota: quota?.status_value ?? "not_applicable",
       latestGeneration: {
         state: latestGeneration?.status ?? null,
         errorCode: latestGeneration?.error_code ?? null

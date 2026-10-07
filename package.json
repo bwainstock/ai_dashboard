@@ -10,7 +10,9 @@
     "build:device": "wrangler deploy --dry-run",
     "build:gmail": "wrangler deploy --dry-run --config wrangler.gmail.toml",
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "gmail:model:promote": "node scripts/promote-gmail-model.mjs",
     "lint": "eslint .",
+    "privacy:gmail": "vitest run test/gmail-privacy.test.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

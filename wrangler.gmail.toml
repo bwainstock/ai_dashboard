@@ -17,6 +17,9 @@ GMAIL_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 GMAIL_AI_MODEL_VERSION = "provider-current"
 NOTICE_GRACE_DAYS = "3"
 
+# Change GMAIL_AI_MODEL and GMAIL_AI_MODEL_VERSION only through
+# `npm run gmail:model:promote -- <model-id> <model-version>`.
+
 [observability]
 enabled = false
 

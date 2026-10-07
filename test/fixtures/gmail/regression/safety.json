@@ -1,0 +1,21 @@
+{
+  "name": "safety",
+  "candidate": {
+    "labelIds": ["INBOX"],
+    "from": "office@synthetic-school.example",
+    "subject": "Private update",
+    "body": "A private counseling appointment is scheduled.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "modelOutput": {
+    "isNotice": true,
+    "category": "school",
+    "summary": "Counseling appointment is scheduled.",
+    "relevantDate": "2026-10-12",
+    "action": null,
+    "senderOrganization": "Synthetic School",
+    "sensitive": true,
+    "confidence": 0.98
+  },
+  "expected": "protected"
+}

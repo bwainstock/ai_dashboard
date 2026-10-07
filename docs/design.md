@@ -229,6 +229,9 @@ Cloudflare Access roles:
 The display uses configured `Mom` and `Dad` labels rather than email addresses or legal names.
 
 OAuth refresh tokens are encrypted before D1 storage using an application key held as a Worker secret. Disconnect and delete controls must revoke access and remove retained data.
+The administrator-facing disconnect control revokes Google first, then purges
+account-scoped structured data and all private render generations so removed
+data cannot remain in D1, R2, or a previously rendered image.
 
 ## Phase-2 Household Notices
 
@@ -254,6 +257,9 @@ Use a dedicated Gmail-processing Worker:
 - Fail closed on model errors, malformed output, implausible dates, sensitive leakage, quota exhaustion, or low confidence.
 - Store the configured model ID and model version with accepted results.
 - Keep model IDs configurable and validate changes against synthetic fixtures.
+- Record the exact configured model ID and version on every accepted result;
+  promotion tooling must pass non-personal live and fail-closed regressions
+  before changing the deployment configuration.
 
 Raw email bodies are processed transiently and never persisted.
 

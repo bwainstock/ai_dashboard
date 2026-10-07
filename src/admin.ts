@@ -542,7 +542,9 @@ function administrationPage(role: AdministrationRole): Response {
 <label>Google accounts, labels, and selected calendars
 <textarea name="google" spellcheck="false" required></textarea></label>
 <p><button type="button" data-connect="mom">Connect Mom Google</button>
-<button type="button" data-connect="dad">Connect Dad Google</button></p>
+<button type="button" data-connect="dad">Connect Dad Google</button>
+<button type="button" data-disconnect="mom">Disconnect Mom Google</button>
+<button type="button" data-disconnect="dad">Disconnect Dad Google</button></p>
 <button type="submit">Save configuration</button> <output id="save-result"></output>
 </form></section>
 <section><h2>Operational status</h2><pre id="status">Loading…</pre></section>
@@ -569,6 +571,7 @@ async function read(url){const response=await fetch(url,{headers:{accept:"applic
 async function load(){const [configuration,status,review]=await Promise.all([read("/admin/configuration"),read("/admin/status"),read("/admin/gmail-review")]);form.latitude.value=configuration.weather.latitude;form.longitude.value=configuration.weather.longitude;form.slots.value=configuration.weather.slots.join(", ");form.google.value=JSON.stringify(configuration.google,null,2);statusBox.textContent=JSON.stringify(status,null,2);reviewBox.textContent=JSON.stringify(review,null,2);if(role!=="administrator")for(const control of form.elements)control.disabled=true}
 form.addEventListener("submit",async event=>{event.preventDefault();result.textContent="Saving…";try{const google=JSON.parse(form.google.value);const response=await fetch("/admin/configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({weather:{latitude:Number(form.latitude.value),longitude:Number(form.longitude.value),slots:form.slots.value.split(",").map(value=>value.trim()).filter(Boolean)},google})});if(!response.ok)throw new Error("Save failed");result.textContent="Saved";await load()}catch{result.textContent="Configuration was not saved"}});
 for(const button of document.querySelectorAll("[data-connect]"))button.addEventListener("click",async()=>{try{const value=await read("/admin/calendar/oauth/start?account="+button.dataset.connect);location.assign(value.authorizationUrl)}catch{result.textContent="Google connection could not be started"}});
+for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!confirm("Revoke Google access and permanently delete retained account data?"))return;result.textContent="Disconnecting…";try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error("Disconnect failed");result.textContent="Disconnected and deleted retained data";await load()}catch{result.textContent="Google account was not disconnected"}});
 load().catch(()=>{statusBox.textContent="Status unavailable"});`;
   return new Response(script, {
     headers: {

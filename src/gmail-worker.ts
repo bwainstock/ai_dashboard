@@ -9,6 +9,7 @@ import {
 } from "./google-gmail";
 import { refreshCalendarAccessToken } from "./google-calendar";
 import { noticeLifecycle } from "./notice-lifecycle";
+import { purgeExpiredGmailData } from "./gmail-controls";
 
 export interface GmailWorkerEnv {
   DB: D1Database;
@@ -19,7 +20,7 @@ export interface GmailWorkerEnv {
   GOOGLE_CLIENT_SECRET: string;
   CALENDAR_TOKEN_ENCRYPTION_KEY: string;
   GMAIL_AI_MODEL: string;
-  GMAIL_AI_MODEL_VERSION?: string;
+  GMAIL_AI_MODEL_VERSION: string;
   GMAIL_PROCESSOR_KEY: string;
   NOTICE_GRACE_DAYS?: string;
 }
@@ -34,10 +35,100 @@ function datePlus(date: Date, days: number): string {
   return new Date(date.getTime() + days * 24 * 60 * 60_000).toISOString();
 }
 
+function changes(result: D1Result): number {
+  return result.meta.changes ?? 0;
+}
+
+export async function runGmailRetentionMaintenance(
+  database: D1Database,
+  now: Date
+): Promise<{ accepted: number; protected: number; failures: number }> {
+  return purgeExpiredGmailData(
+    {
+      async purgeAccepted(cutoff) {
+        return changes(
+          await database
+            .prepare("DELETE FROM household_notices WHERE retained_until <= ?")
+            .bind(cutoff)
+            .run()
+        );
+      },
+      async purgeProtected(cutoff) {
+        return changes(
+          await database
+            .prepare(
+              "DELETE FROM gmail_protected_reviews WHERE expires_at <= ?"
+            )
+            .bind(cutoff)
+            .run()
+        );
+      },
+      async purgeFailures(cutoff) {
+        return changes(
+          await database
+            .prepare("DELETE FROM gmail_review_records WHERE expires_at <= ?")
+            .bind(cutoff)
+            .run()
+        );
+      }
+    },
+    now
+  );
+}
+
+export async function recordGmailProcessingFailure(
+  database: D1Database,
+  errorCode:
+    | "GMAIL_PROCESSING_FAILED"
+    | "GMAIL_OAUTH_REVOKED"
+    | "AI_QUOTA_EXHAUSTED"
+): Promise<void> {
+  await database
+    .prepare(
+      `UPDATE source_status
+       SET state = 'error', error_code = ?,
+           consecutive_failures = consecutive_failures + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE source = 'gmail'`
+    )
+    .bind(errorCode)
+    .run();
+  if (errorCode === "AI_QUOTA_EXHAUSTED") {
+    await database
+      .prepare(
+        `UPDATE operational_status SET status_value = 'exhausted',
+           updated_at = CURRENT_TIMESTAMP WHERE status_key = 'ai_quota'`
+      )
+      .run();
+  }
+}
+
+export async function recordGmailProcessingRecovery(
+  database: D1Database,
+  now: Date
+): Promise<void> {
+  await database
+    .prepare(
+      `UPDATE source_status SET state = 'fresh', last_success_at = ?,
+         error_code = NULL, consecutive_failures = 0,
+         last_failure_slot_key = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE source = 'gmail'`
+    )
+    .bind(now.toISOString())
+    .run();
+  await database
+    .prepare(
+      `UPDATE operational_status SET status_value = 'available',
+         updated_at = CURRENT_TIMESTAMP WHERE status_key = 'ai_quota'`
+    )
+    .run();
+}
+
 export async function processConnectedGmailAccounts(
   env: GmailWorkerEnv,
   now = new Date()
 ): Promise<{ accounts: number; candidates: number; accepted: number }> {
+  await runGmailRetentionMaintenance(env.DB, now);
   const rows = await env.DB.prepare(
     `SELECT account_id, encrypted_refresh_token, gmail_history_id
      FROM calendar_accounts
@@ -50,14 +141,32 @@ export async function processConnectedGmailAccounts(
   let candidateCount = 0;
   let acceptedCount = 0;
   for (const account of rows.results) {
-    const accessToken = await refreshCalendarAccessToken({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: await decryptRefreshToken(
-        account.encrypted_refresh_token,
-        env.CALENDAR_TOKEN_ENCRYPTION_KEY
-      )
-    });
+    let accessToken: string;
+    try {
+      accessToken = await refreshCalendarAccessToken({
+        clientId: env.GOOGLE_CLIENT_ID,
+        clientSecret: env.GOOGLE_CLIENT_SECRET,
+        refreshToken: await decryptRefreshToken(
+          account.encrypted_refresh_token,
+          env.CALENDAR_TOKEN_ENCRYPTION_KEY
+        )
+      });
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "CALENDAR_OAUTH_REVOKED"
+      ) {
+        await env.DB.prepare(
+          `UPDATE calendar_accounts SET oauth_status = 'revoked',
+             updated_at = CURRENT_TIMESTAMP WHERE account_id = ?`
+        )
+          .bind(account.account_id)
+          .run();
+      }
+      throw error;
+    }
     const scan = account.gmail_history_id
       ? await fetchIncrementalInboxCandidates({
           accessToken,
@@ -75,7 +184,7 @@ export async function processConnectedGmailAccounts(
           const output = await env.AI.run(env.GMAIL_AI_MODEL, input);
           return {
             ...(output && typeof output === "object" ? output : { response: output }),
-            modelVersion: env.GMAIL_AI_MODEL_VERSION ?? "provider-current"
+            modelVersion: env.GMAIL_AI_MODEL_VERSION
           };
         },
         async saveValidated(notice) {
@@ -182,25 +291,9 @@ export async function processConnectedGmailAccounts(
         now.toISOString(),
         account.account_id
       ),
-      env.DB.prepare(
-        `DELETE FROM household_notices WHERE retained_until < ?`
-      ).bind(now.toISOString()),
-      env.DB.prepare(
-        `DELETE FROM gmail_review_records WHERE expires_at < ?`
-      ).bind(now.toISOString()),
-      env.DB.prepare(
-        `DELETE FROM gmail_protected_reviews WHERE expires_at < ?`
-      ).bind(now.toISOString())
     ]);
   }
-  await env.DB.prepare(
-    `UPDATE source_status SET state = 'fresh', last_success_at = ?,
-       error_code = NULL, consecutive_failures = 0,
-       last_failure_slot_key = NULL, updated_at = CURRENT_TIMESTAMP
-     WHERE source = 'gmail'`
-  )
-    .bind(now.toISOString())
-    .run();
+  await recordGmailProcessingRecovery(env.DB, now);
   return {
     accounts: rows.results.length,
     candidates: candidateCount,
@@ -229,15 +322,23 @@ export default {
           ("code" in error &&
             typeof error.code === "string" &&
             error.code.toLowerCase().includes("quota")));
-      await env.DB.prepare(
-        `UPDATE operational_status SET status_value = ?,
-           updated_at = CURRENT_TIMESTAMP WHERE status_key = 'ai_quota'`
-      )
-        .bind(quota ? "exhausted" : "available")
-        .run();
+      const oauth =
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "CALENDAR_OAUTH_REVOKED";
+      const code = quota
+        ? "AI_QUOTA_EXHAUSTED"
+        : oauth
+          ? "GMAIL_OAUTH_REVOKED"
+          : "GMAIL_PROCESSING_FAILED";
+      await recordGmailProcessingFailure(env.DB, code);
       return Response.json(
-        { error: quota ? "AI_QUOTA_EXHAUSTED" : "GMAIL_PROCESSING_FAILED" },
-        { status: quota ? 429 : 502, headers: { "cache-control": "no-store" } }
+        { error: code },
+        {
+          status: quota ? 429 : oauth ? 401 : 502,
+          headers: { "cache-control": "no-store" }
+        }
       );
     }
   }

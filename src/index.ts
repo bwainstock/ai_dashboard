@@ -39,10 +39,16 @@ import {
 } from "./lunch";
 import { runOperationalIncidentCheck } from "./incidents";
 import {
+  disconnectGoogleAccount,
+  type GmailAccountDataRepository,
+  type GmailAccountId
+} from "./gmail-controls";
+import {
   exchangeCalendarAuthorizationCode,
   fetchGoogleCalendarEvents,
   listGoogleCalendars,
-  refreshCalendarAccessToken
+  refreshCalendarAccessToken,
+  revokeGoogleAccess
 } from "./google-calendar";
 
 export interface Env {
@@ -513,6 +519,7 @@ async function gmailConfiguration(
   if (!isAdministrator(request, env)) {
     return json({ error: "Unauthorized" }, 401);
   }
+
   if (request.method === "PUT") {
     const input = await request.json<{
       senders?: Array<{ domain?: string; kind?: string }>;
@@ -558,6 +565,97 @@ async function gmailConfiguration(
       lastProcessedAt: account.gmail_scan_completed_at
     }))
   });
+}
+
+async function deletePrivateImages(images: R2Bucket): Promise<void> {
+  let cursor: string | undefined;
+  do {
+    const page = await images.list({ cursor });
+    const keys = page.objects.map(({ key }) => key);
+    if (keys.length > 0) await images.delete(keys);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
+function gmailAccountRepository(
+  database: D1Database
+): GmailAccountDataRepository {
+  return {
+    async deleteRetainedDataAndDisconnect(accountId) {
+      await database.batch([
+        database
+          .prepare("DELETE FROM selected_calendars WHERE account_id = ?")
+          .bind(accountId),
+        database.prepare("DELETE FROM calendar_snapshots"),
+        database
+          .prepare("DELETE FROM household_notices WHERE account_id = ?")
+          .bind(accountId),
+        database
+          .prepare("DELETE FROM gmail_protected_reviews WHERE account_id = ?")
+          .bind(accountId),
+        database
+          .prepare("DELETE FROM gmail_review_records WHERE account_id = ?")
+          .bind(accountId),
+        database.prepare("DELETE FROM current_render_generation"),
+        database.prepare("DELETE FROM render_generations"),
+        database
+          .prepare(
+            `UPDATE calendar_accounts
+             SET encrypted_refresh_token = NULL, oauth_status = 'disconnected',
+                 gmail_history_id = NULL, gmail_scan_started_at = NULL,
+                 gmail_scan_completed_at = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE account_id = ?`
+          )
+          .bind(accountId)
+      ]);
+    }
+  };
+}
+
+async function disconnectGmailAccount(
+  request: Request,
+  env: Env,
+  accountId: GmailAccountId
+): Promise<Response> {
+  if (!isAdministrator(request, env)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  if (!env.CALENDAR_TOKEN_ENCRYPTION_KEY) {
+    return json({ error: "Google account controls are not configured" }, 503);
+  }
+  const account = await env.DB.prepare(
+    `SELECT account_id, encrypted_refresh_token, oauth_status
+     FROM calendar_accounts WHERE account_id = ?`
+  )
+    .bind(accountId)
+    .first<{
+      account_id: GmailAccountId;
+      encrypted_refresh_token: string | null;
+      oauth_status: string;
+    }>();
+  if (!account?.encrypted_refresh_token) {
+    return json({ error: "Google account is disconnected" }, 409);
+  }
+  try {
+    await disconnectGoogleAccount(
+      {
+        accountId,
+        refreshToken: await decryptRefreshToken(
+          account.encrypted_refresh_token,
+          env.CALENDAR_TOKEN_ENCRYPTION_KEY
+        )
+      },
+      {
+        repository: gmailAccountRepository(env.DB),
+        revokeGoogleAccess: (token) => revokeGoogleAccess(token),
+        deletePrivateImages: () => deletePrivateImages(env.IMAGES)
+      }
+    );
+    return json({ accountId, disconnected: true });
+  } catch {
+    return json({ error: "Google access revocation failed" }, 502);
+  }
 }
 
 async function accessTokenForAccount(
@@ -939,7 +1037,13 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         headers: { "X-Gmail-Processor-Key": env.GMAIL_PROCESSOR_KEY }
       });
     } catch {
-      // Gmail processing fails closed; V1 sources and the last valid notices remain usable.
+      await env.DB.prepare(
+        `UPDATE source_status
+         SET state = 'error', error_code = 'GMAIL_PROCESSOR_UNREACHABLE',
+             consecutive_failures = consecutive_failures + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE source = 'gmail'`
+      ).run();
     }
   }
   const configuration = await loadConfiguration(env);
@@ -1313,6 +1417,16 @@ export default {
       url.pathname === "/admin/gmail-configuration"
     ) {
       return gmailConfiguration(request, env);
+    }
+    const disconnectMatch = url.pathname.match(
+      /^\/admin\/gmail-accounts\/(mom|dad)\/disconnect$/
+    );
+    if (request.method === "POST" && disconnectMatch) {
+      return disconnectGmailAccount(
+        request,
+        env,
+        disconnectMatch[1] as GmailAccountId
+      );
     }
     return json({ error: "Not found" }, 404);
   },
