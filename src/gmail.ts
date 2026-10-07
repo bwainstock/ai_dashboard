@@ -35,7 +35,21 @@ export interface HouseholdNotice {
   modelVersion: string;
 }
 
+export interface ProtectedGmailReview extends HouseholdNotice {
+  kind: "uncertain" | "sensitive";
+  confidence: number;
+}
+
+export interface ProtectedReviewCorrection {
+  category: HouseholdNoticeCategory;
+  summary: string;
+  relevantDate: string | null;
+  action: string | null;
+  senderOrganization: string;
+}
+
 interface ValidExtraction {
+  isNotice: boolean;
   category: HouseholdNoticeCategory;
   summary: string;
   relevantDate: string | null;
@@ -49,6 +63,7 @@ const EXTRACTION_KEYS = [
   "action",
   "category",
   "confidence",
+  "isNotice",
   "relevantDate",
   "senderOrganization",
   "sensitive",
@@ -62,6 +77,8 @@ const SAFE_CATEGORIES = new Set<HouseholdNoticeCategory>([
 ]);
 const SENSITIVE_PATTERN =
   /\b(diagnos(?:is|ed)|medical|medication|therapy|counsel(?:or|ing)|financial|bank|credit card|social security|password|legal dispute|custody)\b/i;
+const PROMPT_INJECTION_PATTERN =
+  /\b(?:ignore|disregard|override)\b.{0,80}\b(?:instructions?|prompt|system|developer|policy)\b|\b(?:system prompt|developer message|jailbreak)\b/i;
 
 function senderDomain(address: string): string {
   const match = address.match(/@([a-z0-9.-]+)/i);
@@ -143,12 +160,26 @@ function shortText(value: unknown, maximum: number): value is string {
   );
 }
 
+function isQuotaError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (("status" in error && error.status === 429) ||
+      ("code" in error &&
+        typeof error.code === "string" &&
+        error.code.toLowerCase().includes("quota")))
+  );
+}
+
 export function validateNoticeExtraction(
   value: unknown,
   now: Date
 ):
   | { valid: true; notice: ValidExtraction }
-  | { valid: false; reason: "schema" | "confidence" | "date" | "sensitive" } {
+  | {
+      valid: false;
+      reason: "schema" | "confidence" | "date" | "sensitivity_contradiction";
+    } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { valid: false, reason: "schema" };
   }
@@ -160,6 +191,7 @@ export function validateNoticeExtraction(
   }
   if (
     !SAFE_CATEGORIES.has(record.category as HouseholdNoticeCategory) ||
+    typeof record.isNotice !== "boolean" ||
     !shortText(record.summary, 160) ||
     (record.action !== null && !shortText(record.action, 100)) ||
     !shortText(record.senderOrganization, 80) ||
@@ -169,16 +201,16 @@ export function validateNoticeExtraction(
   ) {
     return { valid: false, reason: "schema" };
   }
+  if (record.confidence < 0 || record.confidence > 1) {
+    return { valid: false, reason: "confidence" };
+  }
   if (
-    record.sensitive ||
+    !record.sensitive &&
     SENSITIVE_PATTERN.test(
       `${record.summary} ${record.action ?? ""} ${record.senderOrganization}`
     )
   ) {
-    return { valid: false, reason: "sensitive" };
-  }
-  if (record.confidence < 0.9 || record.confidence > 1) {
-    return { valid: false, reason: "confidence" };
+    return { valid: false, reason: "sensitivity_contradiction" };
   }
   if (record.relevantDate !== null) {
     if (
@@ -202,6 +234,51 @@ export function validateNoticeExtraction(
   return { valid: true, notice: record as unknown as ValidExtraction };
 }
 
+export function validateProtectedReviewCorrection(
+  value: unknown,
+  now: Date
+):
+  | { valid: true; correction: ProtectedReviewCorrection }
+  | { valid: false } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { valid: false };
+  }
+  const record = value as Record<string, unknown>;
+  const expected = [
+    "action",
+    "category",
+    "relevantDate",
+    "senderOrganization",
+    "summary"
+  ];
+  if (
+    JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expected)
+  ) {
+    return { valid: false };
+  }
+  const validated = validateNoticeExtraction(
+    {
+      ...record,
+      confidence: 1,
+      isNotice: true,
+      sensitive: false
+    },
+    now
+  );
+  return validated.valid
+    ? {
+        valid: true,
+        correction: {
+          category: validated.notice.category,
+          summary: validated.notice.summary.trim(),
+          relevantDate: validated.notice.relevantDate,
+          action: validated.notice.action?.trim() ?? null,
+          senderOrganization: validated.notice.senderOrganization.trim()
+        }
+      }
+    : { valid: false };
+}
+
 async function sourceKey(threadId: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -221,16 +298,34 @@ export async function processGmailCandidate(
     modelId: string;
     runAi(input: unknown): Promise<unknown>;
     saveValidated(notice: HouseholdNotice): Promise<void>;
-    recordReview?(
+    saveProtected?(review: ProtectedGmailReview): Promise<void>;
+    recordFailure?(
       accountId: "mom" | "dad",
-      reason: "model_error" | "malformed" | "schema" | "confidence" | "date" | "sensitive"
+      reason:
+        | "model_error"
+        | "malformed"
+        | "schema"
+        | "confidence"
+        | "date"
+        | "prompt_injection"
+        | "sensitivity_contradiction"
     ): Promise<void>;
   }
-): Promise<{ status: "filtered" | "rejected" | "accepted" }> {
+): Promise<
+  | { status: "filtered" | "rejected" | "accepted" | "protected" }
+  | { status: "protected"; marker: { accountId: "mom" | "dad" } }
+> {
   if (!shouldProcessGmailCandidate(candidate, ports.allowedSenderDomains)) {
     return { status: "filtered" };
   }
   const minimized = minimizeGmailMessage(candidate);
+  if (
+    PROMPT_INJECTION_PATTERN.test(minimized.topic) ||
+    PROMPT_INJECTION_PATTERN.test(minimized.content)
+  ) {
+    await ports.recordFailure?.(ports.accountId, "prompt_injection");
+    return { status: "rejected" };
+  }
   let raw: unknown;
   try {
     raw = await ports.runAi({
@@ -259,6 +354,7 @@ export async function processGmailCandidate(
                 type: "string",
                 enum: [...SAFE_CATEGORIES]
               },
+              isNotice: { type: "boolean" },
               summary: { type: "string", maxLength: 160 },
               relevantDate: {
                 anyOf: [
@@ -282,8 +378,9 @@ export async function processGmailCandidate(
       temperature: 0,
       max_tokens: 300
     });
-  } catch {
-    await ports.recordReview?.(ports.accountId, "model_error");
+  } catch (error) {
+    if (isQuotaError(error)) throw error;
+    await ports.recordFailure?.(ports.accountId, "model_error");
     return { status: "rejected" };
   }
   const response =
@@ -294,19 +391,20 @@ export async function processGmailCandidate(
   try {
     parsed = typeof response === "string" ? JSON.parse(response) : response;
   } catch {
-    await ports.recordReview?.(ports.accountId, "malformed");
+    await ports.recordFailure?.(ports.accountId, "malformed");
     return { status: "rejected" };
   }
   const validation = validateNoticeExtraction(parsed, ports.now);
   if (!validation.valid) {
-    await ports.recordReview?.(ports.accountId, validation.reason);
+    await ports.recordFailure?.(ports.accountId, validation.reason);
     return { status: "rejected" };
   }
+  if (!validation.notice.isNotice) return { status: "filtered" };
   const modelVersion =
     raw && typeof raw === "object" && "modelVersion" in raw
       ? String((raw as { modelVersion: unknown }).modelVersion)
       : "unspecified";
-  await ports.saveValidated({
+  const notice: HouseholdNotice = {
     accountId: ports.accountId,
     sourceKey: await sourceKey(candidate.threadId),
     category: validation.notice.category,
@@ -316,6 +414,20 @@ export async function processGmailCandidate(
     senderOrganization: validation.notice.senderOrganization.trim(),
     modelId: ports.modelId,
     modelVersion
-  });
+  };
+  if (
+    validation.notice.sensitive ||
+    validation.notice.confidence < 0.9
+  ) {
+    await ports.saveProtected?.({
+      ...notice,
+      kind: validation.notice.sensitive ? "sensitive" : "uncertain",
+      confidence: validation.notice.confidence
+    });
+    return validation.notice.sensitive
+      ? { status: "protected", marker: { accountId: ports.accountId } }
+      : { status: "protected" };
+  }
+  await ports.saveValidated(notice);
   return { status: "accepted" };
 }

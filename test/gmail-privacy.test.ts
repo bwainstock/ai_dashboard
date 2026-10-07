@@ -16,10 +16,12 @@ describe("Gmail privacy inspection", () => {
   });
 
   test("retained schema has only hashes and validated notice fields", async () => {
-    const migration = await readFile(
-      "migrations/0010_gmail_notices.sql",
-      "utf8"
-    );
+    const migration = (
+      await Promise.all([
+        readFile("migrations/0010_gmail_notices.sql", "utf8"),
+        readFile("migrations/0011_protected_gmail_review.sql", "utf8")
+      ])
+    ).join("\n");
 
     for (const forbiddenColumn of [
       "message_id",
@@ -37,6 +39,8 @@ describe("Gmail privacy inspection", () => {
     }
     expect(migration).toContain("source_key");
     expect(migration).toContain("CHECK (length(source_key) = 64)");
+    expect(migration).toContain("gmail_protected_reviews");
+    expect(migration).not.toMatch(/\braw_(?:subject|body|content)\b/i);
   });
 
   test("delivery HTML contains approved fields, not fixture raw Gmail data", () => {

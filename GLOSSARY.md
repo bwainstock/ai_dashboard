@@ -28,6 +28,12 @@ _Avoid_: Important email, priority email
 An account-specific indication that a sensitive Household Notice is available for protected review, revealing no category, sender, date, or message content.
 _Avoid_: Private email, sensitive alert
 
+**Protected Review Record**:
+A validated, access-protected Gmail extraction awaiting administrator dismissal,
+correction, or publication. Both administrator and reviewer roles may inspect it;
+only the administrator may change its state.
+_Avoid_: Raw email, review email
+
 **Operational Incident**:
 A durable active state for one actionable system condition. It sends one fixed-code email, resolves automatically after recovery, and may alert again only after a later recurrence.
 _Avoid_: Error message, household alert

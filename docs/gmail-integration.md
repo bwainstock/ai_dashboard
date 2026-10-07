@@ -28,29 +28,46 @@ Before inference, the Worker removes quoted history, signatures, tracking
 URLs, email addresses, and excess text. The prompt labels all email fields as
 untrusted data and explicitly instructs the model to ignore embedded
 instructions. Workers AI receives a strict JSON Schema. The application then
-independently rejects extra/missing fields, unsafe categories, sensitive text,
-addresses, implausible dates, overlong fields, malformed output, model errors,
-and confidence below `0.90`.
+independently rejects prompt injection, extra/missing fields, unsafe
+categories, addresses, implausible dates, overlong fields, malformed output,
+invalid confidence, sensitivity contradictions, and model errors. Provider
+quota failures propagate to the Worker boundary so the scan cursor is not
+advanced and AI quota status is marked exhausted.
 
-Only independently validated fields are written to `household_notices`.
-Thread deduplication uses a one-way SHA-256 source key. Review records contain
-only the household account label, a fixed rejection reason, and timestamps.
-They contain no candidate or model content. Active notices expire shortly
-after their date and are deleted 30 days later; review records expire in 14
+Only independently validated, non-sensitive fields with confidence at least
+`0.90` are written automatically to `household_notices`. Lower-confidence
+relevant candidates are written only to `gmail_protected_reviews`. Sensitive
+relevant candidates are written there and produce only a Mom- or Dad-specific
+Private Notice Marker on the shared display. The marker render model contains
+only the account label.
+
+Thread deduplication uses a one-way SHA-256 source key. Protected Review
+Records contain only validated structured fields, confidence, account label,
+source hash, and lifecycle timestamps. Fixed failure records contain only
+account label, reason, and timestamps. Neither contains candidate content or
+unvalidated model output. Active notices expire shortly after their date and
+are deleted 30 days later; protected and failure review records expire in 14
 days.
+
+Cloudflare Access protects `GET /admin/gmail-review` and
+`POST /admin/gmail-review/:id`. Both household roles can inspect the minimized
+Protected Review Record response. Only administrators can dismiss, correct,
+or publish. Corrections are independently revalidated before storage.
 
 The Daily Brief reads at most two active rows and receives only category,
 neutral summary, normalized date, requested action, and sender organization.
-Raw subjects, bodies, sender addresses, Gmail message/thread IDs, prompts,
-confidence, and unvalidated output are absent from D1 notice/review schemas,
-R2 metadata, rendered HTML, application URLs, operational incidents, and
-captured application logs. Gmail API message IDs occur only transiently in the
-required authenticated upstream API request and are never logged or retained.
+For a sensitive record it receives only the account-specific marker. Raw
+subjects, bodies, sender addresses, Gmail message/thread IDs, prompts, and
+unvalidated output are absent from D1 notice/review schemas, R2 metadata,
+rendered HTML, application URLs, operational incidents, and captured
+application logs. Gmail API message IDs occur only transiently in the required
+authenticated upstream API request and are never logged or retained.
 
 ## Deployment
 
-Apply D1 migration `0010_gmail_notices.sql`. Set these secrets on both Workers
-as applicable:
+Apply D1 migrations `0010_gmail_notices.sql` and
+`0011_protected_gmail_review.sql`. Set these secrets on both Workers as
+applicable:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`

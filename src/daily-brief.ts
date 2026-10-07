@@ -117,8 +117,16 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
         `<li class="notice"><strong>${escapeHtml(notice.summary)}</strong><span class="notice-meta">${escapeHtml(notice.senderOrganization)}${notice.relevantDate ? ` · ${escapeHtml(notice.relevantDate)}` : ""}${notice.action ? ` · ${escapeHtml(notice.action)}` : ""}</span></li>`
     )
     .join("");
-  const noticeSection = notices
-    ? `<aside class="notices" aria-label="Household Notices"><h2>Notices</h2><ul>${notices}</ul></aside>`
+  const privateMarkers = (model.privateNoticeMarkers ?? [])
+    .slice(0, 2)
+    .map(
+      ({ accountId }) =>
+        `<li class="notice"><strong>${accountId === "mom" ? "Mom" : "Dad"} Private Notice</strong></li>`
+    )
+    .join("");
+  const noticeItems = `${privateMarkers}${notices}`;
+  const noticeSection = noticeItems
+    ? `<aside class="notices" aria-label="Household Notices"><h2>Notices</h2><ul>${noticeItems}</ul></aside>`
     : "";
 
   return `<!doctype html>

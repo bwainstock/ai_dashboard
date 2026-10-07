@@ -245,3 +245,34 @@ test("Daily Brief publishes at most two notices using only approved fields", () 
     expect(html).not.toContain(forbidden);
   }
 });
+
+test("sensitive mail renders only account-specific Private Notice Markers", () => {
+  const html = dailyBriefHtml({
+    weather: {
+      observedAt: "2026-10-07T10:25",
+      current: { temperature: 68, condition: "Clear" },
+      today: {
+        date: "2026-10-07",
+        condition: "Clear",
+        high: 75,
+        low: 55,
+        precipitationProbability: 0
+      },
+      tomorrow: {
+        date: "2026-10-08",
+        condition: "Clear",
+        high: 76,
+        low: 56,
+        precipitationProbability: 0
+      }
+    },
+    stale: false,
+    lunch: { status: "available", stale: false, entrees: [] },
+    privateNoticeMarkers: [{ accountId: "mom" }, { accountId: "dad" }],
+    updatedAt: "2026-10-07T17:30:00.000Z"
+  });
+
+  expect(html).toContain("Mom Private Notice");
+  expect(html).toContain("Dad Private Notice");
+  expect(html).not.toMatch(/appointment|sender|category|2026-10-13/i);
+});
