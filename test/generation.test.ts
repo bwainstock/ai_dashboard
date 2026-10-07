@@ -62,6 +62,7 @@ function ports(
     classifyLunchWithAi: vi.fn().mockResolvedValue("pasta"),
     renderDailyBrief: vi.fn().mockResolvedValue(png()),
     renderCalendarView: vi.fn().mockResolvedValue(png()),
+    renderLunchView: vi.fn().mockResolvedValue(png()),
     publish: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue(undefined),
     ...overrides
@@ -111,6 +112,20 @@ describe("scheduled weather generation", () => {
       stale: false,
       updatedAt: "2026-10-07T17:30:00.000Z"
     });
+    expect(boundary.renderLunchView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        week: "current",
+        days: expect.arrayContaining([
+          expect.objectContaining({
+            date: "2026-10-07",
+            entrees: [
+              { name: "Cheese Pizza", icon: "pizza" },
+              { name: "Vegetable Yakisoba", icon: "pasta" }
+            ]
+          })
+        ])
+      })
+    );
     expect(boundary.publish).toHaveBeenCalledWith({
       slotKey: "2026-10-07T17:30:00.000Z",
       views: [
@@ -125,6 +140,12 @@ describe("scheduled weather generation", () => {
           filename: "calendar-view-20261007T173000Z.png",
           objectKey: "generations/20261007T173000Z/calendar-view.png",
           image: expect.any(Uint8Array)
+        },
+        {
+          viewType: "lunch",
+          filename: "lunch-view-20261007T173000Z.png",
+          objectKey: "generations/20261007T173000Z/lunch-view.png",
+          image: expect.any(Uint8Array)
         }
       ],
       width: 800,
@@ -133,6 +154,33 @@ describe("scheduled weather generation", () => {
       lunch: LUNCH,
       generatedAt: "2026-10-07T17:30:00.000Z"
     });
+  });
+
+  test("a weekend generation requests the upcoming school week and labels an unavailable menu explicitly", async () => {
+    const boundary = ports({
+      fetchLunch: vi.fn().mockResolvedValue({ days: [] })
+    });
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-10T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(boundary.renderLunchView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        week: "upcoming",
+        status: "upcoming_unavailable"
+      })
+    );
   });
 
   test("an explicit upstream failure publishes the last valid weather as stale", async () => {

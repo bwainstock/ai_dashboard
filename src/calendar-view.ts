@@ -87,7 +87,7 @@ export function calendarViewHtml(model: CalendarViewModel): string {
       });
     return `<section>
       <h2>${dayHeading(date, offset, model.timezone)}<small>${escapeHtml(date)}</small></h2>
-      <ul>${events.map((event) => eventItem(event, model.timezone)).join("") || '<li class="empty">No events</li>'}</ul>
+      <ul>${events.map((event) => eventItem(event, model.timezone)).join("") || '<li class="empty" data-missing-state>No events</li>'}</ul>
     </section>`;
   });
   const updated = new Intl.DateTimeFormat("en-US", {
@@ -105,7 +105,9 @@ export function calendarViewHtml(model: CalendarViewModel): string {
     * { box-sizing: border-box; }
     html, body { width: 800px; height: 480px; margin: 0; overflow: hidden; }
     body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 17px 24px 12px; }
-    header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 4px solid #000; padding-bottom: 8px; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #000; padding-bottom: 8px; }
+    .heading { display: flex; align-items: center; gap: 10px; }
+    header svg { width: 34px; height: 34px; }
     h1 { font-size: 32px; margin: 0; }
     header span { font-size: 16px; font-weight: 700; }
     main { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; height: 375px; padding-top: 11px; }
@@ -126,7 +128,7 @@ export function calendarViewHtml(model: CalendarViewModel): string {
   </style>
 </head>
 <body>
-  <header><h1>Calendar View</h1><span>Today + next 2 days</span></header>
+  <header><div class="heading"><svg viewBox="0 0 48 48" role="img" aria-label="Calendar icon"><rect x="6" y="9" width="36" height="33" rx="3" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 19h36M15 5v9m18-9v9" stroke="currentColor" stroke-width="4"/></svg><h1>Calendar View</h1></div><span>Today + next 2 days</span></header>
   <main>${days.join("")}</main>
   <footer>
     <span>${model.stale ? '<span class="stale">⚠ Last available calendar</span>' : ""}</span>

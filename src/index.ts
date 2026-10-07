@@ -1,6 +1,8 @@
 import puppeteer from "@cloudflare/puppeteer";
 import { dailyBriefHtml } from "./daily-brief";
 import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
+import { lunchViewHtml, type LunchViewModel } from "./lunch-view";
+import { validateRenderedPage } from "./render-validation";
 import {
   normalizeCalendarEvents,
   type CalendarEvent,
@@ -146,8 +148,8 @@ async function display(request: Request, env: Env): Promise<Response> {
   const manualWake =
     updateSource !== undefined &&
     !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
-  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
-  const viewType = viewCursor === 1 ? "calendar" : "daily_brief";
+  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 3 : 0;
+  const viewType = ["daily_brief", "calendar", "lunch"][viewCursor];
   await env.DB.prepare(
     `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
      WHERE device_id = ?`
@@ -668,6 +670,7 @@ async function renderDailyBrief(
       deviceScaleFactor: 1
     });
     await page.setContent(dailyBriefHtml(model), { waitUntil: "networkidle0" });
+    await validateRenderedPage(page, "Daily Brief");
     return await page.screenshot({
       type: "png",
       fullPage: false,
@@ -693,6 +696,33 @@ async function renderCalendarView(
     await page.setContent(calendarViewHtml(model), {
       waitUntil: "networkidle0"
     });
+    await validateRenderedPage(page, "Calendar View");
+    return await page.screenshot({
+      type: "png",
+      fullPage: false,
+      captureBeyondViewport: false
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
+async function renderLunchView(
+  env: Env,
+  model: LunchViewModel
+): Promise<Uint8Array> {
+  const browser = await puppeteer.launch(env.BROWSER);
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({
+      width: 800,
+      height: 480,
+      deviceScaleFactor: 1
+    });
+    await page.setContent(lunchViewHtml(model), {
+      waitUntil: "networkidle0"
+    });
+    await validateRenderedPage(page, "Lunch View");
     return await page.screenshot({
       type: "png",
       fullPage: false,
@@ -866,6 +896,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
       },
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       renderCalendarView: (model) => renderCalendarView(env, model),
+      renderLunchView: (model) => renderLunchView(env, model),
       publish: (publication) => publishGeneration(env, publication),
       async recordFailure(slotKey, code, message) {
         await env.DB.prepare(

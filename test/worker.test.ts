@@ -19,7 +19,7 @@ class TestDatabase {
         filename: string;
         objectKey: string;
         byteSize: number;
-        viewType?: "daily_brief" | "calendar";
+        viewType?: "daily_brief" | "calendar" | "lunch";
       }
     | undefined;
   calendarGeneration:
@@ -28,6 +28,14 @@ class TestDatabase {
         objectKey: string;
         byteSize: number;
         viewType: "calendar";
+      }
+    | undefined;
+  lunchGeneration:
+    | {
+        filename: string;
+        objectKey: string;
+        byteSize: number;
+        viewType: "lunch";
       }
     | undefined;
   configuration = {
@@ -62,12 +70,15 @@ class TestDatabase {
             : null) as T | null;
         }
         if (query.includes("FROM render_generations")) {
-          const requestedView =
-            query.includes("view_type = ?") &&
-            String(parameters()[0]) === "calendar";
-          const generation = requestedView
-            ? this.calendarGeneration
-            : this.publishedGeneration;
+          const requestedView = query.includes("view_type = ?")
+            ? String(parameters()[0])
+            : "daily_brief";
+          const generation =
+            requestedView === "calendar"
+              ? this.calendarGeneration
+              : requestedView === "lunch"
+                ? this.lunchGeneration
+                : this.publishedGeneration;
           if (
             query.includes("filename = ?") &&
             generation?.filename !== parameters()[0]
@@ -400,6 +411,57 @@ describe("TRMNL BYOS device service", () => {
     expect((await button.json<{ filename: string }>()).filename).not.toBe(
       firstFilename
     );
+  });
+
+  test("short presses complete the Daily Brief to Calendar View to Lunch View cycle", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/daily-brief.png",
+      byteSize: 12_345,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: "calendar-view-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/calendar-view.png",
+      byteSize: 12_346,
+      viewType: "calendar"
+    };
+    database.lunchGeneration = {
+      filename: "lunch-view-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/lunch-view.png",
+      byteSize: 12_347,
+      viewType: "lunch"
+    };
+    const env = testEnv(database);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: "AA:BB:CC:DD:EE:FF" }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const headers = {
+      ID: "AA:BB:CC:DD:EE:FF",
+      "Access-Token": token,
+      "Update-Source": "button"
+    };
+
+    const filenames = [];
+    for (let press = 0; press < 3; press += 1) {
+      const response = await worker.fetch(
+        new Request("https://device.test/api/display", { headers }),
+        env
+      );
+      filenames.push((await response.json<{ filename: string }>()).filename);
+    }
+
+    expect(filenames).toEqual([
+      "calendar-view-20261007T173000Z.png",
+      "lunch-view-20261007T173000Z.png",
+      "daily-brief-20261007T173000Z.png"
+    ]);
+    expect(new Set(filenames).size).toBe(3);
   });
 
   test("authenticated image delivery serves the published private R2 object as PNG", async () => {
