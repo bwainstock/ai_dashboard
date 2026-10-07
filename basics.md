@@ -14,6 +14,7 @@ Design documentation:
 - [Architecture decisions](docs/adr/)
 - [Ticket #2 private BYOS acceptance](docs/acceptance/ticket-2-private-byos.md)
 - [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
+- [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
 
 ## Development
 

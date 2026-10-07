@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "acceptance:device": "node scripts/verify-device-image.mjs",
+    "acceptance:run": "node scripts/run-device-acceptance.mjs",
+    "acceptance:validate": "node scripts/validate-acceptance-report.mjs",
     "build": "wrangler deploy --dry-run",
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
     "lint": "eslint .",

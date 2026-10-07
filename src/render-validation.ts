@@ -9,6 +9,7 @@ export interface RenderInspection {
   overflowingElements: number;
   iconCount: number;
   textLength: number;
+  minimumVisibleTextSize: number;
   nonMonochromeValues: string[];
   missingStates: Array<{
     text: string;
@@ -53,6 +54,13 @@ export function assertRenderInspection(
   }
   if (inspection.iconCount < 1 || inspection.textLength < 1) {
     throw new Error(`${view} renderer must include an icon and readable text`);
+  }
+  if (
+    inspection.minimumVisibleTextSize < DEVICE_LIMITS.minimumVisibleTextPixels
+  ) {
+    throw new Error(
+      `${view} renderer text must be at least ${DEVICE_LIMITS.minimumVisibleTextPixels}px`
+    );
   }
   if (inspection.nonMonochromeValues.length > 0) {
     throw new Error(`${view} renderer must use only black and white`);
@@ -119,6 +127,21 @@ export async function validateRenderedPage(
       }).length,
       iconCount: document.querySelectorAll('[role="img"]').length,
       textLength: document.body.innerText.trim().length,
+      minimumVisibleTextSize: Math.min(
+        ...Array.from(document.body.querySelectorAll<HTMLElement>("*"))
+          .filter((element) => {
+            const style = getComputedStyle(element);
+            return (
+              element.childElementCount === 0 &&
+              element.innerText.trim().length > 0 &&
+              style.display !== "none" &&
+              style.visibility !== "hidden"
+            );
+          })
+          .map((element) =>
+            Number.parseFloat(getComputedStyle(element).fontSize)
+          )
+      ),
       nonMonochromeValues: [...values].filter(
         (value) =>
           !(
@@ -144,3 +167,4 @@ export async function validateRenderedPage(
   );
   assertRenderInspection(view, inspection);
 }
+import { DEVICE_LIMITS } from "./device-limits";
