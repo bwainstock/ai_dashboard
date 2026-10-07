@@ -47,6 +47,12 @@ secrets.
 - `GET`/`PUT /admin/gmail-configuration` is administrator-only and manages
   school/childcare sender domains plus content-free processing status. See
   [Privacy-isolated Gmail processing](gmail-integration.md).
+- `GET /admin/gmail-review` is available to reviewers and administrators and
+  returns only minimal validated Protected Review Record fields.
+- `POST /admin/gmail-review/:id` is administrator-only. It accepts `dismiss`,
+  `correct`, or `publish`; corrections must contain exactly `category`,
+  `summary`, `relevantDate`, `action`, and `senderOrganization` and pass
+  independent validation.
 
 Status contains only last device check-in, the atomically published current
 generation, the latest slot attempt and retry state, source freshness, OAuth
@@ -58,11 +64,14 @@ continues to identify the previous complete published view set. See
 [Operational incidents and email](operational-incidents.md) for alert
 conditions, suppression, recovery, and deployment configuration.
 
-The surface never returns OAuth credentials, device tokens, raw provider
-payloads, household content, exception messages, or other content-bearing
-diagnostics. Source and generation failure storage records only fixed codes;
-migration `0008` clears legacy diagnostic messages from both scheduled
-generation and source-failure records.
+The status and configuration surfaces never return OAuth credentials, device
+tokens, raw provider payloads, household content, exception messages, or other
+content-bearing diagnostics. The protected Gmail review surface returns only
+validated extracted fields and lifecycle metadata; raw Gmail content,
+addresses, identifiers, prompts, and unvalidated output remain absent. Source
+and generation failure storage records only fixed codes; migration `0008`
+clears legacy diagnostic messages from both scheduled generation and
+source-failure records.
 
 Google client credentials, the OAuth token-encryption key, and other deployment
 secrets remain Wrangler secrets. OAuth refresh tokens remain encrypted in D1

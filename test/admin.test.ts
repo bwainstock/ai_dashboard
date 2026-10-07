@@ -14,6 +14,27 @@ class AdminDatabase {
     ["admin@example.com", "administrator"],
     ["reviewer@example.com", "reviewer"]
   ]);
+  protectedReviews = [
+    {
+      id: 7,
+      account_id: "mom" as const,
+      source_key: "a".repeat(64),
+      review_kind: "sensitive" as const,
+      category: "school" as
+        | "school"
+        | "childcare"
+        | "activity"
+        | "household",
+      summary: "Private appointment is scheduled.",
+      relevant_date: "2026-10-13" as string | null,
+      action: null as string | null,
+      sender_organization: "School",
+      confidence: 0.97,
+      created_at: "2026-10-07T17:00:00.000Z",
+      expires_at: "2026-10-21T17:00:00.000Z"
+    }
+  ];
+  publishedNotices: Array<Record<string, unknown>> = [];
 
   prepare(query: string) {
     let parameters: unknown[] = [];
@@ -53,9 +74,20 @@ class AdminDatabase {
             error_code: "DAILY_BRIEF_RENDER_FAILED"
           } as T;
         }
+        if (
+          query.includes("FROM gmail_protected_reviews") &&
+          query.includes("WHERE id = ?")
+        ) {
+          return (this.protectedReviews.find(
+            ({ id }) => id === Number(parameters[0])
+          ) ?? null) as T | null;
+        }
         return null;
       },
       all: async <T>() => {
+        if (query.includes("FROM gmail_protected_reviews")) {
+          return { results: this.protectedReviews } as unknown as D1Result<T>;
+        }
         if (query.includes("FROM calendar_accounts")) {
           return {
             results: [
@@ -124,6 +156,37 @@ class AdminDatabase {
           this.configuration.latitude = Number(parameters[0]);
           this.configuration.longitude = Number(parameters[1]);
           this.configuration.slotsJson = String(parameters[2]);
+        }
+        if (
+          query.includes("UPDATE gmail_protected_reviews") &&
+          query.includes("SET category")
+        ) {
+          const review = this.protectedReviews.find(
+            ({ id }) => id === Number(parameters[5])
+          );
+          if (review) {
+            review.category = parameters[0] as typeof review.category;
+            review.summary = String(parameters[1]);
+            review.relevant_date = parameters[2] as string | null;
+            review.action = parameters[3] as string | null;
+            review.sender_organization = String(parameters[4]);
+          }
+        }
+        if (query.includes("INSERT INTO household_notices")) {
+          this.publishedNotices.push({
+            accountId: parameters[0],
+            sourceKey: parameters[1],
+            category: parameters[2],
+            summary: parameters[3],
+            relevantDate: parameters[4],
+            action: parameters[5],
+            senderOrganization: parameters[6]
+          });
+        }
+        if (query.includes("DELETE FROM gmail_protected_reviews")) {
+          this.protectedReviews = this.protectedReviews.filter(
+            ({ id }) => id !== Number(parameters[0])
+          );
         }
         return { success: true };
       }
@@ -258,6 +321,7 @@ describe("Access-protected browser administration", () => {
         ]
       }
     });
+
     expect(status.status).toBe(200);
     const statusBody = await status.json();
     expect(statusBody).toEqual({
@@ -304,6 +368,121 @@ describe("Access-protected browser administration", () => {
       /refresh.token|payload|content|message/i
     );
     expect(mutation.status).toBe(403);
+  });
+
+  test("both roles can inspect minimal protected Gmail records without raw content", async () => {
+    for (const email of ["reviewer@example.com", "admin@example.com"]) {
+      const response = await worker.fetch(
+        new Request("https://dashboard-admin.example.com/admin/gmail-review", {
+          headers: accessHeaders(email)
+        }),
+        env()
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toEqual({
+        records: [
+          {
+            id: 7,
+            accountId: "mom",
+            kind: "sensitive",
+            category: "school",
+            summary: "Private appointment is scheduled.",
+            relevantDate: "2026-10-13",
+            action: null,
+            senderOrganization: "School",
+            confidence: 0.97,
+            createdAt: "2026-10-07T17:00:00.000Z",
+            expiresAt: "2026-10-21T17:00:00.000Z"
+          }
+        ]
+      });
+      expect(JSON.stringify(body)).not.toMatch(
+        /source.key|model|message|thread|subject|body|sender.address|prompt/i
+      );
+    }
+  });
+
+  test("reviewers cannot dismiss, correct, or publish protected records", async () => {
+    for (const action of ["dismiss", "correct", "publish"]) {
+      const response = await worker.fetch(
+        new Request("https://dashboard-admin.example.com/admin/gmail-review/7", {
+          method: "POST",
+          headers: {
+            ...accessHeaders("reviewer@example.com"),
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({ action })
+        }),
+        env()
+      );
+      expect(response.status).toBe(403);
+    }
+  });
+
+  test("administrator can correct and publish a protected record", async () => {
+    const database = new AdminDatabase();
+    const environment = env(database);
+    const headers = {
+      ...accessHeaders("admin@example.com"),
+      "content-type": "application/json"
+    };
+    const correction = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/gmail-review/7", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          action: "correct",
+          correction: {
+            category: "activity",
+            summary: "Appointment is scheduled.",
+            relevantDate: "2026-10-13",
+            action: "Check the protected source.",
+            senderOrganization: "School"
+          }
+        })
+      }),
+      environment
+    );
+    const publication = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/gmail-review/7", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ action: "publish" })
+      }),
+      environment
+    );
+
+    expect(correction.status).toBe(200);
+    expect(publication.status).toBe(200);
+    expect(database.publishedNotices).toEqual([
+      expect.objectContaining({
+        accountId: "mom",
+        category: "activity",
+        summary: "Appointment is scheduled.",
+        action: "Check the protected source."
+      })
+    ]);
+    expect(database.protectedReviews).toEqual([]);
+  });
+
+  test("administrator can dismiss a protected record", async () => {
+    const database = new AdminDatabase();
+    const response = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/gmail-review/7", {
+        method: "POST",
+        headers: {
+          ...accessHeaders("admin@example.com"),
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ action: "dismiss" })
+      }),
+      env(database)
+    );
+
+    expect(response.status).toBe(200);
+    expect(database.protectedReviews).toEqual([]);
   });
 
   test("administrators can update weather, slots, calendars, and household labels", async () => {

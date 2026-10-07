@@ -1,3 +1,5 @@
+import { validateProtectedReviewCorrection } from "./gmail";
+
 export type AdministrationRole = "administrator" | "reviewer";
 
 export interface AdministrationEnv {
@@ -26,6 +28,21 @@ interface SelectedCalendar {
   account_id: "mom" | "dad";
   calendar_id: string;
   display_label: string;
+}
+
+interface ProtectedReviewRow {
+  id: number;
+  account_id: "mom" | "dad";
+  source_key: string;
+  review_kind: "uncertain" | "sensitive";
+  category: "school" | "childcare" | "activity" | "household";
+  summary: string;
+  relevant_date: string | null;
+  action: string | null;
+  sender_organization: string;
+  confidence: number;
+  created_at: string;
+  expires_at: string;
 }
 
 const FIXED_ERROR_CODES = new Set([
@@ -364,6 +381,152 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
   });
 }
 
+function noticeExpiry(relevantDate: string | null, now: Date): Date {
+  return relevantDate
+    ? new Date(`${relevantDate}T12:00:00.000Z`)
+    : new Date(now.getTime() + 14 * 24 * 60 * 60_000);
+}
+
+async function protectedGmailReview(
+  request: Request,
+  env: AdministrationEnv,
+  role: AdministrationRole
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/admin/gmail-review") {
+    const rows = await env.DB.prepare(
+      `SELECT id, account_id, review_kind, category, summary, relevant_date,
+              action, sender_organization, confidence, created_at, expires_at
+       FROM gmail_protected_reviews
+       WHERE expires_at >= ?
+       ORDER BY created_at DESC, id DESC`
+    )
+      .bind(new Date().toISOString())
+      .all<Omit<ProtectedReviewRow, "source_key">>();
+    return json({
+      records: rows.results.map((row) => ({
+        id: row.id,
+        accountId: row.account_id,
+        kind: row.review_kind,
+        category: row.category,
+        summary: row.summary,
+        relevantDate: row.relevant_date,
+        action: row.action,
+        senderOrganization: row.sender_organization,
+        confidence: row.confidence,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at
+      }))
+    });
+  }
+  const match = url.pathname.match(/^\/admin\/gmail-review\/(\d+)$/);
+  if (request.method !== "POST" || !match) {
+    return json({ error: "Not found" }, 404);
+  }
+  if (role !== "administrator") {
+    return json({ error: "Administrator role required" }, 403);
+  }
+  let input: { action?: unknown; correction?: unknown };
+  try {
+    input = await request.json();
+  } catch {
+    return json({ error: "Invalid protected review action" }, 400);
+  }
+  if (
+    !input ||
+    typeof input !== "object" ||
+    Object.keys(input).some((key) => !["action", "correction"].includes(key)) ||
+    !["dismiss", "correct", "publish"].includes(String(input.action))
+  ) {
+    return json({ error: "Invalid protected review action" }, 400);
+  }
+  const id = Number(match[1]);
+  if (input.action === "dismiss") {
+    if ("correction" in input) {
+      return json({ error: "Invalid protected review action" }, 400);
+    }
+    await env.DB.prepare("DELETE FROM gmail_protected_reviews WHERE id = ?")
+      .bind(id)
+      .run();
+    return json({ status: "dismissed" });
+  }
+  if (input.action === "correct") {
+    const validation = validateProtectedReviewCorrection(
+      input.correction,
+      new Date()
+    );
+    if (!validation.valid) {
+      return json({ error: "Invalid protected review correction" }, 400);
+    }
+    const correction = validation.correction;
+    await env.DB.prepare(
+      `UPDATE gmail_protected_reviews
+       SET category = ?, summary = ?, relevant_date = ?, action = ?,
+           sender_organization = ?
+       WHERE id = ?`
+    )
+      .bind(
+        correction.category,
+        correction.summary,
+        correction.relevantDate,
+        correction.action,
+        correction.senderOrganization,
+        id
+      )
+      .run();
+    return json({ status: "corrected" });
+  }
+  if ("correction" in input) {
+    return json({ error: "Invalid protected review action" }, 400);
+  }
+  const row = await env.DB.prepare(
+    `SELECT id, account_id, source_key, review_kind, category, summary,
+            relevant_date, action, sender_organization, confidence,
+            created_at, expires_at
+     FROM gmail_protected_reviews WHERE id = ?`
+  )
+    .bind(id)
+    .first<ProtectedReviewRow>();
+  if (!row) return json({ error: "Protected review record not found" }, 404);
+  const now = new Date();
+  const expiry = noticeExpiry(row.relevant_date, now);
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO household_notices
+         (account_id, source_key, category, summary, relevant_date, action,
+          sender_organization, model_id, model_version, accepted_at,
+          expires_at, retained_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(account_id, source_key) DO UPDATE SET
+         category = excluded.category,
+         summary = excluded.summary,
+         relevant_date = excluded.relevant_date,
+         action = excluded.action,
+         sender_organization = excluded.sender_organization,
+         model_id = excluded.model_id,
+         model_version = excluded.model_version,
+         accepted_at = excluded.accepted_at,
+         expires_at = excluded.expires_at,
+         retained_until = excluded.retained_until`
+    ).bind(
+      row.account_id,
+      row.source_key,
+      row.category,
+      row.summary,
+      row.relevant_date,
+      row.action,
+      row.sender_organization,
+      "protected-review",
+      "administrator-approved",
+      now.toISOString(),
+      new Date(expiry.getTime() + 3 * 24 * 60 * 60_000).toISOString(),
+      new Date(expiry.getTime() + 33 * 24 * 60 * 60_000).toISOString()
+    ),
+    env.DB.prepare("DELETE FROM gmail_protected_reviews WHERE id = ?").bind(id)
+  ]);
+  return json({ status: "published" });
+}
+
 function administrationPage(role: AdministrationRole): Response {
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
@@ -383,6 +546,7 @@ function administrationPage(role: AdministrationRole): Response {
 <button type="submit">Save configuration</button> <output id="save-result"></output>
 </form></section>
 <section><h2>Operational status</h2><pre id="status">Loading…</pre></section>
+<section><h2>Protected Gmail review</h2><pre id="gmail-review">Loading…</pre></section>
 </main><script src="/admin/app.js" defer></script></body></html>`;
   return new Response(html, {
     headers: {
@@ -398,10 +562,11 @@ function administrationPage(role: AdministrationRole): Response {
 function administrationScript(): Response {
   const script = `const form=document.querySelector("#configuration");
 const statusBox=document.querySelector("#status");
+const reviewBox=document.querySelector("#gmail-review");
 const result=document.querySelector("#save-result");
 const role=document.body.dataset.role;
 async function read(url){const response=await fetch(url,{headers:{accept:"application/json"}});if(!response.ok)throw new Error("Request failed");return response.json()}
-async function load(){const [configuration,status]=await Promise.all([read("/admin/configuration"),read("/admin/status")]);form.latitude.value=configuration.weather.latitude;form.longitude.value=configuration.weather.longitude;form.slots.value=configuration.weather.slots.join(", ");form.google.value=JSON.stringify(configuration.google,null,2);statusBox.textContent=JSON.stringify(status,null,2);if(role!=="administrator")for(const control of form.elements)control.disabled=true}
+async function load(){const [configuration,status,review]=await Promise.all([read("/admin/configuration"),read("/admin/status"),read("/admin/gmail-review")]);form.latitude.value=configuration.weather.latitude;form.longitude.value=configuration.weather.longitude;form.slots.value=configuration.weather.slots.join(", ");form.google.value=JSON.stringify(configuration.google,null,2);statusBox.textContent=JSON.stringify(status,null,2);reviewBox.textContent=JSON.stringify(review,null,2);if(role!=="administrator")for(const control of form.elements)control.disabled=true}
 form.addEventListener("submit",async event=>{event.preventDefault();result.textContent="Saving…";try{const google=JSON.parse(form.google.value);const response=await fetch("/admin/configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({weather:{latitude:Number(form.latitude.value),longitude:Number(form.longitude.value),slots:form.slots.value.split(",").map(value=>value.trim()).filter(Boolean)},google})});if(!response.ok)throw new Error("Save failed");result.textContent="Saved";await load()}catch{result.textContent="Configuration was not saved"}});
 for(const button of document.querySelectorAll("[data-connect]"))button.addEventListener("click",async()=>{try{const value=await read("/admin/calendar/oauth/start?account="+button.dataset.connect);location.assign(value.authorizationUrl)}catch{result.textContent="Google connection could not be started"}});
 load().catch(()=>{statusBox.textContent="Status unavailable"});`;
@@ -434,6 +599,9 @@ export async function handleAuthorizedAdministration(
   }
   if (request.method === "GET" && pathname === "/admin/status") {
     return operationalStatus(env);
+  }
+  if (pathname === "/admin/gmail-review" || pathname.startsWith("/admin/gmail-review/")) {
+    return protectedGmailReview(request, env, identity.role);
   }
   return json({ error: "Not found" }, 404);
 }

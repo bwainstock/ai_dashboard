@@ -28,6 +28,7 @@ export interface DailyBriefWeatherModel {
   staleAgeMinutes?: number;
   lunch: DailyBriefLunchModel;
   notices?: DailyBriefNotice[];
+  privateNoticeMarkers?: Array<{ accountId: "mom" | "dad" }>;
   updatedAt: string;
 }
 
@@ -83,6 +84,7 @@ export interface ScheduledGenerationPorts {
   loadLatestCalendar?(): Promise<Snapshot<CalendarEvent[]> | null>;
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
   loadNotices?(): Promise<DailyBriefNotice[]>;
+  loadPrivateNoticeMarkers?(): Promise<Array<{ accountId: "mom" | "dad" }>>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
   renderLunchView(model: LunchViewModel): Promise<Uint8Array>;
@@ -390,6 +392,12 @@ export async function runScheduledWeatherGeneration(
     lunch: renderedLunch,
     updatedAt: input.now.toISOString()
   };
+  if (ports.loadNotices) {
+    model.notices = (await ports.loadNotices()).slice(0, 2);
+  }
+  if (ports.loadPrivateNoticeMarkers) {
+    model.privateNoticeMarkers = await ports.loadPrivateNoticeMarkers();
+  }
   let calendar: CalendarEvent[] = [];
   let calendarAge: number | undefined;
   let calendarUnavailable = false;
@@ -414,9 +422,6 @@ export async function runScheduledWeatherGeneration(
       model.calendarUnavailable = calendarUnavailable;
       if (calendarAge !== undefined) {
         model.calendarStaleAgeMinutes = calendarAge;
-      }
-      if (ports.loadNotices) {
-        model.notices = (await ports.loadNotices()).slice(0, 2);
       }
       await ports.recordSourceFailure(
         slotKey,

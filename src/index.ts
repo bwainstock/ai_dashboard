@@ -1156,6 +1156,17 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           senderOrganization: row.sender_organization
         }));
       },
+      async loadPrivateNoticeMarkers() {
+        const rows = await env.DB.prepare(
+          `SELECT DISTINCT account_id
+           FROM gmail_protected_reviews
+           WHERE review_kind = 'sensitive' AND expires_at >= ?
+           ORDER BY account_id`
+        )
+          .bind(now.toISOString())
+          .all<{ account_id: "mom" | "dad" }>();
+        return rows.results.map(({ account_id }) => ({ accountId: account_id }));
+      },
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       renderCalendarView: (model) => renderCalendarView(env, model),
       renderLunchView: (model) => renderLunchView(env, model),
@@ -1207,7 +1218,9 @@ export default {
         url.pathname === "/admin" ||
         url.pathname === "/admin/app.js" ||
         url.pathname === "/admin/configuration" ||
-        url.pathname === "/admin/status"
+        url.pathname === "/admin/status" ||
+        url.pathname === "/admin/gmail-review" ||
+        url.pathname.startsWith("/admin/gmail-review/")
       ) {
         return handleAuthorizedAdministration(request, env, identity);
       }

@@ -1,0 +1,21 @@
+{
+  "candidate": {
+    "messageId": "uncertain-message-id-never-retained",
+    "threadId": "uncertain-thread-id-never-retained",
+    "labelIds": ["INBOX"],
+    "from": "office@school.example",
+    "subject": "Possible schedule update",
+    "body": "The assembly may move to October 12. Details will be confirmed.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "extraction": {
+    "isNotice": true,
+    "category": "school",
+    "summary": "Assembly date may change.",
+    "relevantDate": "2026-10-12",
+    "action": null,
+    "senderOrganization": "School",
+    "sensitive": false,
+    "confidence": 0.72
+  }
+}

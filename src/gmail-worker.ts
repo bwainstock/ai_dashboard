@@ -1,7 +1,8 @@
 import { decryptRefreshToken } from "./calendar-oauth";
 import {
   processGmailCandidate,
-  type HouseholdNotice
+  type HouseholdNotice,
+  type ProtectedGmailReview
 } from "./gmail";
 import {
   fetchIncrementalInboxCandidates,
@@ -119,7 +120,40 @@ export async function processConnectedGmailAccounts(
             )
             .run();
         },
-        async recordReview(accountId, reason) {
+        async saveProtected(review: ProtectedGmailReview) {
+          await env.DB.prepare(
+            `INSERT INTO gmail_protected_reviews
+               (account_id, source_key, review_kind, category, summary,
+                relevant_date, action, sender_organization, confidence,
+                created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(account_id, source_key) DO UPDATE SET
+               review_kind = excluded.review_kind,
+               category = excluded.category,
+               summary = excluded.summary,
+               relevant_date = excluded.relevant_date,
+               action = excluded.action,
+               sender_organization = excluded.sender_organization,
+               confidence = excluded.confidence,
+               created_at = excluded.created_at,
+               expires_at = excluded.expires_at`
+          )
+            .bind(
+              review.accountId,
+              review.sourceKey,
+              review.kind,
+              review.category,
+              review.summary,
+              review.relevantDate,
+              review.action,
+              review.senderOrganization,
+              review.confidence,
+              now.toISOString(),
+              datePlus(now, 14)
+            )
+            .run();
+        },
+        async recordFailure(accountId, reason) {
           await env.DB.prepare(
             `INSERT INTO gmail_review_records
                (account_id, reason, created_at, expires_at)
@@ -155,6 +189,9 @@ export async function processConnectedGmailAccounts(
       ).bind(now.toISOString()),
       env.DB.prepare(
         `DELETE FROM gmail_review_records WHERE expires_at < ?`
+      ).bind(now.toISOString()),
+      env.DB.prepare(
+        `DELETE FROM gmail_protected_reviews WHERE expires_at < ?`
       ).bind(now.toISOString())
     ]);
   }

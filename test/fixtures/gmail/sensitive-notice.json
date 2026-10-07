@@ -1,0 +1,21 @@
+{
+  "candidate": {
+    "messageId": "sensitive-message-id-never-retained",
+    "threadId": "sensitive-thread-id-never-retained",
+    "labelIds": ["INBOX"],
+    "from": "counselor@school.example",
+    "subject": "Private appointment",
+    "body": "A private appointment is scheduled for October 13.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "extraction": {
+    "isNotice": true,
+    "category": "school",
+    "summary": "Private appointment is scheduled.",
+    "relevantDate": "2026-10-13",
+    "action": null,
+    "senderOrganization": "School",
+    "sensitive": true,
+    "confidence": 0.97
+  }
+}
