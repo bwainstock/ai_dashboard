@@ -1,0 +1,20 @@
+{
+  "candidate": {
+    "messageId": "fixture-message-id-never-retained",
+    "threadId": "fixture-thread-id-never-retained",
+    "labelIds": ["INBOX"],
+    "from": "teacher@school.example",
+    "subject": "Fixture raw subject never retained",
+    "body": "Permission form is due October 10. Fixture raw body never retained.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "extraction": {
+    "category": "school",
+    "summary": "Permission form is due.",
+    "relevantDate": "2026-10-10",
+    "action": "Return the permission form.",
+    "senderOrganization": "School",
+    "sensitive": false,
+    "confidence": 0.95
+  }
+}

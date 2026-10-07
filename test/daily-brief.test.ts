@@ -183,3 +183,65 @@ test("stale sections show their own ages while retaining one global update time"
   expect(html).toContain("Last menu · 1h 30m old");
   expect(html.match(/Updated 10:30 AM/g)).toHaveLength(1);
 });
+
+test("Daily Brief publishes at most two notices using only approved fields", () => {
+  const html = dailyBriefHtml({
+    weather: {
+      observedAt: "2026-10-07T10:25",
+      current: { temperature: 68, condition: "Clear" },
+      today: {
+        date: "2026-10-07",
+        condition: "Clear",
+        high: 75,
+        low: 55,
+        precipitationProbability: 0
+      },
+      tomorrow: {
+        date: "2026-10-08",
+        condition: "Clear",
+        high: 76,
+        low: 56,
+        precipitationProbability: 0
+      }
+    },
+    stale: false,
+    lunch: { status: "available", stale: false, entrees: [] },
+    notices: [
+      {
+        category: "school",
+        summary: "Field trip permission form is due.",
+        relevantDate: "Oct 10",
+        action: "Return the permission form.",
+        senderOrganization: "School"
+      },
+      {
+        category: "childcare",
+        summary: "Childcare closes early Friday.",
+        relevantDate: "Oct 9",
+        action: null,
+        senderOrganization: "Childcare"
+      },
+      {
+        category: "school",
+        summary: "This third notice must not render.",
+        relevantDate: null,
+        action: null,
+        senderOrganization: "School"
+      }
+    ],
+    updatedAt: "2026-10-07T17:30:00.000Z"
+  });
+
+  expect(html).toContain("Field trip permission form is due.");
+  expect(html).toContain("Childcare closes early Friday.");
+  expect(html).not.toContain("This third notice must not render.");
+  for (const forbidden of [
+    "teacher@school.example",
+    "raw-message-id",
+    "confidence",
+    "RAW SUBJECT TOKEN",
+    "RAW BODY TOKEN"
+  ]) {
+    expect(html).not.toContain(forbidden);
+  }
+});

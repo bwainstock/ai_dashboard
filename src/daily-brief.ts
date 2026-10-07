@@ -110,6 +110,16 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
               `<li><span class="event-time">${eventTime(event)}</span><strong>${escapeHtml(event.title)}</strong><span class="event-meta">${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}</span></li>`
           )
           .join("");
+  const notices = (model.notices ?? [])
+    .slice(0, 2)
+    .map(
+      (notice) =>
+        `<li class="notice"><strong>${escapeHtml(notice.summary)}</strong><span class="notice-meta">${escapeHtml(notice.senderOrganization)}${notice.relevantDate ? ` · ${escapeHtml(notice.relevantDate)}` : ""}${notice.action ? ` · ${escapeHtml(notice.action)}` : ""}</span></li>`
+    )
+    .join("");
+  const noticeSection = notices
+    ? `<aside class="notices" aria-label="Household Notices"><h2>Notices</h2><ul>${notices}</ul></aside>`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -149,6 +159,12 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     .entree svg { width: 58px; height: 58px; }
     .lunch-state { border: 3px solid #000; padding: 9px; font-size: 22px; font-weight: 700; margin-top: 20px; }
     .last-menu { font-size: 16px; font-weight: 700; margin: 5px 0 0; text-transform: uppercase; }
+    .notices { grid-column: 1 / 3; min-height: 0; padding: 7px 12px; display: grid; grid-template-columns: 92px 1fr; align-items: center; }
+    .notices h2 { margin: 0; font-size: 20px; }
+    .notices ul { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .notices li { display: block; border: 0; padding: 0; font-size: 15px; }
+    .notice-meta { display: block; font-size: 12px; }
+    main:has(.notices) section { min-height: 224px; }
     footer { display: flex; justify-content: space-between; align-items: center; font-size: 15px; padding-top: 8px; }
     .stale { border: 2px solid #000; padding: 3px 7px; }
   </style>
@@ -184,6 +200,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
       <ul>${events}</ul>
     </section>
     ${lunchSection(model.lunch)}
+    ${noticeSection}
   </main>
   <footer><span>${[
     stale,

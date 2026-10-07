@@ -1,5 +1,6 @@
 const CALENDAR_READONLY =
   "https://www.googleapis.com/auth/calendar.readonly";
+const GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly";
 
 function bytesToBase64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
@@ -46,7 +47,7 @@ export function buildCalendarAuthorizationUrl(input: {
     client_id: input.clientId,
     redirect_uri: input.redirectUri,
     response_type: "code",
-    scope: CALENDAR_READONLY,
+    scope: `${CALENDAR_READONLY} ${GMAIL_READONLY}`,
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",

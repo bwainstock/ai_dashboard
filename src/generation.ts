@@ -27,7 +27,16 @@ export interface DailyBriefWeatherModel {
   stale: boolean;
   staleAgeMinutes?: number;
   lunch: DailyBriefLunchModel;
+  notices?: DailyBriefNotice[];
   updatedAt: string;
+}
+
+export interface DailyBriefNotice {
+  category: "school" | "childcare" | "activity" | "household";
+  summary: string;
+  relevantDate: string | null;
+  action: string | null;
+  senderOrganization: string;
 }
 
 export interface DailyBriefLunchModel {
@@ -73,6 +82,7 @@ export interface ScheduledGenerationPorts {
   fetchCalendar?(): Promise<CalendarEvent[]>;
   loadLatestCalendar?(): Promise<Snapshot<CalendarEvent[]> | null>;
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
+  loadNotices?(): Promise<DailyBriefNotice[]>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
   renderLunchView(model: LunchViewModel): Promise<Uint8Array>;
@@ -404,6 +414,9 @@ export async function runScheduledWeatherGeneration(
       model.calendarUnavailable = calendarUnavailable;
       if (calendarAge !== undefined) {
         model.calendarStaleAgeMinutes = calendarAge;
+      }
+      if (ports.loadNotices) {
+        model.notices = (await ports.loadNotices()).slice(0, 2);
       }
       await ports.recordSourceFailure(
         slotKey,
