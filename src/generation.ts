@@ -1,4 +1,5 @@
 import type { WeatherLocation, WeatherSnapshot } from "./weather";
+import type { CalendarEvent } from "./calendar";
 
 export interface DashboardConfiguration extends WeatherLocation {
   timezone: string;
@@ -7,6 +8,7 @@ export interface DashboardConfiguration extends WeatherLocation {
 
 export interface DailyBriefWeatherModel {
   weather: WeatherSnapshot;
+  calendar?: CalendarEvent[];
   stale: boolean;
   updatedAt: string;
 }
@@ -27,6 +29,9 @@ export interface ScheduledGenerationPorts {
   fetchWeather(location: WeatherLocation): Promise<WeatherSnapshot>;
   loadLatestWeather(): Promise<WeatherSnapshot | null>;
   saveWeather(snapshot: WeatherSnapshot, fetchedAt: string): Promise<void>;
+  fetchCalendar?(): Promise<CalendarEvent[]>;
+  loadLatestCalendar?(): Promise<CalendarEvent[]>;
+  saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
   recordFailure(slotKey: string, code: string, message: string): Promise<void>;
@@ -206,6 +211,30 @@ export async function runScheduledWeatherGeneration(
     stale,
     updatedAt: input.now.toISOString()
   };
+  if (
+    ports.fetchCalendar &&
+    ports.loadLatestCalendar &&
+    ports.saveCalendar
+  ) {
+    try {
+      const calendar = await ports.fetchCalendar();
+      await ports.saveCalendar(calendar, input.now.toISOString());
+      Object.assign(model, { calendar });
+    } catch (error) {
+      const previous = await ports.loadLatestCalendar();
+      Object.assign(model, { calendar: previous });
+      await ports.recordFailure(
+        slotKey,
+        error &&
+          typeof error === "object" &&
+          "code" in error &&
+          typeof error.code === "string"
+          ? error.code
+          : "CALENDAR_FETCH_FAILED",
+        error instanceof Error ? error.message : "Calendar fetch failed"
+      );
+    }
+  }
   let image: Uint8Array;
   try {
     image = await ports.renderDailyBrief(model);
