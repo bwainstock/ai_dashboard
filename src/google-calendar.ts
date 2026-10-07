@@ -2,6 +2,7 @@ import type {
   CalendarResponseStatus,
   CalendarSourceEvent
 } from "./calendar";
+import type { OperationalCode } from "./operational-codes";
 
 type Fetch = typeof fetch;
 
@@ -65,9 +66,16 @@ export async function fetchGoogleCalendarEvents(
         headers: { Authorization: `Bearer ${input.accessToken}` }
       });
       if (!response.ok) {
+        const code: Extract<
+          OperationalCode,
+          "CALENDAR_OAUTH_REVOKED" | "CALENDAR_UPSTREAM_HTTP"
+        > =
+          response.status === 401
+            ? "CALENDAR_OAUTH_REVOKED"
+            : "CALENDAR_UPSTREAM_HTTP";
         throw Object.assign(
           new Error(`Google Calendar returned HTTP ${response.status}`),
-          { code: response.status === 401 ? "CALENDAR_OAUTH_REVOKED" : "CALENDAR_UPSTREAM_HTTP" }
+          { code }
         );
       }
       const page = await response.json<GoogleEventsPage>();

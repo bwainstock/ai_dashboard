@@ -129,6 +129,26 @@ describe("operational incident state machine", () => {
     expect(deliver).toHaveBeenCalledTimes(7);
   });
 
+  test("a Notices View render failure blocks publication and opens an incident", async () => {
+    const repository = new MemoryIncidentRepository();
+    repository.snapshot.latestGeneration = {
+      state: "failed",
+      errorCode: "NOTICES_VIEW_RENDER_FAILED"
+    };
+    const deliver = vi.fn().mockResolvedValue(undefined);
+
+    await evaluateOperationalIncidents(
+      repository,
+      deliver,
+      new Date("2026-10-07T11:00:00.000Z")
+    );
+
+    expect(deliver).toHaveBeenCalledWith("GENERATION_PUBLICATION_BLOCKED");
+    expect(repository.active.get("generation:publication")?.code).toBe(
+      "GENERATION_PUBLICATION_BLOCKED"
+    );
+  });
+
   test("suppresses one transient source failure and duplicate active alerts", async () => {
     const repository = new MemoryIncidentRepository();
     repository.snapshot.sources[0] = {

@@ -50,6 +50,7 @@ import {
   refreshCalendarAccessToken,
   revokeGoogleAccess
 } from "./google-calendar";
+import type { OperationalCode } from "./operational-codes";
 
 export interface Env {
   DB: D1Database;
@@ -353,6 +354,7 @@ interface CalendarAccountRow {
     display_label: string;
     encrypted_refresh_token: string | null;
     oauth_status: "connected" | "disconnected" | "revoked";
+    gmail_disconnect_state?: "revocation_pending" | "cleanup_pending" | null;
   }
 
 interface SelectedCalendarRow {
@@ -420,7 +422,7 @@ async function calendarConfiguration(
       await env.DB.batch(statements);
     }
     const accounts = await env.DB.prepare(
-      `SELECT account_id, display_label, oauth_status
+      `SELECT account_id, display_label, oauth_status, gmail_disconnect_state
        FROM calendar_accounts ORDER BY account_id`
     ).all<Omit<CalendarAccountRow, "encrypted_refresh_token">>();
     const calendars = await env.DB.prepare(
@@ -431,7 +433,12 @@ async function calendarConfiguration(
       accounts: accounts.results.map((account) => ({
         accountId: account.account_id,
         displayLabel: account.display_label,
-        connected: account.oauth_status === "connected",
+        connected:
+          account.oauth_status === "connected" &&
+          account.gmail_disconnect_state == null,
+        ...(account.gmail_disconnect_state == null
+          ? {}
+          : { cleanupPending: true }),
         calendars: calendars.results
           .filter(({ account_id }) => account_id === account.account_id)
           .map(({ calendar_id, display_label }) => ({
@@ -550,19 +557,26 @@ async function gmailConfiguration(
      ORDER BY kind, domain`
   ).all<{ domain: string; kind: "school" | "childcare" }>();
   const accounts = await env.DB.prepare(
-    `SELECT account_id, oauth_status, gmail_scan_completed_at
+    `SELECT account_id, oauth_status, gmail_scan_completed_at,
+            gmail_disconnect_state
      FROM calendar_accounts ORDER BY account_id`
   ).all<{
     account_id: "mom" | "dad";
     oauth_status: string;
     gmail_scan_completed_at: string | null;
+    gmail_disconnect_state: string | null;
   }>();
   return json({
     senders: senders.results,
     accounts: accounts.results.map((account) => ({
       accountId: account.account_id,
-      connected: account.oauth_status === "connected",
-      lastProcessedAt: account.gmail_scan_completed_at
+      connected:
+        account.oauth_status === "connected" &&
+        account.gmail_disconnect_state == null,
+      lastProcessedAt: account.gmail_scan_completed_at,
+      ...(account.gmail_disconnect_state == null
+        ? {}
+        : { cleanupPending: true })
     }))
   });
 }
@@ -581,7 +595,30 @@ function gmailAccountRepository(
   database: D1Database
 ): GmailAccountDataRepository {
   return {
-    async deleteRetainedDataAndDisconnect(accountId) {
+    async beginDisconnect(accountId) {
+      await database
+        .prepare(
+          `UPDATE calendar_accounts
+           SET gmail_disconnect_state = 'revocation_pending',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE account_id = ?`
+        )
+        .bind(accountId)
+        .run();
+    },
+    async markRevokedForCleanup(accountId) {
+      await database
+        .prepare(
+          `UPDATE calendar_accounts
+           SET encrypted_refresh_token = NULL, oauth_status = 'disconnected',
+               gmail_disconnect_state = 'cleanup_pending',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE account_id = ?`
+        )
+        .bind(accountId)
+        .run();
+    },
+    async deleteRetainedAccountData(accountId) {
       await database.batch([
         database
           .prepare("DELETE FROM selected_calendars WHERE account_id = ?")
@@ -601,14 +638,23 @@ function gmailAccountRepository(
         database
           .prepare(
             `UPDATE calendar_accounts
-             SET encrypted_refresh_token = NULL, oauth_status = 'disconnected',
-                 gmail_history_id = NULL, gmail_scan_started_at = NULL,
+             SET gmail_history_id = NULL, gmail_scan_started_at = NULL,
                  gmail_scan_completed_at = NULL,
                  updated_at = CURRENT_TIMESTAMP
              WHERE account_id = ?`
           )
           .bind(accountId)
       ]);
+    },
+    async completeDisconnectCleanup(accountId) {
+      await database
+        .prepare(
+          `UPDATE calendar_accounts
+           SET gmail_disconnect_state = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE account_id = ? AND gmail_disconnect_state = 'cleanup_pending'`
+        )
+        .bind(accountId)
+        .run();
     }
   };
 }
@@ -625,7 +671,8 @@ async function disconnectGmailAccount(
     return json({ error: "Google account controls are not configured" }, 503);
   }
   const account = await env.DB.prepare(
-    `SELECT account_id, encrypted_refresh_token, oauth_status
+    `SELECT account_id, encrypted_refresh_token, oauth_status,
+            gmail_disconnect_state
      FROM calendar_accounts WHERE account_id = ?`
   )
     .bind(accountId)
@@ -633,18 +680,29 @@ async function disconnectGmailAccount(
       account_id: GmailAccountId;
       encrypted_refresh_token: string | null;
       oauth_status: string;
+      gmail_disconnect_state:
+        | "revocation_pending"
+        | "cleanup_pending"
+        | null;
     }>();
-  if (!account?.encrypted_refresh_token) {
+  if (
+    !account ||
+    (!account.encrypted_refresh_token &&
+      account.gmail_disconnect_state !== "cleanup_pending")
+  ) {
     return json({ error: "Google account is disconnected" }, 409);
   }
   try {
-    await disconnectGoogleAccount(
+    const result = await disconnectGoogleAccount(
       {
         accountId,
-        refreshToken: await decryptRefreshToken(
-          account.encrypted_refresh_token,
-          env.CALENDAR_TOKEN_ENCRYPTION_KEY
-        )
+        refreshToken: account.encrypted_refresh_token
+          ? await decryptRefreshToken(
+              account.encrypted_refresh_token,
+              env.CALENDAR_TOKEN_ENCRYPTION_KEY
+            )
+          : null,
+        state: account.gmail_disconnect_state ?? "connected"
       },
       {
         repository: gmailAccountRepository(env.DB),
@@ -652,9 +710,26 @@ async function disconnectGmailAccount(
         deletePrivateImages: () => deletePrivateImages(env.IMAGES)
       }
     );
+    if (result.status === "pending") {
+      return json(
+        {
+          accountId,
+          disconnected: true,
+          cleanupPending: true,
+          errorCode: result.errorCode
+        },
+        202
+      );
+    }
     return json({ accountId, disconnected: true });
   } catch {
-    return json({ error: "Google access revocation failed" }, 502);
+    return json(
+      {
+        error: "Google access revocation failed",
+        errorCode: "GOOGLE_REVOCATION_FAILED"
+      },
+      502
+    );
   }
 }
 
@@ -1030,22 +1105,6 @@ async function publishGeneration(env: Env, publication: Publication) {
 }
 
 async function runScheduled(env: Env, now: Date): Promise<void> {
-  if (env.GMAIL_PROCESSOR && env.GMAIL_PROCESSOR_KEY) {
-    try {
-      await env.GMAIL_PROCESSOR.fetch("https://gmail-processor/process", {
-        method: "POST",
-        headers: { "X-Gmail-Processor-Key": env.GMAIL_PROCESSOR_KEY }
-      });
-    } catch {
-      await env.DB.prepare(
-        `UPDATE source_status
-         SET state = 'error', error_code = 'GMAIL_PROCESSOR_UNREACHABLE',
-             consecutive_failures = consecutive_failures + 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE source = 'gmail'`
-      ).run();
-    }
-  }
   const configuration = await loadConfiguration(env);
   const configuredRetryDelay = Number(env.GENERATION_RETRY_MINUTES);
   await runScheduledWeatherGeneration(
@@ -1093,6 +1152,31 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         return (result.meta.changes ?? 0) > 0
           ? { slotKey: candidate.slot_key }
           : null;
+      },
+      async prepareGeneration() {
+        if (!env.GMAIL_PROCESSOR || !env.GMAIL_PROCESSOR_KEY) return;
+        try {
+          const response = await env.GMAIL_PROCESSOR.fetch(
+            "https://gmail-processor/process",
+            {
+              method: "POST",
+              headers: { "X-Gmail-Processor-Key": env.GMAIL_PROCESSOR_KEY }
+            }
+          );
+          if (!response.ok) throw new Error("Gmail processor unavailable");
+        } catch {
+          const code =
+            "GMAIL_PROCESSOR_UNREACHABLE" satisfies OperationalCode;
+          await env.DB.prepare(
+            `UPDATE source_status
+             SET state = 'error', error_code = ?,
+                 consecutive_failures = consecutive_failures + 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE source = 'gmail'`
+          )
+            .bind(code)
+            .run();
+        }
       },
       fetchWeather: (location) => fetchWeather(location),
       async loadLatestWeather() {

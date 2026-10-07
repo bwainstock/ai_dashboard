@@ -34,10 +34,10 @@ type Fetch = (
   init?: RequestInit
 ) => Promise<Response>;
 
-export type LunchAdapterErrorCode =
-  | "LUNCH_UPSTREAM_HTTP"
-  | "LUNCH_UPSTREAM_NETWORK"
-  | "LUNCH_INVALID_RESPONSE";
+export type LunchAdapterErrorCode = Extract<
+  OperationalCode,
+  "LUNCH_UPSTREAM_HTTP" | "LUNCH_UPSTREAM_NETWORK" | "LUNCH_INVALID_RESPONSE"
+>;
 
 export class LunchAdapterError extends Error {
   constructor(
@@ -229,3 +229,4 @@ export async function fetchMealViewerMenu(
     );
   }
 }
+import type { OperationalCode } from "./operational-codes";

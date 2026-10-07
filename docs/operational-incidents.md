@@ -1,12 +1,14 @@
 # Operational incidents and email
 
-The five V1 incident conditions are evaluated after every five-minute scheduled
+The V1 incident conditions are evaluated after every five-minute scheduled
 run. Device-authentication state changes are evaluated immediately as well:
 
 - Google Calendar OAuth is revoked or expired.
 - One source fails two consecutive scheduled refreshes.
 - Rendering, image validation, storage, or pointer publication blocks a new
-  generation.
+  generation, including a Notices View render failure.
+- Gmail processing repeatedly fails.
+- Workers AI quota is exhausted.
 - A device presents missing or invalid credentials.
 - A provisioned device has not checked in for 24 hours.
 
@@ -20,6 +22,8 @@ Operational email contains only one of these fixed codes:
 
 - `OAUTH_REVOKED_OR_EXPIRED`
 - `SOURCE_SCHEDULED_FAILURE`
+- `GMAIL_PROCESSING_REPEATED_FAILURE`
+- `AI_QUOTA_EXHAUSTED`
 - `GENERATION_PUBLICATION_BLOCKED`
 - `DEVICE_AUTH_SUSPICIOUS`
 - `DEVICE_CHECK_IN_MISSING`
