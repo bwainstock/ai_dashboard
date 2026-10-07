@@ -20,7 +20,7 @@ allergen fields are discarded before persistence. A valid response without a
 menu becomes `No menu posted`. A changed schema is not treated as an empty
 menu.
 
-Migration `0003_lunch_daily_brief.sql` adds normalized lunch snapshots and the
+Migration `0004_lunch_daily_brief.sql` adds normalized lunch snapshots and the
 accepted AI icon cache. No raw MealViewer response is stored.
 
 ## Closed icon classification

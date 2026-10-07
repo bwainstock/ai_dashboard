@@ -21,12 +21,16 @@ bucket_name = "family-dashboard-private-images"
 
 [vars]
 DEVICE_ORIGIN = "https://dashboard-device.example.com"
+ADMIN_ORIGIN = "https://dashboard-admin.example.com"
 MAX_IMAGE_BYTES = "1000000"
 MEALVIEWER_MENU_URL = "https://api.mealviewer.com/api/v4/school/SJUSDElementarySchoolsSJUSD/menu"
 LUNCH_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
 
 [ai]
 binding = "AI"
+
+# Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and CALENDAR_TOKEN_ENCRYPTION_KEY
+# with `wrangler secret put`; never place OAuth credentials in this file.
 
 [observability]
 enabled = true

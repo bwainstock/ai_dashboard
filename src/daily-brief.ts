@@ -84,6 +84,24 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   const stale = model.stale
     ? `<strong class="stale">⚠ Weather is using the last available update</strong>`
     : "";
+  const calendar = (model.calendar ?? []).slice(0, 3);
+  const eventTime = (event: (typeof calendar)[number]) => {
+    if (event.allDay) return "All day";
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      hour: "numeric",
+      minute: "2-digit"
+    }).format(new Date(event.start));
+  };
+  const events =
+    calendar.length === 0
+      ? `<li class="empty">No upcoming calendar events</li>`
+      : calendar
+          .map(
+            (event) =>
+              `<li><span class="event-time">${eventTime(event)}</span><strong>${escapeHtml(event.title)}</strong><span class="event-meta">${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}</span></li>`
+          )
+          .join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -93,53 +111,69 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   <style>
     * { box-sizing: border-box; }
     html, body { width: 800px; height: 480px; margin: 0; overflow: hidden; }
-    body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 26px 34px 20px; }
-    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 4px solid #000; padding-bottom: 18px; }
+    body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 18px 28px 14px; }
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 4px solid #000; padding-bottom: 10px; }
     .current { display: flex; align-items: center; gap: 18px; }
-    svg { width: 82px; height: 82px; flex: none; }
-    h1 { font-size: 58px; line-height: .9; margin: 0; }
-    .condition { font-size: 25px; font-weight: 700; margin-top: 8px; }
+    svg { width: 60px; height: 60px; flex: none; }
+    h1 { font-size: 45px; line-height: .9; margin: 0; }
+    .condition { font-size: 20px; font-weight: 700; margin-top: 6px; }
     .title { text-align: right; }
     .title strong { display: block; font-size: 31px; }
     .title span { font-size: 20px; }
-    main { display: grid; grid-template-columns: .9fr .9fr 1.25fr; gap: 13px; padding-top: 18px; }
-    section { border: 3px solid #000; border-radius: 10px; padding: 14px; min-height: 245px; }
-    h2 { font-size: 25px; margin: 0 0 10px; }
-    .day { display: flex; gap: 9px; align-items: center; }
-    .day svg { width: 54px; height: 54px; }
-    .day-condition { font-size: 20px; font-weight: 700; }
-    .details { font-size: 18px; line-height: 1.4; margin: 18px 0 0; }
+    .weather-band { display: flex; align-items: center; gap: 20px; }
+    .forecast-days { display: flex; gap: 18px; }
+    .mini-day { display: grid; grid-template-columns: 38px 1fr; align-items: center; min-width: 168px; }
+    .mini-day svg { width: 34px; height: 34px; grid-row: 1 / 3; }
+    .mini-day strong { font-size: 16px; }
+    .mini-day span { font-size: 14px; }
+    main { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; padding-top: 14px; }
+    section { border: 3px solid #000; border-radius: 10px; padding: 12px 15px; min-height: 292px; }
+    h2 { font-size: 25px; margin: 0 0 9px; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { display: grid; grid-template-columns: 78px 1fr; gap: 3px 10px; border-top: 2px solid #000; padding: 9px 0; font-size: 20px; }
+    li:first-child { border-top: 0; }
+    .event-time { font-size: 16px; font-weight: 700; grid-row: 1 / 3; }
+    .event-meta { font-size: 15px; }
+    .empty { display: block; }
     .lunch { padding: 12px 14px; }
     .lunch h2 { margin-bottom: 7px; }
-    .entree { display: flex; align-items: center; gap: 9px; min-height: 57px; font-size: 19px; font-weight: 700; line-height: 1.05; }
-    .entree svg { width: 52px; height: 52px; }
+    .entree { display: flex; align-items: center; gap: 9px; min-height: 70px; font-size: 19px; font-weight: 700; line-height: 1.05; }
+    .entree svg { width: 58px; height: 58px; }
     .lunch-state { border: 3px solid #000; padding: 9px; font-size: 22px; font-weight: 700; margin-top: 20px; }
     .last-menu { font-size: 16px; font-weight: 700; margin: 5px 0 0; text-transform: uppercase; }
-    footer { display: flex; justify-content: space-between; align-items: center; font-size: 17px; padding-top: 13px; }
+    footer { display: flex; justify-content: space-between; align-items: center; font-size: 15px; padding-top: 8px; }
     .stale { border: 2px solid #000; padding: 3px 7px; }
   </style>
 </head>
 <body>
   <header>
-    <div class="current">
-      ${weatherIcon(weather.current.condition)}
-      <div>
-        <h1>${temperature(weather.current.temperature)}F</h1>
-        <div class="condition">${escapeHtml(weather.current.condition)}</div>
+    <div class="weather-band">
+      <div class="current">
+        ${weatherIcon(weather.current.condition)}
+        <div>
+          <h1>${temperature(weather.current.temperature)}F</h1>
+          <div class="condition">${escapeHtml(weather.current.condition)}</div>
+        </div>
+      </div>
+      <div class="forecast-days">
+        <div class="mini-day">
+          ${weatherIcon(weather.today.condition)}
+          <strong>Today · ${escapeHtml(weather.today.condition)}</strong>
+          <span>High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%</span>
+        </div>
+        <div class="mini-day">
+          ${weatherIcon(weather.tomorrow.condition)}
+          <strong>Tomorrow · ${escapeHtml(weather.tomorrow.condition)}</strong>
+          <span>High ${temperature(weather.tomorrow.high)} · Low ${temperature(weather.tomorrow.low)} · Rain ${Math.round(weather.tomorrow.precipitationProbability)}%</span>
+        </div>
       </div>
     </div>
-    <div class="title"><strong>Daily Brief</strong><span>Local weather</span></div>
+    <div class="title"><strong>Daily Brief</strong></div>
   </header>
   <main>
-    <section>
-      <h2>Today</h2>
-      <div class="day">${weatherIcon(weather.today.condition)}<span class="day-condition">${escapeHtml(weather.today.condition)}</span></div>
-      <p class="details">High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%</p>
-    </section>
-    <section>
-      <h2>Tomorrow</h2>
-      <div class="day">${weatherIcon(weather.tomorrow.condition)}<span class="day-condition">${escapeHtml(weather.tomorrow.condition)}</span></div>
-      <p class="details">High ${temperature(weather.tomorrow.high)} · Low ${temperature(weather.tomorrow.low)} · Rain ${Math.round(weather.tomorrow.precipitationProbability)}%</p>
+    <section class="calendar">
+      <h2>Next up</h2>
+      <ul>${events}</ul>
     </section>
     ${lunchSection(model.lunch)}
   </main>

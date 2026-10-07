@@ -21,6 +21,28 @@ test("Daily Brief presents current, today, and tomorrow weather with icons and t
         precipitationProbability: 70
       }
     },
+    calendar: [
+      {
+        occurrenceId: "school|2026-10-07",
+        title: "School holiday",
+        start: "2026-10-07",
+        end: "2026-10-08",
+        allDay: true,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Mom", "Dad"]
+      },
+      {
+        occurrenceId: "dentist|2026-10-08T00:00:00.000Z",
+        title: "Dentist",
+        start: "2026-10-08T00:00:00.000Z",
+        end: "2026-10-08T01:00:00.000Z",
+        allDay: false,
+        tentative: true,
+        private: false,
+        ownerLabels: ["Mom"]
+      }
+    ],
     stale: false,
     lunch: {
       status: "available",
@@ -44,6 +66,12 @@ test("Daily Brief presents current, today, and tomorrow weather with icons and t
   expect(html).toContain("Cheese Pizza");
   expect(html).toContain('aria-label="generic lunch icon"');
   expect(html).toContain("Vegetable Yakisoba");
+  expect(html).toContain("School holiday");
+  expect(html).toContain("All day");
+  expect(html).toContain("Dentist");
+  expect(html).toContain("Tentative");
+  expect(html).toContain("Mom");
+  expect(html).not.toContain("123 Main Street");
   expect(html).toContain("Updated 10:30 AM");
 });
 

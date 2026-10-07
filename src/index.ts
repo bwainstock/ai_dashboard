@@ -1,5 +1,17 @@
 import puppeteer from "@cloudflare/puppeteer";
 import { dailyBriefHtml } from "./daily-brief";
+import {
+  normalizeCalendarEvents,
+  type CalendarEvent,
+  type CalendarSourceEvent
+} from "./calendar";
+import {
+  buildCalendarAuthorizationUrl,
+  createCalendarOAuthState,
+  decryptRefreshToken,
+  encryptRefreshToken,
+  verifyCalendarOAuthState
+} from "./calendar-oauth";
 import { fixtureHtml } from "./fixture";
 import {
   runScheduledWeatherGeneration,
@@ -14,6 +26,12 @@ import {
   type LunchIcon,
   type LunchSnapshot
 } from "./lunch";
+import {
+  exchangeCalendarAuthorizationCode,
+  fetchGoogleCalendarEvents,
+  listGoogleCalendars,
+  refreshCalendarAccessToken
+} from "./google-calendar";
 
 export interface Env {
   DB: D1Database;
@@ -21,6 +39,10 @@ export interface Env {
   BROWSER: Fetcher;
   GENERATION_SECRET: string;
   DEVICE_ORIGIN: string;
+  ADMIN_ORIGIN?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  CALENDAR_TOKEN_ENCRYPTION_KEY?: string;
   MAX_IMAGE_BYTES?: string;
   MEALVIEWER_MENU_URL?: string;
   AI?: {
@@ -223,7 +245,279 @@ async function weatherConfiguration(
   if (!isAdministrator(request, env)) {
     return json({ error: "Unauthorized" }, 401);
   }
+  return weatherConfigurationAuthorized(request, env);
+}
 
+function calendarSecrets(env: Env) {
+    if (
+      !env.GOOGLE_CLIENT_ID ||
+      !env.GOOGLE_CLIENT_SECRET ||
+      !env.CALENDAR_TOKEN_ENCRYPTION_KEY ||
+      !env.ADMIN_ORIGIN
+    ) {
+      throw new Error("Calendar OAuth is not configured");
+    }
+    return {
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      encryptionKey: env.CALENDAR_TOKEN_ENCRYPTION_KEY,
+      redirectUri: `${env.ADMIN_ORIGIN.replace(/\/$/, "")}/admin/calendar/oauth/callback`
+    };
+  }
+
+interface CalendarAccountRow {
+    account_id: "mom" | "dad";
+    display_label: string;
+    encrypted_refresh_token: string | null;
+    oauth_status: "connected" | "disconnected" | "revoked";
+  }
+
+interface SelectedCalendarRow {
+    account_id: "mom" | "dad";
+    calendar_id: string;
+    display_label: string;
+  }
+
+async function calendarConfiguration(
+    request: Request,
+    env: Env
+  ): Promise<Response> {
+    if (!isAdministrator(request, env)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    if (request.method === "PUT") {
+      const input = await request.json<{
+        accounts?: Array<{
+          accountId?: string;
+          displayLabel?: string;
+          calendars?: Array<{ id?: string; label?: string }>;
+        }>;
+      }>();
+      if (
+        !Array.isArray(input.accounts) ||
+        input.accounts.length !== 2 ||
+        new Set(input.accounts.map(({ accountId }) => accountId)).size !== 2 ||
+        input.accounts.some(
+          ({ accountId, displayLabel, calendars }) =>
+            !["mom", "dad"].includes(accountId ?? "") ||
+            typeof displayLabel !== "string" ||
+            displayLabel.trim().length < 1 ||
+            displayLabel.trim().length > 20 ||
+            displayLabel.includes("@") ||
+            !Array.isArray(calendars) ||
+            calendars.some(
+              ({ id, label }) =>
+                typeof id !== "string" ||
+                !id ||
+                typeof label !== "string" ||
+                !label ||
+                label.length > 80
+            )
+        )
+      ) {
+        return json({ error: "Invalid calendar configuration" }, 400);
+      }
+      const statements = input.accounts.flatMap((account) => [
+        env.DB.prepare(
+          `UPDATE calendar_accounts
+           SET display_label = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE account_id = ?`
+        ).bind(account.displayLabel!.trim(), account.accountId),
+        env.DB.prepare(
+          "DELETE FROM selected_calendars WHERE account_id = ?"
+        ).bind(account.accountId),
+        ...account.calendars!.map((calendar) =>
+          env.DB.prepare(
+            `INSERT INTO selected_calendars
+               (account_id, calendar_id, display_label)
+             VALUES (?, ?, ?)`
+          ).bind(account.accountId, calendar.id, calendar.label)
+        )
+      ]);
+      await env.DB.batch(statements);
+    }
+    const accounts = await env.DB.prepare(
+      `SELECT account_id, display_label, oauth_status
+       FROM calendar_accounts ORDER BY account_id`
+    ).all<Omit<CalendarAccountRow, "encrypted_refresh_token">>();
+    const calendars = await env.DB.prepare(
+      `SELECT account_id, calendar_id, display_label
+       FROM selected_calendars ORDER BY account_id, display_label`
+    ).all<SelectedCalendarRow>();
+    return json({
+      accounts: accounts.results.map((account) => ({
+        accountId: account.account_id,
+        displayLabel: account.display_label,
+        connected: account.oauth_status === "connected",
+        calendars: calendars.results
+          .filter(({ account_id }) => account_id === account.account_id)
+          .map(({ calendar_id, display_label }) => ({
+            id: calendar_id,
+            label: display_label
+          }))
+      }))
+    });
+  }
+
+async function calendarOAuthStart(
+    request: Request,
+    env: Env
+  ): Promise<Response> {
+    if (!isAdministrator(request, env)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    try {
+      const secrets = calendarSecrets(env);
+      const accountId = new URL(request.url).searchParams.get("account");
+      if (accountId !== "mom" && accountId !== "dad") {
+        return json({ error: "Invalid calendar account" }, 400);
+      }
+      const state = await createCalendarOAuthState(
+        accountId,
+        secrets.encryptionKey
+      );
+      return json({
+        authorizationUrl: buildCalendarAuthorizationUrl({
+          clientId: secrets.clientId,
+          redirectUri: secrets.redirectUri,
+          state
+        })
+      });
+    } catch {
+      return json({ error: "Calendar OAuth is not configured" }, 503);
+    }
+  }
+
+async function calendarOAuthCallback(
+    request: Request,
+    env: Env
+  ): Promise<Response> {
+    if (!isAdministrator(request, env)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    try {
+      const secrets = calendarSecrets(env);
+      const url = new URL(request.url);
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      if (!code || !state) return json({ error: "Invalid OAuth callback" }, 400);
+      const accountId = await verifyCalendarOAuthState(
+        state,
+        secrets.encryptionKey
+      );
+      const tokens = await exchangeCalendarAuthorizationCode({
+        clientId: secrets.clientId,
+        clientSecret: secrets.clientSecret,
+        code,
+        redirectUri: secrets.redirectUri
+      });
+      const encrypted = await encryptRefreshToken(
+        tokens.refreshToken,
+        secrets.encryptionKey
+      );
+      await env.DB.prepare(
+        `UPDATE calendar_accounts
+         SET encrypted_refresh_token = ?, oauth_status = 'connected',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE account_id = ?`
+      )
+        .bind(encrypted, accountId)
+        .run();
+      return json({ accountId, connected: true });
+    } catch {
+      return json({ error: "Calendar authorization failed" }, 400);
+    }
+  }
+
+async function accessTokenForAccount(
+    env: Env,
+    account: CalendarAccountRow
+  ): Promise<string> {
+    const secrets = calendarSecrets(env);
+    if (!account.encrypted_refresh_token) {
+      throw new Error("Calendar account is disconnected");
+    }
+    return refreshCalendarAccessToken({
+      clientId: secrets.clientId,
+      clientSecret: secrets.clientSecret,
+      refreshToken: await decryptRefreshToken(
+        account.encrypted_refresh_token,
+        secrets.encryptionKey
+      )
+    });
+  }
+
+async function discoverCalendars(
+    request: Request,
+    env: Env
+  ): Promise<Response> {
+    if (!isAdministrator(request, env)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const accountId = new URL(request.url).searchParams.get("account");
+    if (accountId !== "mom" && accountId !== "dad") {
+      return json({ error: "Invalid calendar account" }, 400);
+    }
+    const account = await env.DB.prepare(
+      `SELECT account_id, display_label, encrypted_refresh_token, oauth_status
+       FROM calendar_accounts WHERE account_id = ?`
+    )
+      .bind(accountId)
+      .first<CalendarAccountRow>();
+    if (!account || account.oauth_status !== "connected") {
+      return json({ error: "Calendar account is disconnected" }, 409);
+    }
+    try {
+      return json({
+        accountId,
+        calendars: await listGoogleCalendars(
+          await accessTokenForAccount(env, account)
+        )
+      });
+    } catch {
+      return json({ error: "Calendar discovery failed" }, 502);
+    }
+  }
+
+async function fetchCalendarSnapshot(
+    env: Env,
+    now: Date,
+    timezone: string
+  ): Promise<CalendarEvent[]> {
+    const accounts = await env.DB.prepare(
+      `SELECT account_id, display_label, encrypted_refresh_token, oauth_status
+       FROM calendar_accounts
+       WHERE oauth_status = 'connected'
+       ORDER BY account_id`
+    ).all<CalendarAccountRow>();
+    const selected = await env.DB.prepare(
+      `SELECT account_id, calendar_id, display_label
+       FROM selected_calendars ORDER BY account_id, calendar_id`
+    ).all<SelectedCalendarRow>();
+    const source: CalendarSourceEvent[] = [];
+    for (const account of accounts.results) {
+      const calendarIds = selected.results
+        .filter(({ account_id }) => account_id === account.account_id)
+        .map(({ calendar_id }) => calendar_id);
+      if (calendarIds.length === 0) continue;
+      source.push(
+        ...(await fetchGoogleCalendarEvents({
+          accessToken: await accessTokenForAccount(env, account),
+          accountId: account.account_id,
+          ownerLabel: account.display_label,
+          calendarIds,
+          timeMin: now.toISOString(),
+          timeMax: new Date(now.getTime() + 4 * 86_400_000).toISOString()
+        }))
+      );
+    }
+    return normalizeCalendarEvents(source, { now, timezone, days: 3 });
+  }
+
+async function weatherConfigurationAuthorized(
+  request: Request,
+  env: Env
+): Promise<Response> {
   if (request.method === "PUT") {
     const input = await request.json<{
       latitude?: number;
@@ -498,6 +792,23 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
                 : null;
             }
           : undefined,
+      fetchCalendar: () =>
+        fetchCalendarSnapshot(env, now, configuration.timezone),
+      async loadLatestCalendar() {
+        const row = await env.DB.prepare(
+          `SELECT events_json FROM calendar_snapshots
+           ORDER BY fetched_at DESC, id DESC LIMIT 1`
+        ).first<{ events_json: string }>();
+        return row ? (JSON.parse(row.events_json) as CalendarEvent[]) : [];
+      },
+      async saveCalendar(events, fetchedAt) {
+        await env.DB.prepare(
+          `INSERT INTO calendar_snapshots (fetched_at, events_json)
+           VALUES (?, ?)`
+        )
+          .bind(fetchedAt, JSON.stringify(events))
+          .run();
+      },
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       publish: (publication) => publishGeneration(env, publication),
       async recordFailure(slotKey, code, message) {
@@ -537,6 +848,30 @@ export default {
       url.pathname === "/admin/weather-configuration"
     ) {
       return weatherConfiguration(request, env);
+    }
+    if (
+      (request.method === "GET" || request.method === "PUT") &&
+      url.pathname === "/admin/calendar-configuration"
+    ) {
+      return calendarConfiguration(request, env);
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/admin/calendar/oauth/start"
+    ) {
+      return calendarOAuthStart(request, env);
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/admin/calendar/oauth/callback"
+    ) {
+      return calendarOAuthCallback(request, env);
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/admin/calendar/discovery"
+    ) {
+      return discoverCalendars(request, env);
     }
     return json({ error: "Not found" }, 404);
   },
