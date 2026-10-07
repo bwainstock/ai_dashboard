@@ -8,6 +8,7 @@ import { dailyBriefHtml } from "./daily-brief";
 import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
 import { lunchViewHtml, type LunchViewModel } from "./lunch-view";
 import { validateRenderedPage } from "./render-validation";
+import { effectiveMaximumImageBytes } from "./device-limits";
 import {
   normalizeCalendarEvents,
   type CalendarEvent,
@@ -673,11 +674,7 @@ async function generateFixture(request: Request, env: Env): Promise<Response> {
   }
 
   const dimensions = readPngDimensions(screenshot);
-  const configuredMaximum = Number(env.MAX_IMAGE_BYTES);
-  const maximumSize =
-    Number.isFinite(configuredMaximum) && configuredMaximum > 0
-      ? configuredMaximum
-      : 1_000_000;
+  const maximumSize = effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES);
   if (
     dimensions?.[0] !== 800 ||
     dimensions[1] !== 480 ||
@@ -851,16 +848,12 @@ async function publishGeneration(env: Env, publication: Publication) {
 
 async function runScheduled(env: Env, now: Date): Promise<void> {
   const configuration = await loadConfiguration(env);
-  const configuredMaximum = Number(env.MAX_IMAGE_BYTES);
   const configuredRetryDelay = Number(env.GENERATION_RETRY_MINUTES);
   await runScheduledWeatherGeneration(
     {
       now,
       configuration,
-      maximumImageBytes:
-        Number.isFinite(configuredMaximum) && configuredMaximum > 0
-          ? configuredMaximum
-          : 1_000_000,
+      maximumImageBytes: effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES),
       retryDelayMinutes:
         Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
           ? configuredRetryDelay

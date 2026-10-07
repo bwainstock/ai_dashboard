@@ -20,6 +20,7 @@ function inspection(
     overflowingElements: 0,
     iconCount: 1,
     textLength: 20,
+    minimumVisibleTextSize: 14,
     nonMonochromeValues: [],
     missingStates: [
       {
@@ -41,6 +42,7 @@ describe.each(VIEWS)("%s renderer validation", (view) => {
   test.each([
     ["overflow", { overflowingElements: 1 }],
     ["missing icon", { iconCount: 0 }],
+    ["text below the tested device limit", { minimumVisibleTextSize: 11 }],
     ["color", { nonMonochromeValues: ["rgb(255, 0, 0)"] }],
     [
       "unreadable missing state",
