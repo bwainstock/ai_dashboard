@@ -5,6 +5,7 @@ import {
   type ScheduledGenerationPorts
 } from "../src/generation";
 import type { WeatherSnapshot } from "../src/weather";
+import type { LunchSnapshot } from "../src/lunch";
 
 const WEATHER: WeatherSnapshot = {
   observedAt: "2026-10-07T10:25",
@@ -25,6 +26,16 @@ const WEATHER: WeatherSnapshot = {
   }
 };
 
+const LUNCH: LunchSnapshot = {
+  days: [
+    {
+      date: "2026-10-07",
+      status: "menu",
+      entrees: ["Cheese Pizza", "Vegetable Yakisoba"]
+    }
+  ]
+};
+
 function png(width = 800, height = 480): Uint8Array {
   const bytes = new Uint8Array(24);
   bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -42,6 +53,12 @@ function ports(
     fetchWeather: vi.fn().mockResolvedValue(WEATHER),
     loadLatestWeather: vi.fn().mockResolvedValue(null),
     saveWeather: vi.fn().mockResolvedValue(undefined),
+    fetchLunch: vi.fn().mockResolvedValue(LUNCH),
+    loadLatestLunch: vi.fn().mockResolvedValue(null),
+    saveLunch: vi.fn().mockResolvedValue(undefined),
+    loadCachedLunchIcon: vi.fn().mockResolvedValue(null),
+    saveCachedLunchIcon: vi.fn().mockResolvedValue(undefined),
+    classifyLunchWithAi: vi.fn().mockResolvedValue("pasta"),
     renderDailyBrief: vi.fn().mockResolvedValue(png()),
     publish: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue(undefined),
@@ -76,6 +93,14 @@ describe("scheduled weather generation", () => {
     expect(boundary.renderDailyBrief).toHaveBeenCalledWith({
       weather: WEATHER,
       stale: false,
+      lunch: {
+        status: "available",
+        stale: false,
+        entrees: [
+          { name: "Cheese Pizza", icon: "pizza" },
+          { name: "Vegetable Yakisoba", icon: "pasta" }
+        ]
+      },
       updatedAt: "2026-10-07T17:30:00.000Z"
     });
     expect(boundary.publish).toHaveBeenCalledWith({
@@ -86,6 +111,7 @@ describe("scheduled weather generation", () => {
       width: 800,
       height: 480,
       weather: WEATHER,
+      lunch: LUNCH,
       generatedAt: "2026-10-07T17:30:00.000Z"
     });
   });
@@ -117,6 +143,14 @@ describe("scheduled weather generation", () => {
     expect(boundary.renderDailyBrief).toHaveBeenCalledWith({
       weather: WEATHER,
       stale: true,
+      lunch: {
+        status: "available",
+        stale: false,
+        entrees: [
+          { name: "Cheese Pizza", icon: "pizza" },
+          { name: "Vegetable Yakisoba", icon: "pasta" }
+        ]
+      },
       updatedAt: "2026-10-07T22:00:00.000Z"
     });
     expect(boundary.recordFailure).toHaveBeenCalledWith(
@@ -158,6 +192,89 @@ describe("scheduled weather generation", () => {
     expect(boundary.renderDailyBrief).not.toHaveBeenCalled();
     expect(boundary.publish).not.toHaveBeenCalled();
   });
+
+  test.each([
+    [
+      "missing menus",
+      { days: [] },
+      { status: "no_menu", stale: false, entrees: [] }
+    ],
+    [
+      "reliable explicit closures",
+      {
+        days: [{ date: "2026-10-07", status: "closed" as const, entrees: [] }]
+      },
+      { status: "closed", stale: false, entrees: [] }
+    ]
+  ])("renders %s as a distinct lunch state", async (_label, lunch, expected) => {
+    const boundary = ports({ fetchLunch: vi.fn().mockResolvedValue(lunch) });
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["06:30", "10:30", "15:00", "19:00"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(boundary.renderDailyBrief).toHaveBeenCalledWith(
+      expect.objectContaining({ lunch: expected })
+    );
+  });
+
+  test.each([
+    ["LUNCH_INVALID_RESPONSE", "schema_failure"],
+    ["LUNCH_UPSTREAM_HTTP", "adapter_failure"]
+  ])(
+    "a %s remains visibly distinct while retaining last normalized entrees",
+    async (code, status) => {
+      const boundary = ports({
+        fetchLunch: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error("lunch failed"), { code })),
+        loadLatestLunch: vi.fn().mockResolvedValue(LUNCH)
+      });
+
+      const result = await runScheduledWeatherGeneration(
+        {
+          now: new Date("2026-10-07T17:30:00Z"),
+          configuration: {
+            latitude: 37.3382,
+            longitude: -121.8863,
+            timezone: "America/Los_Angeles",
+            slots: ["06:30", "10:30", "15:00", "19:00"]
+          },
+          maximumImageBytes: 1_000_000
+        },
+        boundary
+      );
+
+      expect(result.status).toBe("published");
+      expect(boundary.renderDailyBrief).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lunch: {
+            status,
+            stale: true,
+            entrees: [
+              { name: "Cheese Pizza", icon: "pizza" },
+              { name: "Vegetable Yakisoba", icon: "pasta" }
+            ]
+          }
+        })
+      );
+      expect(boundary.recordFailure).toHaveBeenCalledWith(
+        "2026-10-07T17:30:00.000Z",
+        code,
+        "lunch failed"
+      );
+    }
+  );
 
   test("duplicate delivery of a due slot does not fetch or publish again", async () => {
     const boundary = ports({

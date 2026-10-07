@@ -22,6 +22,11 @@ bucket_name = "family-dashboard-private-images"
 [vars]
 DEVICE_ORIGIN = "https://dashboard-device.example.com"
 MAX_IMAGE_BYTES = "1000000"
+MEALVIEWER_MENU_URL = "https://api.mealviewer.com/api/v4/school/SJUSDElementarySchoolsSJUSD/menu"
+LUNCH_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
+
+[ai]
+binding = "AI"
 
 [observability]
 enabled = true

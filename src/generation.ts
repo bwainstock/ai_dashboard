@@ -1,4 +1,10 @@
 import type { WeatherLocation, WeatherSnapshot } from "./weather";
+import {
+  classifyLunchEntree,
+  type LunchClassifierPorts,
+  type LunchIcon,
+  type LunchSnapshot
+} from "./lunch";
 
 export interface DashboardConfiguration extends WeatherLocation {
   timezone: string;
@@ -8,7 +14,19 @@ export interface DashboardConfiguration extends WeatherLocation {
 export interface DailyBriefWeatherModel {
   weather: WeatherSnapshot;
   stale: boolean;
+  lunch: DailyBriefLunchModel;
   updatedAt: string;
+}
+
+export interface DailyBriefLunchModel {
+  status:
+    | "available"
+    | "no_menu"
+    | "closed"
+    | "schema_failure"
+    | "adapter_failure";
+  stale: boolean;
+  entrees: Array<{ name: string; icon: LunchIcon }>;
 }
 
 export interface Publication {
@@ -19,6 +37,7 @@ export interface Publication {
   width: number;
   height: number;
   weather: WeatherSnapshot;
+  lunch: LunchSnapshot;
   generatedAt: string;
 }
 
@@ -27,6 +46,12 @@ export interface ScheduledGenerationPorts {
   fetchWeather(location: WeatherLocation): Promise<WeatherSnapshot>;
   loadLatestWeather(): Promise<WeatherSnapshot | null>;
   saveWeather(snapshot: WeatherSnapshot, fetchedAt: string): Promise<void>;
+  fetchLunch(): Promise<LunchSnapshot>;
+  loadLatestLunch(): Promise<LunchSnapshot | null>;
+  saveLunch(snapshot: LunchSnapshot, fetchedAt: string): Promise<void>;
+  loadCachedLunchIcon(entreeKey: string): Promise<string | null>;
+  saveCachedLunchIcon(entreeKey: string, icon: LunchIcon): Promise<void>;
+  classifyLunchWithAi?: NonNullable<LunchClassifierPorts["classifyWithAi"]>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
   recordFailure(slotKey: string, code: string, message: string): Promise<void>;
@@ -165,6 +190,38 @@ function compactTimestamp(date: Date): string {
   return date.toISOString().replaceAll(/[-:]/g, "").replace(".000", "");
 }
 
+function localDate(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+async function lunchModel(
+  snapshot: LunchSnapshot | null,
+  date: string,
+  status: DailyBriefLunchModel["status"] | null,
+  classifier: LunchClassifierPorts
+): Promise<DailyBriefLunchModel> {
+  const day = snapshot?.days.find((candidate) => candidate.date === date);
+  const entrees = await Promise.all(
+    (day?.entrees ?? []).map(async (name) => ({
+      name,
+      icon: await classifyLunchEntree(name, classifier)
+    }))
+  );
+  if (status) return { status, stale: true, entrees };
+  if (!day || (day.status === "menu" && day.entrees.length === 0)) {
+    return { status: "no_menu", stale: false, entrees: [] };
+  }
+  if (day.status === "closed") {
+    return { status: "closed", stale: false, entrees: [] };
+  }
+  return { status: "available", stale: false, entrees };
+}
+
 export async function runScheduledWeatherGeneration(
   input: ScheduledGenerationInput,
   ports: ScheduledGenerationPorts
@@ -201,9 +258,49 @@ export async function runScheduledWeatherGeneration(
     weather = previous;
     stale = true;
   }
+  const classifier: LunchClassifierPorts = {
+    loadCached: ports.loadCachedLunchIcon,
+    saveCached: ports.saveCachedLunchIcon,
+    classifyWithAi: ports.classifyLunchWithAi
+  };
+  let lunch: LunchSnapshot;
+  let renderedLunch: DailyBriefLunchModel;
+  try {
+    lunch = await ports.fetchLunch();
+    await ports.saveLunch(lunch, input.now.toISOString());
+    renderedLunch = await lunchModel(
+      lunch,
+      localDate(input.now, input.configuration.timezone),
+      null,
+      classifier
+    );
+  } catch (error) {
+    const code =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : "LUNCH_UPSTREAM_NETWORK";
+    await ports.recordFailure(
+      slotKey,
+      code,
+      error instanceof Error ? error.message : "Lunch fetch failed"
+    );
+    lunch = (await ports.loadLatestLunch()) ?? { days: [] };
+    renderedLunch = await lunchModel(
+      lunch,
+      localDate(input.now, input.configuration.timezone),
+      code === "LUNCH_INVALID_RESPONSE"
+        ? "schema_failure"
+        : "adapter_failure",
+      classifier
+    );
+  }
   const model = {
     weather,
     stale,
+    lunch: renderedLunch,
     updatedAt: input.now.toISOString()
   };
   let image: Uint8Array;
@@ -244,6 +341,7 @@ export async function runScheduledWeatherGeneration(
       width: 800,
       height: 480,
       weather,
+      lunch,
       generatedAt: input.now.toISOString()
     });
   } catch (error) {

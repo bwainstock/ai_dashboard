@@ -9,6 +9,11 @@ import {
   type Publication
 } from "./generation";
 import { fetchWeather, type WeatherSnapshot } from "./weather";
+import {
+  fetchMealViewerMenu,
+  type LunchIcon,
+  type LunchSnapshot
+} from "./lunch";
 
 export interface Env {
   DB: D1Database;
@@ -17,6 +22,11 @@ export interface Env {
   GENERATION_SECRET: string;
   DEVICE_ORIGIN: string;
   MAX_IMAGE_BYTES?: string;
+  MEALVIEWER_MENU_URL?: string;
+  AI?: {
+    run(model: string, input: unknown): Promise<unknown>;
+  };
+  LUNCH_AI_MODEL?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -419,6 +429,75 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .bind(snapshot.observedAt, fetchedAt, JSON.stringify(snapshot))
           .run();
       },
+      async fetchLunch() {
+        if (!env.MEALVIEWER_MENU_URL) {
+          throw Object.assign(new Error("MealViewer URL is not configured"), {
+            code: "LUNCH_UPSTREAM_NETWORK"
+          });
+        }
+        return fetchMealViewerMenu(env.MEALVIEWER_MENU_URL);
+      },
+      async loadLatestLunch() {
+        const row = await env.DB.prepare(
+          `SELECT snapshot_json FROM lunch_snapshots
+           ORDER BY fetched_at DESC, id DESC LIMIT 1`
+        ).first<{ snapshot_json: string }>();
+        return row ? (JSON.parse(row.snapshot_json) as LunchSnapshot) : null;
+      },
+      async saveLunch(snapshot, fetchedAt) {
+        await env.DB.prepare(
+          `INSERT INTO lunch_snapshots (fetched_at, snapshot_json)
+           VALUES (?, ?)`
+        )
+          .bind(fetchedAt, JSON.stringify(snapshot))
+          .run();
+      },
+      async loadCachedLunchIcon(entreeKey) {
+        const row = await env.DB.prepare(
+          "SELECT icon FROM lunch_icon_mappings WHERE entree_key = ?"
+        )
+          .bind(entreeKey)
+          .first<{ icon: string }>();
+        return row?.icon ?? null;
+      },
+      async saveCachedLunchIcon(entreeKey, icon: LunchIcon) {
+        await env.DB.prepare(
+          `INSERT INTO lunch_icon_mappings
+             (entree_key, icon, source, updated_at)
+           VALUES (?, ?, 'ai', CURRENT_TIMESTAMP)
+           ON CONFLICT(entree_key) DO UPDATE SET
+             icon = excluded.icon,
+             source = excluded.source,
+             updated_at = excluded.updated_at`
+        )
+          .bind(entreeKey, icon)
+          .run();
+      },
+      classifyLunchWithAi:
+        env.AI && env.LUNCH_AI_MODEL
+          ? async ({ entree, allowedIcons }) => {
+              const result = await env.AI!.run(env.LUNCH_AI_MODEL!, {
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      "Return exactly one allowed lunch icon token and nothing else. If uncertain, return generic."
+                  },
+                  {
+                    role: "user",
+                    content: `Allowed: ${allowedIcons.join(",")}\nEntree: ${entree}`
+                  }
+                ],
+                max_tokens: 5,
+                temperature: 0
+              });
+              return result &&
+                typeof result === "object" &&
+                "response" in result
+                ? (result as { response: unknown }).response
+                : null;
+            }
+          : undefined,
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       publish: (publication) => publishGeneration(env, publication),
       async recordFailure(slotKey, code, message) {
