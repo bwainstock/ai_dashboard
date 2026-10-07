@@ -26,6 +26,7 @@ import {
   runScheduledWeatherGeneration,
   secondsUntilNextSlot,
   type DashboardConfiguration,
+  type DailyBriefNotice,
   type DailyBriefWeatherModel,
   type Publication
 } from "./generation";
@@ -63,6 +64,8 @@ export interface Env {
   INCIDENT_EMAIL?: SendEmail;
   OPERATIONAL_EMAIL_FROM?: string;
   OPERATIONAL_EMAIL_TO?: string;
+  GMAIL_PROCESSOR?: Fetcher;
+  GMAIL_PROCESSOR_KEY?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -501,6 +504,60 @@ async function calendarOAuthCallback(
     }
   }
 
+async function gmailConfiguration(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  if (!isAdministrator(request, env)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  if (request.method === "PUT") {
+    const input = await request.json<{
+      senders?: Array<{ domain?: string; kind?: string }>;
+    }>();
+    if (
+      !Array.isArray(input.senders) ||
+      input.senders.some(
+        ({ domain, kind }) =>
+          typeof domain !== "string" ||
+          !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain) ||
+          !["school", "childcare"].includes(kind ?? "")
+      )
+    ) {
+      return json({ error: "Invalid Gmail sender configuration" }, 400);
+    }
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM gmail_sender_allowlist"),
+      ...input.senders.map(({ domain, kind }) =>
+        env.DB.prepare(
+          `INSERT INTO gmail_sender_allowlist (domain, kind)
+           VALUES (?, ?)`
+        ).bind(domain!.toLowerCase(), kind)
+      )
+    ]);
+  }
+  const senders = await env.DB.prepare(
+    `SELECT domain, kind FROM gmail_sender_allowlist
+     ORDER BY kind, domain`
+  ).all<{ domain: string; kind: "school" | "childcare" }>();
+  const accounts = await env.DB.prepare(
+    `SELECT account_id, oauth_status, gmail_scan_completed_at
+     FROM calendar_accounts ORDER BY account_id`
+  ).all<{
+    account_id: "mom" | "dad";
+    oauth_status: string;
+    gmail_scan_completed_at: string | null;
+  }>();
+  return json({
+    senders: senders.results,
+    accounts: accounts.results.map((account) => ({
+      accountId: account.account_id,
+      connected: account.oauth_status === "connected",
+      lastProcessedAt: account.gmail_scan_completed_at
+    }))
+  });
+}
+
 async function accessTokenForAccount(
     env: Env,
     account: CalendarAccountRow
@@ -847,6 +904,16 @@ async function publishGeneration(env: Env, publication: Publication) {
 }
 
 async function runScheduled(env: Env, now: Date): Promise<void> {
+  if (env.GMAIL_PROCESSOR && env.GMAIL_PROCESSOR_KEY) {
+    try {
+      await env.GMAIL_PROCESSOR.fetch("https://gmail-processor/process", {
+        method: "POST",
+        headers: { "X-Gmail-Processor-Key": env.GMAIL_PROCESSOR_KEY }
+      });
+    } catch {
+      // Gmail processing fails closed; V1 sources and the last valid notices remain usable.
+    }
+  }
   const configuration = await loadConfiguration(env);
   const configuredRetryDelay = Number(env.GENERATION_RETRY_MINUTES);
   await runScheduledWeatherGeneration(
@@ -1065,6 +1132,30 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .bind(fetchedAt)
           .run();
       },
+      async loadNotices() {
+        const rows = await env.DB.prepare(
+          `SELECT category, summary, relevant_date, action, sender_organization
+           FROM household_notices
+           WHERE expires_at >= ?
+           ORDER BY accepted_at DESC, id DESC
+           LIMIT 2`
+        )
+          .bind(now.toISOString())
+          .all<{
+            category: DailyBriefNotice["category"];
+            summary: string;
+            relevant_date: string | null;
+            action: string | null;
+            sender_organization: string;
+          }>();
+        return rows.results.map((row) => ({
+          category: row.category,
+          summary: row.summary,
+          relevantDate: row.relevant_date,
+          action: row.action,
+          senderOrganization: row.sender_organization
+        }));
+      },
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       renderCalendarView: (model) => renderCalendarView(env, model),
       renderLunchView: (model) => renderLunchView(env, model),
@@ -1174,6 +1265,12 @@ export default {
       url.pathname === "/admin/calendar/discovery"
     ) {
       return discoverCalendars(request, env);
+    }
+    if (
+      (request.method === "GET" || request.method === "PUT") &&
+      url.pathname === "/admin/gmail-configuration"
+    ) {
+      return gmailConfiguration(request, env);
     }
     return json({ error: "Not found" }, 404);
   },

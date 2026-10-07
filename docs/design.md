@@ -258,6 +258,10 @@ Use a dedicated Gmail-processing Worker:
 
 Raw email bodies are processed transiently and never persisted.
 
+The implemented boundary, retention fields, deployment configuration, and
+privacy inspection are documented in
+[Privacy-isolated Gmail processing](gmail-integration.md).
+
 ### Publication
 
 Automatically publish only results with:

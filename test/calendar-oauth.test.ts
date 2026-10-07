@@ -19,7 +19,10 @@ describe("Google Calendar OAuth", () => {
       "https://accounts.google.com/o/oauth2/v2/auth"
     );
     expect(url.searchParams.get("scope")).toBe(
-      "https://www.googleapis.com/auth/calendar.readonly"
+      [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ].join(" ")
     );
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");

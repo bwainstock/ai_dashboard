@@ -44,6 +44,9 @@ secrets.
 - `GET /admin/calendar/oauth/start`, OAuth callback, calendar discovery, and
   the existing calendar configuration contract are administrator-only.
 - `GET /admin/status` is available to reviewers and administrators.
+- `GET`/`PUT /admin/gmail-configuration` is administrator-only and manages
+  school/childcare sender domains plus content-free processing status. See
+  [Privacy-isolated Gmail processing](gmail-integration.md).
 
 Status contains only last device check-in, the atomically published current
 generation, the latest slot attempt and retry state, source freshness, OAuth
