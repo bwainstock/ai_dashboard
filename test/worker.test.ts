@@ -19,7 +19,7 @@ class TestDatabase {
         filename: string;
         objectKey: string;
         byteSize: number;
-        viewType?: "daily_brief" | "calendar" | "lunch";
+        viewType?: "daily_brief" | "calendar" | "lunch" | "notices";
       }
     | undefined;
   incompleteDailyGeneration:
@@ -43,6 +43,14 @@ class TestDatabase {
         objectKey: string;
         byteSize: number;
         viewType: "lunch";
+      }
+    | undefined;
+  noticesGeneration:
+    | {
+        filename: string;
+        objectKey: string;
+        byteSize: number;
+        viewType: "notices";
       }
     | undefined;
   configuration = {
@@ -90,6 +98,8 @@ class TestDatabase {
               ? this.calendarGeneration
               : requestedView === "lunch"
                 ? this.lunchGeneration
+                : requestedView === "notices"
+                  ? this.noticesGeneration
                 : this.publishedGeneration;
           const generation =
             requestedView === "daily_brief" &&
@@ -476,7 +486,7 @@ describe("TRMNL BYOS device service", () => {
     );
   });
 
-  test("short presses complete the Daily Brief to Calendar View to Lunch View cycle", async () => {
+  test("short presses complete the Daily Brief to Calendar View to Lunch View to Notices View cycle", async () => {
     const database = new TestDatabase();
     database.publishedGeneration = {
       filename: "daily-brief-20261007T173000Z.png",
@@ -496,6 +506,12 @@ describe("TRMNL BYOS device service", () => {
       byteSize: 12_347,
       viewType: "lunch"
     };
+    database.noticesGeneration = {
+      filename: "notices-view-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/notices-view.png",
+      byteSize: 12_348,
+      viewType: "notices"
+    };
     const env = testEnv(database);
     const setupResponse = await worker.fetch(
       new Request("https://device.test/api/setup", {
@@ -511,7 +527,7 @@ describe("TRMNL BYOS device service", () => {
     };
 
     const filenames = [];
-    for (let press = 0; press < 3; press += 1) {
+    for (let press = 0; press < 4; press += 1) {
       const response = await worker.fetch(
         new Request("https://device.test/api/display", { headers }),
         env
@@ -522,9 +538,10 @@ describe("TRMNL BYOS device service", () => {
     expect(filenames).toEqual([
       "calendar-view-20261007T173000Z.png",
       "lunch-view-20261007T173000Z.png",
+      "notices-view-20261007T173000Z.png",
       "daily-brief-20261007T173000Z.png"
     ]);
-    expect(new Set(filenames).size).toBe(3);
+    expect(new Set(filenames).size).toBe(4);
   });
 
   test("authenticated image delivery serves the published private R2 object as PNG", async () => {

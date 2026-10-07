@@ -15,6 +15,7 @@ binding = "AI"
 [vars]
 GMAIL_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 GMAIL_AI_MODEL_VERSION = "provider-current"
+NOTICE_GRACE_DAYS = "3"
 
 [observability]
 enabled = false

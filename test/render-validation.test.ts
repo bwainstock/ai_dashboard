@@ -8,7 +8,8 @@ import {
 const VIEWS: DashboardViewName[] = [
   "Daily Brief",
   "Calendar View",
-  "Lunch View"
+  "Lunch View",
+  "Notices View"
 ];
 
 function inspection(

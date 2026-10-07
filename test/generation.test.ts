@@ -64,6 +64,7 @@ function ports(
     renderDailyBrief: vi.fn().mockResolvedValue(png()),
     renderCalendarView: vi.fn().mockResolvedValue(png()),
     renderLunchView: vi.fn().mockResolvedValue(png()),
+    renderNoticesView: vi.fn().mockResolvedValue(png()),
     publish: vi.fn().mockResolvedValue(undefined),
     recordSourceFailure: vi.fn().mockResolvedValue(undefined),
     failGeneration: vi.fn().mockResolvedValue(undefined),
@@ -149,6 +150,12 @@ describe("scheduled weather generation", () => {
           filename: "lunch-view-20261007T173000Z.png",
           objectKey: "generations/20261007T173000Z/lunch-view.png",
           image: expect.any(Uint8Array)
+        },
+        {
+          viewType: "notices",
+          filename: "notices-view-20261007T173000Z.png",
+          objectKey: "generations/20261007T173000Z/notices-view.png",
+          image: expect.any(Uint8Array)
         }
       ],
       width: 800,
@@ -156,6 +163,46 @@ describe("scheduled weather generation", () => {
       weather: WEATHER,
       lunch: LUNCH,
       generatedAt: "2026-10-07T17:30:00.000Z"
+    });
+  });
+
+  test("renders at most eight active notices and Private Notice Markers into Notices View", async () => {
+    const notices = Array.from({ length: 10 }, (_, index) => ({
+      category: "school" as const,
+      summary: `Notice ${index + 1}`,
+      relevantDate: "2026-10-10",
+      action: null,
+      senderOrganization: "School"
+    }));
+    const boundary = ports({
+      loadNotices: vi.fn().mockResolvedValue(notices),
+      loadPrivateNoticeMarkers: vi
+        .fn()
+        .mockResolvedValue([{ accountId: "mom" as const }])
+    });
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(boundary.renderDailyBrief).toHaveBeenCalledWith(
+      expect.objectContaining({ notices: notices.slice(0, 2) })
+    );
+    expect(boundary.renderNoticesView).toHaveBeenCalledWith({
+      notices: notices.slice(0, 8),
+      privateNoticeMarkers: [{ accountId: "mom" }],
+      timezone: "America/Los_Angeles",
+      updatedAt: "2026-10-07T17:30:00.000Z"
     });
   });
 

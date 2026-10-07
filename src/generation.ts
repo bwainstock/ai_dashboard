@@ -2,6 +2,7 @@ import type { WeatherLocation, WeatherSnapshot } from "./weather";
 import type { CalendarEvent } from "./calendar";
 import type { CalendarViewModel } from "./calendar-view";
 import { lunchViewModel, type LunchViewModel } from "./lunch-view";
+import type { NoticesViewModel } from "./notices-view";
 import {
   classifyLunchEntree,
   type LunchClassifierPorts,
@@ -56,7 +57,7 @@ export interface Publication {
   generationId: string;
   slotKey: string;
   views: Array<{
-    viewType: "daily_brief" | "calendar" | "lunch";
+    viewType: "daily_brief" | "calendar" | "lunch" | "notices";
     filename: string;
     objectKey: string;
     image: Uint8Array;
@@ -88,6 +89,7 @@ export interface ScheduledGenerationPorts {
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
   renderLunchView(model: LunchViewModel): Promise<Uint8Array>;
+  renderNoticesView(model: NoticesViewModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
   recordSourceFailure(
     slotKey: string,
@@ -392,11 +394,13 @@ export async function runScheduledWeatherGeneration(
     lunch: renderedLunch,
     updatedAt: input.now.toISOString()
   };
-  if (ports.loadNotices) {
-    model.notices = (await ports.loadNotices()).slice(0, 2);
-  }
+  const notices = ports.loadNotices ? await ports.loadNotices() : [];
+  const privateNoticeMarkers = ports.loadPrivateNoticeMarkers
+    ? await ports.loadPrivateNoticeMarkers()
+    : [];
+  if (ports.loadNotices) model.notices = notices.slice(0, 2);
   if (ports.loadPrivateNoticeMarkers) {
-    model.privateNoticeMarkers = await ports.loadPrivateNoticeMarkers();
+    model.privateNoticeMarkers = privateNoticeMarkers;
   }
   let calendar: CalendarEvent[] = [];
   let calendarAge: number | undefined;
@@ -477,8 +481,22 @@ export async function runScheduledWeatherGeneration(
       error instanceof Error ? error.message : "Lunch View rendering failed"
     );
   }
+  let noticesImage: Uint8Array;
+  try {
+    noticesImage = await ports.renderNoticesView({
+      notices: notices.slice(0, 8),
+      privateNoticeMarkers,
+      timezone: input.configuration.timezone,
+      updatedAt: input.now.toISOString()
+    });
+  } catch (error) {
+    return fail(
+      "NOTICES_VIEW_RENDER_FAILED",
+      error instanceof Error ? error.message : "Notices View rendering failed"
+    );
+  }
 
-  const images = [image, calendarImage, lunchImage];
+  const images = [image, calendarImage, lunchImage, noticesImage];
   if (
     images.some((candidate) => {
       const dimensions = pngDimensions(candidate);
@@ -519,6 +537,12 @@ export async function runScheduledWeatherGeneration(
           filename: `lunch-view-${generationId}.png`,
           objectKey: `generations/${generationId}/lunch-view.png`,
           image: lunchImage
+        },
+        {
+          viewType: "notices",
+          filename: `notices-view-${generationId}.png`,
+          objectKey: `generations/${generationId}/notices-view.png`,
+          image: noticesImage
         }
       ],
       width: 800,

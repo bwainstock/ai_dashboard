@@ -1,7 +1,6 @@
 import { decryptRefreshToken } from "./calendar-oauth";
 import {
   processGmailCandidate,
-  type HouseholdNotice,
   type ProtectedGmailReview
 } from "./gmail";
 import {
@@ -9,6 +8,7 @@ import {
   fetchInitialInboxCandidates
 } from "./google-gmail";
 import { refreshCalendarAccessToken } from "./google-calendar";
+import { noticeLifecycle } from "./notice-lifecycle";
 
 export interface GmailWorkerEnv {
   DB: D1Database;
@@ -21,6 +21,7 @@ export interface GmailWorkerEnv {
   GMAIL_AI_MODEL: string;
   GMAIL_AI_MODEL_VERSION?: string;
   GMAIL_PROCESSOR_KEY: string;
+  NOTICE_GRACE_DAYS?: string;
 }
 
 interface GmailAccountRow {
@@ -31,13 +32,6 @@ interface GmailAccountRow {
 
 function datePlus(date: Date, days: number): string {
   return new Date(date.getTime() + days * 24 * 60 * 60_000).toISOString();
-}
-
-function noticeExpiry(notice: HouseholdNotice, now: Date): Date {
-  if (!notice.relevantDate) {
-    return new Date(now.getTime() + 14 * 24 * 60 * 60_000);
-  }
-  return new Date(`${notice.relevantDate}T12:00:00.000Z`);
 }
 
 export async function processConnectedGmailAccounts(
@@ -85,7 +79,11 @@ export async function processConnectedGmailAccounts(
           };
         },
         async saveValidated(notice) {
-          const expiresAt = noticeExpiry(notice, now);
+          const lifecycle = noticeLifecycle(
+            notice.relevantDate,
+            now,
+            env.NOTICE_GRACE_DAYS
+          );
           await env.DB.prepare(
             `INSERT INTO household_notices
                (account_id, source_key, category, summary, relevant_date,
@@ -115,8 +113,8 @@ export async function processConnectedGmailAccounts(
               notice.modelId,
               notice.modelVersion,
               now.toISOString(),
-              datePlus(expiresAt, 3),
-              datePlus(expiresAt, 33)
+              lifecycle.expiresAt,
+              lifecycle.retainedUntil
             )
             .run();
         },

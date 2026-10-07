@@ -1,7 +1,8 @@
 export type DashboardViewName =
   | "Daily Brief"
   | "Calendar View"
-  | "Lunch View";
+  | "Lunch View"
+  | "Notices View";
 
 export interface RenderInspection {
   viewport: { width: number; height: number };

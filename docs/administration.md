@@ -52,7 +52,9 @@ secrets.
 - `POST /admin/gmail-review/:id` is administrator-only. It accepts `dismiss`,
   `correct`, or `publish`; corrections must contain exactly `category`,
   `summary`, `relevantDate`, `action`, and `senderOrganization` and pass
-  independent validation.
+  independent validation. Dismissed records no longer produce Private Notice
+  Markers, while corrected-and-published fields are used by subsequent Daily
+  Brief and Notices View generations.
 
 Status contains only last device check-in, the atomically published current
 generation, the latest slot attempt and retry state, source freshness, OAuth

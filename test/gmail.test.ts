@@ -151,6 +151,47 @@ On Tue, Oct 6, 2026 at 1:00 PM Parent <parent@example.com> wrote:
     }
   });
 
+  test("updates from one Gmail thread share a derived identity without retaining raw identifiers", async () => {
+    const saved: Array<{ sourceKey: string }> = [];
+    const runAi = vi.fn().mockResolvedValue({
+      response: JSON.stringify({
+        isNotice: true,
+        category: "school",
+        summary: "Field trip timing changed.",
+        relevantDate: "2026-10-10",
+        action: "Review the updated timing.",
+        senderOrganization: "School",
+        sensitive: false,
+        confidence: 0.97
+      })
+    });
+    const process = (threadId: string, messageId: string) =>
+      processGmailCandidate(
+        { ...candidate, threadId, messageId },
+        {
+          now: new Date("2026-10-07T18:00:00.000Z"),
+          accountId: "mom",
+          allowedSenderDomains: ["school.example"],
+          modelId: "notice-model",
+          runAi,
+          saveValidated: async (notice) => {
+            saved.push(notice);
+          }
+        }
+      );
+
+    await process("same-private-thread", "message-one");
+    await process("same-private-thread", "message-two");
+    await process("different-private-thread", "message-three");
+
+    expect(saved[0]?.sourceKey).toBe(saved[1]?.sourceKey);
+    expect(saved[0]?.sourceKey).not.toBe(saved[2]?.sourceKey);
+    expect(saved[0]?.sourceKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(saved)).not.toMatch(
+      /same-private-thread|different-private-thread|message-(?:one|two|three)/
+    );
+  });
+
   test.each([
     [{ relevantDate: "2020-01-01" }, "date"],
     [

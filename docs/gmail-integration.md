@@ -41,21 +41,25 @@ relevant candidates are written there and produce only a Mom- or Dad-specific
 Private Notice Marker on the shared display. The marker render model contains
 only the account label.
 
-Thread deduplication uses a one-way SHA-256 source key. Protected Review
+Thread deduplication uses a one-way SHA-256 source key derived from the Gmail
+thread identifier; raw Gmail message and thread identifiers are never retained.
+Protected Review
 Records contain only validated structured fields, confidence, account label,
 source hash, and lifecycle timestamps. Fixed failure records contain only
 account label, reason, and timestamps. Neither contains candidate content or
 unvalidated model output. Active notices expire shortly after their date and
-are deleted 30 days later; protected and failure review records expire in 14
-days.
+are deleted 30 days later. The active grace period is configured consistently
+on both Workers with `NOTICE_GRACE_DAYS` and defaults to three days. Protected
+and failure review records expire in 14 days.
 
 Cloudflare Access protects `GET /admin/gmail-review` and
 `POST /admin/gmail-review/:id`. Both household roles can inspect the minimized
 Protected Review Record response. Only administrators can dismiss, correct,
 or publish. Corrections are independently revalidated before storage.
 
-The Daily Brief reads at most two active rows and receives only category,
-neutral summary, normalized date, requested action, and sender organization.
+The Daily Brief reads at most two active rows and Notices View reads at most
+eight. Both receive only category, neutral summary, normalized date, requested
+action, and sender organization.
 For a sensitive record it receives only the account-specific marker. Raw
 subjects, bodies, sender addresses, Gmail message/thread IDs, prompts, and
 unvalidated output are absent from D1 notice/review schemas, R2 metadata,
@@ -73,6 +77,9 @@ applicable:
 - `GOOGLE_CLIENT_SECRET`
 - `CALENDAR_TOKEN_ENCRYPTION_KEY`
 - `GMAIL_PROCESSOR_KEY`
+
+Set the same non-secret `NOTICE_GRACE_DAYS` value in both Worker
+configurations.
 
 Deploy the Gmail Worker with `wrangler.gmail.toml`, then deploy the device
 Worker so its `GMAIL_PROCESSOR` service binding resolves.
