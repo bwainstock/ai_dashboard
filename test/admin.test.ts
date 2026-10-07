@@ -111,7 +111,8 @@ class AdminDatabase {
             results: [
               {
                 error_code: "CALENDAR_OAUTH_REVOKED",
-                occurred_at: "2026-10-07T16:30:00.000Z"
+                occurred_at: "2026-10-07T16:30:00.000Z",
+                notified_at: "2026-10-07T16:30:05.000Z"
               }
             ]
           } as D1Result<T>;
@@ -294,7 +295,8 @@ describe("Access-protected browser administration", () => {
       incidents: [
         {
           errorCode: "CALENDAR_OAUTH_REVOKED",
-          occurredAt: "2026-10-07T16:30:00.000Z"
+          occurredAt: "2026-10-07T16:30:00.000Z",
+          notifiedAt: "2026-10-07T16:30:05.000Z"
         }
       ]
     });

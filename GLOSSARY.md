@@ -27,3 +27,7 @@ _Avoid_: Important email, priority email
 **Private Notice Marker**:
 An account-specific indication that a sensitive Household Notice is available for protected review, revealing no category, sender, date, or message content.
 _Avoid_: Private email, sensitive alert
+
+**Operational Incident**:
+A durable active state for one actionable system condition. It sends one fixed-code email, resolves automatically after recovery, and may alert again only after a later recurrence.
+_Avoid_: Error message, household alert

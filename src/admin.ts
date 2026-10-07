@@ -45,6 +45,9 @@ const FIXED_ERROR_CODES = new Set([
   "RENDERED_IMAGE_INVALID",
   "GENERATION_PUBLICATION_FAILED",
   "AI_QUOTA_EXHAUSTED",
+  "OAUTH_REVOKED_OR_EXPIRED",
+  "SOURCE_SCHEDULED_FAILURE",
+  "GENERATION_PUBLICATION_BLOCKED",
   "DEVICE_AUTH_SUSPICIOUS",
   "DEVICE_CHECK_IN_MISSING"
 ]);
@@ -304,9 +307,14 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
          WHERE status_key = 'ai_quota'`
       ).all<{ status_key: string; status_value: string }>(),
       env.DB.prepare(
-        `SELECT error_code, occurred_at FROM operational_incidents
+        `SELECT error_code, occurred_at, notified_at
+         FROM operational_incidents
          WHERE resolved_at IS NULL ORDER BY occurred_at DESC LIMIT 20`
-      ).all<{ error_code: string; occurred_at: string }>()
+      ).all<{
+        error_code: string;
+        occurred_at: string;
+        notified_at: string | null;
+      }>()
     ]);
   const aiQuota = statuses.results[0]?.status_value;
   return json({
@@ -340,10 +348,17 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
     incidents: incidents.results
       .map((incident) => ({
         errorCode: safeErrorCode(incident.error_code),
-        occurredAt: incident.occurred_at
+        occurredAt: incident.occurred_at,
+        notifiedAt: incident.notified_at
       }))
       .filter(
-        (incident): incident is { errorCode: string; occurredAt: string } =>
+        (
+          incident
+        ): incident is {
+          errorCode: string;
+          occurredAt: string;
+          notifiedAt: string | null;
+        } =>
           incident.errorCode !== null
       )
   });
