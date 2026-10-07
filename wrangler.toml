@@ -1,0 +1,31 @@
+name = "family-dashboard-device"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[browser]
+binding = "BROWSER"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "family-dashboard"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "family-dashboard-private-images"
+
+[vars]
+DEVICE_ORIGIN = "https://dashboard-device.example.com"
+MAX_IMAGE_BYTES = "1000000"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+head_sampling_rate = 1
+persist = true
