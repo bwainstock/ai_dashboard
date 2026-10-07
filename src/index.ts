@@ -7,6 +7,7 @@ import {
 import { dailyBriefHtml } from "./daily-brief";
 import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
 import { lunchViewHtml, type LunchViewModel } from "./lunch-view";
+import { noticesViewHtml, type NoticesViewModel } from "./notices-view";
 import { validateRenderedPage } from "./render-validation";
 import { effectiveMaximumImageBytes } from "./device-limits";
 import {
@@ -66,6 +67,7 @@ export interface Env {
   OPERATIONAL_EMAIL_TO?: string;
   GMAIL_PROCESSOR?: Fetcher;
   GMAIL_PROCESSOR_KEY?: string;
+  NOTICE_GRACE_DAYS?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -195,8 +197,8 @@ async function display(request: Request, env: Env): Promise<Response> {
   const manualWake =
     updateSource !== undefined &&
     !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
-  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 3 : 0;
-  const viewType = ["daily_brief", "calendar", "lunch"][viewCursor];
+  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 4 : 0;
+  const viewType = ["daily_brief", "calendar", "lunch", "notices"][viewCursor];
   await env.DB.prepare(
     `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
      WHERE device_id = ?`
@@ -852,6 +854,32 @@ async function renderLunchView(
   }
 }
 
+async function renderNoticesView(
+  env: Env,
+  model: NoticesViewModel
+): Promise<Uint8Array> {
+  const browser = await puppeteer.launch(env.BROWSER);
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({
+      width: 800,
+      height: 480,
+      deviceScaleFactor: 1
+    });
+    await page.setContent(noticesViewHtml(model), {
+      waitUntil: "networkidle0"
+    });
+    await validateRenderedPage(page, "Notices View");
+    return await page.screenshot({
+      type: "png",
+      fullPage: false,
+      captureBeyondViewport: false
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 async function publishGeneration(env: Env, publication: Publication) {
   await Promise.all(
     publication.views.map((view) =>
@@ -1138,7 +1166,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
            FROM household_notices
            WHERE expires_at >= ?
            ORDER BY accepted_at DESC, id DESC
-           LIMIT 2`
+           LIMIT 8`
         )
           .bind(now.toISOString())
           .all<{
@@ -1170,6 +1198,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
       renderDailyBrief: (model) => renderDailyBrief(env, model),
       renderCalendarView: (model) => renderCalendarView(env, model),
       renderLunchView: (model) => renderLunchView(env, model),
+      renderNoticesView: (model) => renderNoticesView(env, model),
       publish: (publication) => publishGeneration(env, publication),
       async recordSourceFailure(slotKey, source, code, message) {
         void message;

@@ -1,10 +1,12 @@
 import { validateProtectedReviewCorrection } from "./gmail";
+import { noticeLifecycle } from "./notice-lifecycle";
 
 export type AdministrationRole = "administrator" | "reviewer";
 
 export interface AdministrationEnv {
   DB: D1Database;
   ADMIN_ORIGIN?: string;
+  NOTICE_GRACE_DAYS?: string;
 }
 
 interface AdministrationUser {
@@ -381,12 +383,6 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
   });
 }
 
-function noticeExpiry(relevantDate: string | null, now: Date): Date {
-  return relevantDate
-    ? new Date(`${relevantDate}T12:00:00.000Z`)
-    : new Date(now.getTime() + 14 * 24 * 60 * 60_000);
-}
-
 async function protectedGmailReview(
   request: Request,
   env: AdministrationEnv,
@@ -489,7 +485,11 @@ async function protectedGmailReview(
     .first<ProtectedReviewRow>();
   if (!row) return json({ error: "Protected review record not found" }, 404);
   const now = new Date();
-  const expiry = noticeExpiry(row.relevant_date, now);
+  const lifecycle = noticeLifecycle(
+    row.relevant_date,
+    now,
+    env.NOTICE_GRACE_DAYS
+  );
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO household_notices
@@ -519,8 +519,8 @@ async function protectedGmailReview(
       "protected-review",
       "administrator-approved",
       now.toISOString(),
-      new Date(expiry.getTime() + 3 * 24 * 60 * 60_000).toISOString(),
-      new Date(expiry.getTime() + 33 * 24 * 60 * 60_000).toISOString()
+      lifecycle.expiresAt,
+      lifecycle.retainedUntil
     ),
     env.DB.prepare("DELETE FROM gmail_protected_reviews WHERE id = ?").bind(id)
   ]);

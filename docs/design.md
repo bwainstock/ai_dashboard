@@ -13,7 +13,7 @@ The system favors low maintenance, controlled handling of Gmail data, readable c
 - Today and tomorrow weather for San Jose, California.
 - Selected events from two consumer Google accounts for today and the next two local calendar days.
 - School lunch from the SJUSD Elementary Schools MealViewer feed.
-- A Daily Brief plus Calendar View and Lunch View.
+- A Daily Brief plus Calendar View, Lunch View, and Notices View.
 - Four scheduled updates every day at 06:30, 10:30, 15:00, and 19:00 in `America/Los_Angeles`.
 - Forward-only navigation using the stock firmware's wake button.
 - Protected configuration and operational status pages.
@@ -82,8 +82,7 @@ The current stock firmware exposes one reliable wake button for this board targe
 
 - Timer wake: return the latest Daily Brief and set the interval until the next configured local update.
 - Short press: advance the per-device view cursor.
-- V1 cycle: Daily Brief -> Calendar View -> Lunch View -> Daily Brief.
-- Phase-2 cycle: Daily Brief -> Calendar View -> Lunch View -> Notices View -> Daily Brief.
+- View cycle: Daily Brief -> Calendar View -> Lunch View -> Notices View -> Daily Brief.
 - The next timer wake always returns to the Daily Brief.
 - Manual data refresh is intentionally omitted.
 - Long firmware gestures retain their built-in Wi-Fi and credential-reset behavior.
@@ -293,7 +292,8 @@ It never contains the raw subject, body excerpt, sender address, or confidence s
 ### Lifecycle
 
 - Deduplicate updates from the same email thread.
-- Expire notices after the extracted event or deadline plus a short grace period.
+- Expire notices after the extracted event or deadline plus the configured
+  `NOTICE_GRACE_DAYS` period (three days by default).
 - Retain accepted structured notices until 30 days after expiry.
 - Retain uncertain or sensitive review records for 14 days.
 - Never retain raw bodies.

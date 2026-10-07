@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import worker, { type Env } from "../src/index";
+import { noticesViewHtml } from "../src/notices-view";
+import type { DailyBriefNotice } from "../src/generation";
 
 type Role = "administrator" | "reviewer";
 
@@ -464,6 +466,15 @@ describe("Access-protected browser administration", () => {
         action: "Check the protected source."
       })
     ]);
+    const html = noticesViewHtml({
+      notices: database.publishedNotices as unknown as DailyBriefNotice[],
+      privateNoticeMarkers: [],
+      timezone: "America/Los_Angeles",
+      updatedAt: "2026-10-07T18:00:00.000Z"
+    });
+    expect(html).toContain("Appointment is scheduled.");
+    expect(html).toContain("School");
+    expect(html).not.toContain("Private appointment is scheduled.");
     expect(database.protectedReviews).toEqual([]);
   });
 
