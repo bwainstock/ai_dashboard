@@ -12,10 +12,23 @@ import worker, { type Env } from "../src/index";
 class TestDatabase {
   readonly devices = new Map<
     string,
-    { tokenHash: string; friendlyId: string }
+    { tokenHash: string; friendlyId: string; viewCursor: number }
   >();
   publishedGeneration:
-    | { filename: string; objectKey: string; byteSize: number }
+    | {
+        filename: string;
+        objectKey: string;
+        byteSize: number;
+        viewType?: "daily_brief" | "calendar";
+      }
+    | undefined;
+  calendarGeneration:
+    | {
+        filename: string;
+        objectKey: string;
+        byteSize: number;
+        viewType: "calendar";
+      }
     | undefined;
   configuration = {
     latitude: 37.3382,
@@ -43,12 +56,18 @@ class TestDatabase {
           return (device
             ? {
                 token_hash: device.tokenHash,
-                friendly_id: device.friendlyId
+                friendly_id: device.friendlyId,
+                view_cursor: device.viewCursor
               }
             : null) as T | null;
         }
         if (query.includes("FROM render_generations")) {
-          const generation = this.publishedGeneration;
+          const requestedView =
+            query.includes("view_type = ?") &&
+            String(parameters()[0]) === "calendar";
+          const generation = requestedView
+            ? this.calendarGeneration
+            : this.publishedGeneration;
           if (
             query.includes("filename = ?") &&
             generation?.filename !== parameters()[0]
@@ -76,7 +95,16 @@ class TestDatabase {
       run: async () => {
         if (query.includes("INSERT INTO devices")) {
           const [deviceId, tokenHash, friendlyId] = parameters().map(String);
-          this.devices.set(deviceId, { tokenHash, friendlyId });
+          this.devices.set(deviceId, {
+            tokenHash,
+            friendlyId,
+            viewCursor: this.devices.get(deviceId)?.viewCursor ?? 0
+          });
+        }
+        if (query.includes("UPDATE devices") && query.includes("view_cursor")) {
+          const [viewCursor, deviceId] = parameters();
+          const device = this.devices.get(String(deviceId));
+          if (device) device.viewCursor = Number(viewCursor);
         }
         if (query.includes("INSERT INTO render_generations")) {
           const [filename, objectKey, byteSize] = parameters();
@@ -268,6 +296,110 @@ describe("TRMNL BYOS device service", () => {
     );
 
     expect(response.status).toBe(401);
+  });
+
+  test("a short-button wake advances to Calendar View and a timer wake resets to Daily Brief", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/daily-brief.png",
+      byteSize: 12_345,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: "calendar-view-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/calendar-view.png",
+      byteSize: 12_346,
+      viewType: "calendar"
+    };
+    const env = testEnv(database);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: "AA:BB:CC:DD:EE:FF" }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const headers = {
+      ID: "AA:BB:CC:DD:EE:FF",
+      "Access-Token": token
+    };
+
+    const button = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: { ...headers, "Update-Source": "button" }
+      }),
+      env
+    );
+    const timer = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: { ...headers, "Update-Source": "timer" }
+      }),
+      env
+    );
+
+    expect((await button.json<{ filename: string }>()).filename).toBe(
+      "calendar-view-20261007T173000Z.png"
+    );
+    expect((await timer.json<{ filename: string }>()).filename).toBe(
+      "daily-brief-20261007T173000Z.png"
+    );
+    expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(0);
+  });
+
+  test("view cache filenames are distinct and remain stable until the next generation", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/daily-brief.png",
+      byteSize: 12_345,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: "calendar-view-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/calendar-view.png",
+      byteSize: 12_346,
+      viewType: "calendar"
+    };
+    const env = testEnv(database);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: "AA:BB:CC:DD:EE:FF" }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const credentials = {
+      ID: "AA:BB:CC:DD:EE:FF",
+      "Access-Token": token
+    };
+
+    const first = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: { ...credentials, "Update-Source": "timer" }
+      }),
+      env
+    );
+    const second = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: { ...credentials, "Update-Source": "timer" }
+      }),
+      env
+    );
+    const button = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: { ...credentials, "Update-Source": "button" }
+      }),
+      env
+    );
+
+    const firstFilename = (await first.json<{ filename: string }>()).filename;
+    expect((await second.json<{ filename: string }>()).filename).toBe(
+      firstFilename
+    );
+    expect((await button.json<{ filename: string }>()).filename).not.toBe(
+      firstFilename
+    );
   });
 
   test("authenticated image delivery serves the published private R2 object as PNG", async () => {

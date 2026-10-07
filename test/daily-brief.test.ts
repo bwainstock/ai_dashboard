@@ -40,7 +40,8 @@ test("Daily Brief presents current, today, and tomorrow weather with icons and t
         allDay: false,
         tentative: true,
         private: false,
-        ownerLabels: ["Mom"]
+        ownerLabels: ["Mom"],
+        location: "123 Main Street"
       }
     ],
     stale: false,

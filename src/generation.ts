@@ -1,5 +1,6 @@
 import type { WeatherLocation, WeatherSnapshot } from "./weather";
 import type { CalendarEvent } from "./calendar";
+import type { CalendarViewModel } from "./calendar-view";
 import {
   classifyLunchEntree,
   type LunchClassifierPorts,
@@ -33,9 +34,12 @@ export interface DailyBriefLunchModel {
 
 export interface Publication {
   slotKey: string;
-  filename: string;
-  objectKey: string;
-  image: Uint8Array;
+  views: Array<{
+    viewType: "daily_brief" | "calendar";
+    filename: string;
+    objectKey: string;
+    image: Uint8Array;
+  }>;
   width: number;
   height: number;
   weather: WeatherSnapshot;
@@ -58,6 +62,7 @@ export interface ScheduledGenerationPorts {
   loadLatestCalendar?(): Promise<CalendarEvent[]>;
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
+  renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
   recordFailure(slotKey: string, code: string, message: string): Promise<void>;
 }
@@ -302,24 +307,27 @@ export async function runScheduledWeatherGeneration(
       classifier
     );
   }
-  const model = {
+  const model: DailyBriefWeatherModel = {
     weather,
     stale,
     lunch: renderedLunch,
     updatedAt: input.now.toISOString()
   };
+  let calendar: CalendarEvent[] = [];
+  let calendarStale = false;
   if (
     ports.fetchCalendar &&
     ports.loadLatestCalendar &&
     ports.saveCalendar
   ) {
     try {
-      const calendar = await ports.fetchCalendar();
+      calendar = await ports.fetchCalendar();
       await ports.saveCalendar(calendar, input.now.toISOString());
-      Object.assign(model, { calendar });
+      model.calendar = calendar;
     } catch (error) {
-      const previous = await ports.loadLatestCalendar();
-      Object.assign(model, { calendar: previous });
+      calendar = await ports.loadLatestCalendar();
+      calendarStale = true;
+      model.calendar = calendar;
       await ports.recordFailure(
         slotKey,
         error &&
@@ -344,17 +352,39 @@ export async function runScheduledWeatherGeneration(
     );
     return { status: "failed", slotKey, code, nextWakeSeconds };
   }
-  const dimensions = pngDimensions(image);
+  let calendarImage: Uint8Array;
+  try {
+    calendarImage = await ports.renderCalendarView({
+      calendar,
+      timezone: input.configuration.timezone,
+      stale: calendarStale,
+      updatedAt: input.now.toISOString()
+    });
+  } catch (error) {
+    const code = "CALENDAR_VIEW_RENDER_FAILED";
+    await ports.recordFailure(
+      slotKey,
+      code,
+      error instanceof Error ? error.message : "Calendar View rendering failed"
+    );
+    return { status: "failed", slotKey, code, nextWakeSeconds };
+  }
+  const images = [image, calendarImage];
   if (
-    dimensions?.[0] !== 800 ||
-    dimensions[1] !== 480 ||
-    image.byteLength > input.maximumImageBytes
+    images.some((candidate) => {
+      const dimensions = pngDimensions(candidate);
+      return (
+        dimensions?.[0] !== 800 ||
+        dimensions[1] !== 480 ||
+        candidate.byteLength > input.maximumImageBytes
+      );
+    })
   ) {
     const code = "RENDERED_IMAGE_INVALID";
     await ports.recordFailure(
       slotKey,
       code,
-      "Daily Brief must be an 800x480 PNG within the configured size limit"
+      "Every view must be an 800x480 PNG within the configured size limit"
     );
     return { status: "failed", slotKey, code, nextWakeSeconds };
   }
@@ -364,9 +394,20 @@ export async function runScheduledWeatherGeneration(
   try {
     await ports.publish({
       slotKey,
-      filename,
-      objectKey: `generations/${timestamp}/daily-brief.png`,
-      image,
+      views: [
+        {
+          viewType: "daily_brief",
+          filename,
+          objectKey: `generations/${timestamp}/daily-brief.png`,
+          image
+        },
+        {
+          viewType: "calendar",
+          filename: `calendar-view-${timestamp}.png`,
+          objectKey: `generations/${timestamp}/calendar-view.png`,
+          image: calendarImage
+        }
+      ],
       width: 800,
       height: 480,
       weather,

@@ -61,10 +61,11 @@ function ports(
     saveCachedLunchIcon: vi.fn().mockResolvedValue(undefined),
     classifyLunchWithAi: vi.fn().mockResolvedValue("pasta"),
     renderDailyBrief: vi.fn().mockResolvedValue(png()),
+    renderCalendarView: vi.fn().mockResolvedValue(png()),
     publish: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue(undefined),
     ...overrides
-  };
+  } as ScheduledGenerationPorts;
 }
 
 describe("scheduled weather generation", () => {
@@ -104,11 +105,28 @@ describe("scheduled weather generation", () => {
       },
       updatedAt: "2026-10-07T17:30:00.000Z"
     });
+    expect(boundary.renderCalendarView).toHaveBeenCalledWith({
+      calendar: [],
+      timezone: "America/Los_Angeles",
+      stale: false,
+      updatedAt: "2026-10-07T17:30:00.000Z"
+    });
     expect(boundary.publish).toHaveBeenCalledWith({
       slotKey: "2026-10-07T17:30:00.000Z",
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      image: expect.any(Uint8Array),
+      views: [
+        {
+          viewType: "daily_brief",
+          filename: "daily-brief-20261007T173000Z.png",
+          objectKey: "generations/20261007T173000Z/daily-brief.png",
+          image: expect.any(Uint8Array)
+        },
+        {
+          viewType: "calendar",
+          filename: "calendar-view-20261007T173000Z.png",
+          objectKey: "generations/20261007T173000Z/calendar-view.png",
+          image: expect.any(Uint8Array)
+        }
+      ],
       width: 800,
       height: 480,
       weather: WEATHER,

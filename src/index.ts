@@ -1,5 +1,6 @@
 import puppeteer from "@cloudflare/puppeteer";
 import { dailyBriefHtml } from "./daily-brief";
+import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
 import {
   normalizeCalendarEvents,
   type CalendarEvent,
@@ -135,13 +136,34 @@ async function display(request: Request, env: Env): Promise<Response> {
     );
   }
 
+  const deviceId = request.headers.get("ID")!.trim().toUpperCase();
+  const device = await env.DB.prepare(
+    "SELECT view_cursor FROM devices WHERE device_id = ?"
+  )
+    .bind(deviceId)
+    .first<{ view_cursor: number }>();
+  const updateSource = request.headers.get("Update-Source")?.toLowerCase();
+  const manualWake =
+    updateSource !== undefined &&
+    !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
+  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
+  const viewType = viewCursor === 1 ? "calendar" : "daily_brief";
+  await env.DB.prepare(
+    `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE device_id = ?`
+  )
+    .bind(viewCursor, deviceId)
+    .run();
+
   const generation = await env.DB.prepare(
     `SELECT filename, object_key, byte_size
      FROM render_generations
-     WHERE published_at IS NOT NULL
+     WHERE view_type = ? AND published_at IS NOT NULL
      ORDER BY published_at DESC, id DESC
      LIMIT 1`
-  ).first<{ filename: string; object_key: string; byte_size: number }>();
+  )
+    .bind(viewType)
+    .first<{ filename: string; object_key: string; byte_size: number }>();
   if (!generation) {
     return json({ status: 503, error: "No published generation" }, 503);
   }
@@ -656,22 +678,55 @@ async function renderDailyBrief(
   }
 }
 
+async function renderCalendarView(
+  env: Env,
+  model: CalendarViewModel
+): Promise<Uint8Array> {
+  const browser = await puppeteer.launch(env.BROWSER);
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({
+      width: 800,
+      height: 480,
+      deviceScaleFactor: 1
+    });
+    await page.setContent(calendarViewHtml(model), {
+      waitUntil: "networkidle0"
+    });
+    return await page.screenshot({
+      type: "png",
+      fullPage: false,
+      captureBeyondViewport: false
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 async function publishGeneration(env: Env, publication: Publication) {
-  await env.IMAGES.put(publication.objectKey, publication.image, {
-    httpMetadata: { contentType: "image/png" },
-    customMetadata: { width: "800", height: "480", palette: "monochrome" }
-  });
+  await Promise.all(
+    publication.views.map((view) =>
+      env.IMAGES.put(view.objectKey, view.image, {
+        httpMetadata: { contentType: "image/png" },
+        customMetadata: { width: "800", height: "480", palette: "monochrome" }
+      })
+    )
+  );
   await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO render_generations
-         (filename, object_key, byte_size, width, height, slot_key, published_at)
-       VALUES (?, ?, ?, 800, 480, ?, ?)`
-    ).bind(
-      publication.filename,
-      publication.objectKey,
-      publication.image.byteLength,
-      publication.slotKey,
-      publication.generatedAt
+    ...publication.views.map((view) =>
+      env.DB.prepare(
+        `INSERT INTO render_generations
+           (filename, object_key, byte_size, width, height, slot_key,
+            view_type, published_at)
+         VALUES (?, ?, ?, 800, 480, ?, ?, ?)`
+      ).bind(
+        view.filename,
+        view.objectKey,
+        view.image.byteLength,
+        publication.slotKey,
+        view.viewType,
+        publication.generatedAt
+      )
     ),
     env.DB.prepare(
       `UPDATE scheduled_generation_slots
@@ -810,6 +865,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .run();
       },
       renderDailyBrief: (model) => renderDailyBrief(env, model),
+      renderCalendarView: (model) => renderCalendarView(env, model),
       publish: (publication) => publishGeneration(env, publication),
       async recordFailure(slotKey, code, message) {
         await env.DB.prepare(
