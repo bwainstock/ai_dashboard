@@ -22,6 +22,13 @@ class TestDatabase {
         viewType?: "daily_brief" | "calendar" | "lunch";
       }
     | undefined;
+  incompleteDailyGeneration:
+    | {
+        filename: string;
+        objectKey: string;
+        byteSize: number;
+      }
+    | undefined;
   calendarGeneration:
     | {
         filename: string;
@@ -74,16 +81,21 @@ class TestDatabase {
               }
             : null) as T | null;
         }
-        if (query.includes("FROM render_generations")) {
+        if (query.includes("render_generations")) {
           const requestedView = query.includes("view_type = ?")
             ? String(parameters()[0])
             : "daily_brief";
-          const generation =
+          const pointedGeneration =
             requestedView === "calendar"
               ? this.calendarGeneration
               : requestedView === "lunch"
                 ? this.lunchGeneration
                 : this.publishedGeneration;
+          const generation =
+            requestedView === "daily_brief" &&
+            !query.includes("current_render_generation")
+              ? (this.incompleteDailyGeneration ?? pointedGeneration)
+              : pointedGeneration;
           if (
             query.includes("filename = ?") &&
             generation?.filename !== parameters()[0]
@@ -423,6 +435,44 @@ describe("TRMNL BYOS device service", () => {
     );
     expect((await button.json<{ filename: string }>()).filename).not.toBe(
       firstFilename
+    );
+  });
+
+  test("display ignores a newer incomplete view set until the all-view pointer advances", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/daily-brief.png",
+      byteSize: 12_345,
+      viewType: "daily_brief"
+    };
+    database.incompleteDailyGeneration = {
+      filename: "daily-brief-20261007T220000Z.png",
+      objectKey: "generations/20261007T220000Z/daily-brief.png",
+      byteSize: 12_999
+    };
+    const env = testEnv(database);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: "AA:BB:CC:DD:EE:FF" }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: {
+          ID: "AA:BB:CC:DD:EE:FF",
+          "Access-Token": token,
+          "Update-Source": "timer"
+        }
+      }),
+      env
+    );
+
+    expect((await response.json<{ filename: string }>()).filename).toBe(
+      "daily-brief-20261007T173000Z.png"
     );
   });
 

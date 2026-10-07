@@ -263,15 +263,29 @@ function safeErrorCode(value: string | null): string | null {
 }
 
 async function operationalStatus(env: AdministrationEnv): Promise<Response> {
-  const [device, render, sources, accounts, statuses, incidents] =
+  const [device, render, attempt, sources, accounts, statuses, incidents] =
     await Promise.all([
       env.DB.prepare(
         "SELECT MAX(last_check_in_at) AS last_check_in_at FROM devices"
       ).first<{ last_check_in_at: string | null }>(),
       env.DB.prepare(
-        `SELECT MAX(published_at) AS last_render_at
-         FROM render_generations WHERE published_at IS NOT NULL`
-      ).first<{ last_render_at: string | null }>(),
+        `SELECT current.generation_id, generation.published_at
+         FROM current_render_generation AS current
+         JOIN render_generation_sets AS generation
+           ON generation.generation_id = current.generation_id
+         WHERE current.id = 1`
+      ).first<{ generation_id: string; published_at: string }>(),
+      env.DB.prepare(
+        `SELECT slot_key, status, attempt_count, retry_at, error_code
+         FROM scheduled_generation_slots
+         ORDER BY started_at DESC LIMIT 1`
+      ).first<{
+        slot_key: string;
+        status: "running" | "published" | "failed";
+        attempt_count: number;
+        retry_at: string | null;
+        error_code: string | null;
+      }>(),
       env.DB.prepare(
         `SELECT source, state, last_success_at, error_code
          FROM source_status ORDER BY source`
@@ -297,7 +311,19 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
   const aiQuota = statuses.results[0]?.status_value;
   return json({
     device: { lastCheckInAt: device?.last_check_in_at ?? null },
-    rendering: { lastSuccessfulAt: render?.last_render_at ?? null },
+    rendering: {
+      currentGenerationId: render?.generation_id ?? null,
+      lastSuccessfulAt: render?.published_at ?? null,
+      latestAttempt: attempt
+        ? {
+            slotKey: attempt.slot_key,
+            state: attempt.status,
+            attempt: attempt.attempt_count,
+            retryAt: attempt.retry_at,
+            errorCode: safeErrorCode(attempt.error_code)
+          }
+        : null
+    },
     sources: sources.results.map((source) => ({
       source: source.source,
       state: source.state,

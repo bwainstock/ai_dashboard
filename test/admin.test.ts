@@ -38,8 +38,20 @@ class AdminDatabase {
         if (query.includes("MAX(last_check_in_at)")) {
           return { last_check_in_at: "2026-10-07T16:00:00.000Z" } as T;
         }
-        if (query.includes("MAX(published_at)")) {
-          return { last_render_at: "2026-10-07T15:00:00.000Z" } as T;
+        if (query.includes("FROM current_render_generation")) {
+          return {
+            generation_id: "generation-20261007T150000Z",
+            published_at: "2026-10-07T15:00:00.000Z"
+          } as T;
+        }
+        if (query.includes("FROM scheduled_generation_slots")) {
+          return {
+            slot_key: "2026-10-07T19:00",
+            status: "failed",
+            attempt_count: 1,
+            retry_at: "2026-10-07T19:15:00.000Z",
+            error_code: "DAILY_BRIEF_RENDER_FAILED"
+          } as T;
         }
         return null;
       },
@@ -249,7 +261,17 @@ describe("Access-protected browser administration", () => {
     const statusBody = await status.json();
     expect(statusBody).toEqual({
       device: { lastCheckInAt: "2026-10-07T16:00:00.000Z" },
-      rendering: { lastSuccessfulAt: "2026-10-07T15:00:00.000Z" },
+      rendering: {
+        currentGenerationId: "generation-20261007T150000Z",
+        lastSuccessfulAt: "2026-10-07T15:00:00.000Z",
+        latestAttempt: {
+          slotKey: "2026-10-07T19:00",
+          state: "failed",
+          attempt: 1,
+          retryAt: "2026-10-07T19:15:00.000Z",
+          errorCode: "DAILY_BRIEF_RENDER_FAILED"
+        }
+      },
       sources: [
         {
           source: "weather",

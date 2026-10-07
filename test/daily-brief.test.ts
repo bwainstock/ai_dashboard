@@ -144,3 +144,42 @@ test("failure states label retained normalized entrees as the last menu", () => 
   expect(html).toContain("Bean Burrito");
   expect(html).not.toMatch(/breakfast|nutrition|allergen/i);
 });
+
+test("stale sections show their own ages while retaining one global update time", () => {
+  const html = dailyBriefHtml({
+    weather: {
+      observedAt: "2026-10-07T10:25",
+      current: { temperature: 68, condition: "Clear" },
+      today: {
+        date: "2026-10-07",
+        condition: "Clear",
+        high: 75,
+        low: 55,
+        precipitationProbability: 0
+      },
+      tomorrow: {
+        date: "2026-10-08",
+        condition: "Clear",
+        high: 76,
+        low: 56,
+        precipitationProbability: 0
+      }
+    },
+    calendar: [],
+    stale: true,
+    staleAgeMinutes: 125,
+    calendarStaleAgeMinutes: 45,
+    lunch: {
+      status: "adapter_failure",
+      stale: true,
+      staleAgeMinutes: 90,
+      entrees: [{ name: "Bean Burrito", icon: "taco" }]
+    },
+    updatedAt: "2026-10-07T17:30:00.000Z"
+  });
+
+  expect(html).toContain("Weather 2h 5m old");
+  expect(html).toContain("Calendar 45m old");
+  expect(html).toContain("Last menu · 1h 30m old");
+  expect(html.match(/Updated 10:30 AM/g)).toHaveLength(1);
+});

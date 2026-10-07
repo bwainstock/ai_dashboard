@@ -107,9 +107,15 @@ For each slot:
 3. Render all active views using a self-contained HTML document.
 4. Validate each screenshot as an 800x480 PNG within the device model's tested size limit.
 5. Write immutable R2 objects.
-6. Atomically advance the D1 generation pointer only after every required image is stored.
+6. In one D1 batch, record the complete generation set and atomically advance
+   the singleton current-generation pointer only after every required image is
+   stored. Device view selection always resolves through this one pointer.
 
-If source fetching or rendering fails, retry once after 15 minutes. A render failure preserves the previous complete generation. A source failure may still publish a new generation using a visibly stale last-good section.
+If source fetching or rendering fails, retry once after 15 minutes. Retry
+objects receive a new immutable generation ID. A render, validation, storage,
+or pointer-publication failure preserves the previous complete generation. A
+source failure may still publish a new generation using a visibly stale
+last-good section with its snapshot age.
 
 ## Screen design
 
@@ -197,6 +203,9 @@ Cloudflare Access authenticates the browser identity, while D1 maps that
 identity to the administrator or reviewer role. Device credentials are never
 accepted at this boundary. Operational incidents retain fixed codes and
 timestamps only; exception text and upstream or household content are omitted.
+Status reads the atomic current-generation pointer rather than inferring
+success from individual image rows, and exposes retry attempts without
+displaying stored diagnostic text.
 
 ## Authentication and roles
 

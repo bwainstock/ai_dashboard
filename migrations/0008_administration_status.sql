@@ -44,3 +44,5 @@ CREATE INDEX operational_incidents_active
   WHERE resolved_at IS NULL;
 
 UPDATE scheduled_generation_slots SET error_message = NULL;
+
+UPDATE generation_source_failures SET error_message = error_code;

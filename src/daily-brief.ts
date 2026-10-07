@@ -62,7 +62,7 @@ function lunchSection(lunch: DailyBriefLunchModel): string {
       : `<div class="lunch-state" data-missing-state>${states[lunch.status]}</div>`;
   const previous =
     lunch.stale && lunch.entrees.length > 0
-      ? '<div class="last-menu">Last menu</div>'
+      ? `<div class="last-menu">Last menu · ${staleAge(lunch.staleAgeMinutes)}</div>`
       : "";
   const entrees = lunch.entrees
     .slice(0, 3)
@@ -74,6 +74,12 @@ function lunchSection(lunch: DailyBriefLunchModel): string {
   return `<section class="lunch"><h2>Today's lunch</h2>${state}${previous}${entrees}</section>`;
 }
 
+function staleAge(minutes?: number): string {
+  if (minutes === undefined) return "age unavailable";
+  if (minutes < 60) return `${minutes}m old`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m old`;
+}
+
 export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   const { weather } = model;
   const updated = new Intl.DateTimeFormat("en-US", {
@@ -82,7 +88,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     minute: "2-digit"
   }).format(new Date(model.updatedAt));
   const stale = model.stale
-    ? `<strong class="stale">⚠ Weather is using the last available update</strong>`
+    ? `<strong class="stale">⚠ Weather ${staleAge(model.staleAgeMinutes)}</strong>`
     : "";
   const calendar = (model.calendar ?? []).slice(0, 3);
   const eventTime = (event: (typeof calendar)[number]) => {
@@ -94,7 +100,9 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     }).format(new Date(event.start));
   };
   const events =
-    calendar.length === 0
+    model.calendarUnavailable
+      ? `<li class="empty" data-missing-state>Calendar unavailable</li>`
+      : calendar.length === 0
       ? `<li class="empty" data-missing-state>No upcoming calendar events</li>`
       : calendar
           .map(
@@ -177,7 +185,14 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     </section>
     ${lunchSection(model.lunch)}
   </main>
-  <footer>${stale}<span>Updated ${updated}</span></footer>
+  <footer><span>${[
+    stale,
+    model.calendarStaleAgeMinutes === undefined
+      ? ""
+      : `<strong class="stale">⚠ Calendar ${staleAge(model.calendarStaleAgeMinutes)}</strong>`
+  ]
+    .filter(Boolean)
+    .join(" ")}</span><span>Updated ${updated}</span></footer>
 </body>
 </html>`;
 }
