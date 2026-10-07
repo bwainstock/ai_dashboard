@@ -2,6 +2,10 @@ import type { WeatherLocation, WeatherSnapshot } from "./weather";
 import type { CalendarEvent } from "./calendar";
 import type { CalendarViewModel } from "./calendar-view";
 import {
+  lunchViewModel,
+  type LunchViewModel
+} from "./lunch-view";
+import {
   classifyLunchEntree,
   type LunchClassifierPorts,
   type LunchIcon,
@@ -35,7 +39,7 @@ export interface DailyBriefLunchModel {
 export interface Publication {
   slotKey: string;
   views: Array<{
-    viewType: "daily_brief" | "calendar";
+    viewType: "daily_brief" | "calendar" | "lunch";
     filename: string;
     objectKey: string;
     image: Uint8Array;
@@ -63,6 +67,7 @@ export interface ScheduledGenerationPorts {
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
+  renderLunchView(model: LunchViewModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
   recordFailure(slotKey: string, code: string, message: string): Promise<void>;
 }
@@ -275,6 +280,7 @@ export async function runScheduledWeatherGeneration(
   };
   let lunch: LunchSnapshot;
   let renderedLunch: DailyBriefLunchModel;
+  let lunchFailure: "schema_failure" | "adapter_failure" | null = null;
   try {
     lunch = await ports.fetchLunch();
     await ports.saveLunch(lunch, input.now.toISOString());
@@ -298,12 +304,14 @@ export async function runScheduledWeatherGeneration(
       error instanceof Error ? error.message : "Lunch fetch failed"
     );
     lunch = (await ports.loadLatestLunch()) ?? { days: [] };
+    lunchFailure =
+      code === "LUNCH_INVALID_RESPONSE"
+        ? "schema_failure"
+        : "adapter_failure";
     renderedLunch = await lunchModel(
       lunch,
       localDate(input.now, input.configuration.timezone),
-      code === "LUNCH_INVALID_RESPONSE"
-        ? "schema_failure"
-        : "adapter_failure",
+      lunchFailure,
       classifier
     );
   }
@@ -369,7 +377,27 @@ export async function runScheduledWeatherGeneration(
     );
     return { status: "failed", slotKey, code, nextWakeSeconds };
   }
-  const images = [image, calendarImage];
+  let lunchImage: Uint8Array;
+  try {
+    lunchImage = await ports.renderLunchView(
+      await lunchViewModel(
+        lunch,
+        input.now,
+        input.configuration.timezone,
+        lunchFailure,
+        classifier
+      )
+    );
+  } catch (error) {
+    const code = "LUNCH_VIEW_RENDER_FAILED";
+    await ports.recordFailure(
+      slotKey,
+      code,
+      error instanceof Error ? error.message : "Lunch View rendering failed"
+    );
+    return { status: "failed", slotKey, code, nextWakeSeconds };
+  }
+  const images = [image, calendarImage, lunchImage];
   if (
     images.some((candidate) => {
       const dimensions = pngDimensions(candidate);
@@ -406,6 +434,12 @@ export async function runScheduledWeatherGeneration(
           filename: `calendar-view-${timestamp}.png`,
           objectKey: `generations/${timestamp}/calendar-view.png`,
           image: calendarImage
+        },
+        {
+          viewType: "lunch",
+          filename: `lunch-view-${timestamp}.png`,
+          objectKey: `generations/${timestamp}/lunch-view.png`,
+          image: lunchImage
         }
       ],
       width: 800,

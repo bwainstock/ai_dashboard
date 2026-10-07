@@ -36,6 +36,7 @@ describe("Calendar View", () => {
     });
 
     expect(html).toContain("Today");
+    expect(html).toContain('aria-label="Calendar icon"');
     expect(html).toContain("Tomorrow");
     expect(html).toContain("Friday");
     expect(html.indexOf("School holiday")).toBeLessThan(
@@ -47,6 +48,16 @@ describe("Calendar View", () => {
     expect(html).toContain("6 PM");
     expect(html).toContain("School gym");
     expect(html).not.toContain("9:00 AM");
+  });
+
+  test("renders readable missing-day states", () => {
+    const html = calendarViewHtml({
+      calendar: [],
+      timezone: "America/Los_Angeles",
+      updatedAt: "2026-10-07T17:30:00.000Z"
+    });
+
+    expect(html).toContain('data-missing-state>No events');
   });
 
   test("shows twelve events and reports overflow without leaking unsafe fields", () => {

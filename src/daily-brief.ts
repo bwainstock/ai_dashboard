@@ -59,7 +59,7 @@ function lunchSection(lunch: DailyBriefLunchModel): string {
   const state =
     lunch.status === "available"
       ? ""
-      : `<div class="lunch-state">${states[lunch.status]}</div>`;
+      : `<div class="lunch-state" data-missing-state>${states[lunch.status]}</div>`;
   const previous =
     lunch.stale && lunch.entrees.length > 0
       ? '<div class="last-menu">Last menu</div>'
@@ -95,7 +95,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   };
   const events =
     calendar.length === 0
-      ? `<li class="empty">No upcoming calendar events</li>`
+      ? `<li class="empty" data-missing-state>No upcoming calendar events</li>`
       : calendar
           .map(
             (event) =>

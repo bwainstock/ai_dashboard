@@ -107,6 +107,7 @@ test.each([
   });
 
   expect(html).toContain(visibleText);
+  expect(html).toContain("data-missing-state");
 });
 
 test("failure states label retained normalized entrees as the last menu", () => {
