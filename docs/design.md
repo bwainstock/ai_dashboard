@@ -56,7 +56,8 @@ TRMNL device <─ device Worker <─ private R2 PNGs <─ generation pointer in 
 - **Workers AI**: constrained lunch-icon fallback and phase-2 Household Notice extraction.
 - **Cron Triggers**: local-time generation scheduling and one delayed retry.
 - **Cloudflare Access**: browser authentication and role enforcement.
-- **Cloudflare Email**: an operational alias for actionable failure alerts.
+- **Cloudflare Email**: a verified send-email binding for actionable failure
+  alerts.
 
 No KV or Queues are planned initially.
 
@@ -195,6 +196,14 @@ Deterministic exact/keyword mappings and cached decisions run first. Workers AI 
   - Suspicious device-authentication activity.
   - No device check-in for 24 hours.
 - Clear outage alerts automatically after recovery.
+
+The V1 incident state machine suppresses the first scheduled source failure,
+sends once when the second consecutive failure makes the condition actionable,
+and deduplicates every active condition. Successful source refresh, OAuth
+reconnection, successful publication, valid device authentication, or renewed
+device check-in resolves the corresponding active incident so a later
+recurrence can alert again. Email contains only a fixed incident code and a
+direction to the protected status page.
 
 The protected status page shows device check-in, last successful render, per-source freshness, OAuth health, Workers AI quota state, and fixed error codes. It never displays raw email content, tokens, or Gmail prompts.
 

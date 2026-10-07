@@ -34,6 +34,7 @@ import {
   type LunchIcon,
   type LunchSnapshot
 } from "./lunch";
+import { runOperationalIncidentCheck } from "./incidents";
 import {
   exchangeCalendarAuthorizationCode,
   fetchGoogleCalendarEvents,
@@ -58,6 +59,9 @@ export interface Env {
     run(model: string, input: unknown): Promise<unknown>;
   };
   LUNCH_AI_MODEL?: string;
+  INCIDENT_EMAIL?: SendEmail;
+  OPERATIONAL_EMAIL_FROM?: string;
+  OPERATIONAL_EMAIL_TO?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -121,7 +125,10 @@ async function setup(request: Request, env: Env): Promise<Response> {
 async function isAuthenticated(request: Request, env: Env): Promise<boolean> {
   const deviceId = request.headers.get("ID")?.trim().toUpperCase();
   const token = request.headers.get("Access-Token");
-  if (!deviceId || !token) return false;
+  if (!deviceId || !token) {
+    await recordDeviceAuthentication(env, false);
+    return false;
+  }
 
   const device = await env.DB.prepare(
     "SELECT token_hash FROM devices WHERE device_id = ?"
@@ -129,7 +136,31 @@ async function isAuthenticated(request: Request, env: Env): Promise<boolean> {
     .bind(deviceId)
     .first<{ token_hash: string }>();
 
-  return device?.token_hash === (await hash(token));
+  const authenticated = device?.token_hash === (await hash(token));
+  await recordDeviceAuthentication(env, authenticated);
+  return authenticated;
+}
+
+async function recordDeviceAuthentication(
+  env: Env,
+  authenticated: boolean
+): Promise<void> {
+  const active = authenticated ? 0 : 1;
+  const result = await env.DB.prepare(
+    `UPDATE operational_signals
+     SET active = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE signal_key = 'device_auth_suspicious' AND active != ?`
+  )
+    .bind(active, active)
+    .run();
+  if (
+    (result.meta?.changes ?? 0) > 0 &&
+    env.INCIDENT_EMAIL &&
+    env.OPERATIONAL_EMAIL_FROM &&
+    env.OPERATIONAL_EMAIL_TO
+  ) {
+    await runOperationalIncidentCheck(env, new Date()).catch(() => undefined);
+  }
 }
 
 async function display(request: Request, env: Env): Promise<Response> {
@@ -493,17 +524,13 @@ async function accessTokenForAccount(
         "code" in error &&
         error.code === "CALENDAR_OAUTH_REVOKED"
       ) {
-        await env.DB.batch([
-          env.DB.prepare(
-            `UPDATE calendar_accounts
-             SET oauth_status = 'revoked', updated_at = CURRENT_TIMESTAMP
-             WHERE account_id = ?`
-          ).bind(account.account_id),
-          env.DB.prepare(
-            `INSERT INTO operational_incidents (error_code)
-             VALUES ('CALENDAR_OAUTH_REVOKED')`
-          )
-        ]);
+        await env.DB.prepare(
+          `UPDATE calendar_accounts
+           SET oauth_status = 'revoked', updated_at = CURRENT_TIMESTAMP
+           WHERE account_id = ?`
+        )
+          .bind(account.account_id)
+          .run();
       }
       throw error;
     }
@@ -898,7 +925,9 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .run();
         await env.DB.prepare(
           `UPDATE source_status SET state = 'fresh', last_success_at = ?,
-             error_code = NULL, updated_at = CURRENT_TIMESTAMP
+             error_code = NULL, consecutive_failures = 0,
+             last_failure_slot_key = NULL,
+             updated_at = CURRENT_TIMESTAMP
            WHERE source = 'weather'`
         )
           .bind(fetchedAt)
@@ -933,7 +962,9 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .run();
         await env.DB.prepare(
           `UPDATE source_status SET state = 'fresh', last_success_at = ?,
-             error_code = NULL, updated_at = CURRENT_TIMESTAMP
+             error_code = NULL, consecutive_failures = 0,
+             last_failure_slot_key = NULL,
+             updated_at = CURRENT_TIMESTAMP
            WHERE source = 'lunch'`
         )
           .bind(fetchedAt)
@@ -994,19 +1025,12 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
                       typeof error.code === "string" &&
                       error.code.toLowerCase().includes("quota")));
                 if (quotaExhausted) {
-                  await env.DB.batch([
-                    env.DB.prepare(
-                      `UPDATE operational_status
-                       SET status_value = 'exhausted',
-                           updated_at = CURRENT_TIMESTAMP
-                       WHERE status_key = 'ai_quota'`
-                    ),
-                    env.DB.prepare(
-                      `INSERT INTO operational_incidents
-                         (error_code, occurred_at)
-                       VALUES ('AI_QUOTA_EXHAUSTED', ?)`
-                    ).bind(now.toISOString())
-                  ]);
+                  await env.DB.prepare(
+                    `UPDATE operational_status
+                     SET status_value = 'exhausted',
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE status_key = 'ai_quota'`
+                  ).run();
                 }
                 throw error;
               }
@@ -1040,7 +1064,9 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .run();
         await env.DB.prepare(
           `UPDATE source_status SET state = 'fresh', last_success_at = ?,
-             error_code = NULL, updated_at = CURRENT_TIMESTAMP
+             error_code = NULL, consecutive_failures = 0,
+             last_failure_slot_key = NULL,
+             updated_at = CURRENT_TIMESTAMP
            WHERE source = 'calendar'`
         )
           .bind(fetchedAt)
@@ -1060,12 +1086,13 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           ).bind(slotKey, source, code, code, now.toISOString()),
           env.DB.prepare(
             `UPDATE source_status SET state = 'stale', error_code = ?,
+               consecutive_failures = CASE
+                 WHEN last_failure_slot_key = ? THEN consecutive_failures
+                 ELSE consecutive_failures + 1
+               END,
+               last_failure_slot_key = ?,
                updated_at = CURRENT_TIMESTAMP WHERE source = ?`
-          ).bind(code, source),
-          env.DB.prepare(
-            `INSERT INTO operational_incidents (error_code, occurred_at)
-             VALUES (?, ?)`
-          ).bind(code, now.toISOString())
+          ).bind(code, slotKey, slotKey, source)
         ]);
       },
       async failGeneration(slotKey, code, message, retryAt) {
@@ -1076,11 +1103,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
              SET status = 'failed', completed_at = ?, error_code = ?,
                  error_message = ?, retry_at = ?
              WHERE slot_key = ?`
-          ).bind(now.toISOString(), code, code, retryAt, slotKey),
-          env.DB.prepare(
-            `INSERT INTO operational_incidents (error_code, occurred_at)
-             VALUES (?, ?)`
-          ).bind(code, now.toISOString())
+          ).bind(now.toISOString(), code, code, retryAt, slotKey)
         ]);
       }
     }
@@ -1162,6 +1185,11 @@ export default {
     return json({ error: "Not found" }, 404);
   },
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    await runScheduled(env, new Date(controller.scheduledTime));
+    const now = new Date(controller.scheduledTime);
+    try {
+      await runScheduled(env, now);
+    } finally {
+      await runOperationalIncidentCheck(env, now);
+    }
   }
 };

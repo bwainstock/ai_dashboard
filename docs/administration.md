@@ -47,10 +47,13 @@ secrets.
 
 Status contains only last device check-in, the atomically published current
 generation, the latest slot attempt and retry state, source freshness, OAuth
-state, AI quota state, and fixed error codes. A source fallback is reported as
-stale while retaining its last-success timestamp. Failed generation attempts
-show whether the one allowed retry is pending or has run, while the current
-generation continues to identify the previous complete published view set.
+state, AI quota state, and active operational incidents with fixed error codes
+and notification timestamps. A source fallback is reported as stale while
+retaining its last-success timestamp. Failed generation attempts show whether
+the one allowed retry is pending or has run, while the current generation
+continues to identify the previous complete published view set. See
+[Operational incidents and email](operational-incidents.md) for alert
+conditions, suppression, recovery, and deployment configuration.
 
 The surface never returns OAuth credentials, device tokens, raw provider
 payloads, household content, exception messages, or other content-bearing
