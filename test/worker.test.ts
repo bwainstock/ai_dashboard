@@ -59,6 +59,11 @@ class TestDatabase {
   private statement(query: string, parameters: () => unknown[]) {
     return {
       first: async <T>() => {
+        if (query.includes("FROM administration_users")) {
+          return (parameters()[0] === "admin@example.com"
+            ? { role: "administrator" }
+            : null) as T | null;
+        }
         if (query.includes("FROM devices WHERE device_id")) {
           const device = this.devices.get(String(parameters()[0]));
           return (device
@@ -169,8 +174,16 @@ function testEnv(
     IMAGES: bucket as unknown as R2Bucket,
     BROWSER: {} as Fetcher,
     GENERATION_SECRET: "generation-secret",
-    DEVICE_ORIGIN: "https://dashboard-device.example.com"
+    DEVICE_ORIGIN: "https://dashboard-device.example.com",
+    ADMIN_ORIGIN: "https://dashboard-admin.example.com"
   };
+}
+
+function withAdministratorAccess(request: Request): Request {
+  const headers = new Headers(request.headers);
+  headers.set("Cf-Access-Authenticated-User-Email", "admin@example.com");
+  headers.set("Cf-Access-Jwt-Assertion", "validated-by-cloudflare-access");
+  return new Request(request, { headers });
 }
 
 describe("TRMNL BYOS device service", () => {
@@ -559,10 +572,10 @@ describe("TRMNL BYOS device service", () => {
     const env = testEnv(database, bucket);
 
     const generationResponse = await worker.fetch(
-      new Request("https://device.test/admin/fixture-generations", {
+      withAdministratorAccess(new Request("https://dashboard-admin.example.com/admin/fixture-generations", {
         method: "POST",
         headers: { Authorization: "Bearer generation-secret" }
-      }),
+      })),
       env
     );
 
@@ -591,9 +604,11 @@ describe("TRMNL BYOS device service", () => {
     const env = testEnv(database);
 
     const update = await worker.fetch(
-      new Request("https://device.test/admin/weather-configuration", {
+      new Request("https://dashboard-admin.example.com/admin/weather-configuration", {
         method: "PUT",
         headers: {
+          "Cf-Access-Authenticated-User-Email": "admin@example.com",
+          "Cf-Access-Jwt-Assertion": "validated-by-cloudflare-access",
           Authorization: "******",
           "Content-Type": "application/json",
           "X-Admin-Token": env.GENERATION_SECRET
@@ -607,15 +622,19 @@ describe("TRMNL BYOS device service", () => {
       env
     );
     const unauthorizedRead = await worker.fetch(
-      new Request("https://device.test/admin/weather-configuration", {
+      new Request("https://dashboard-admin.example.com/admin/weather-configuration", {
         headers: { Authorization: "******" }
       }),
       env
     );
 
     const authenticatedRead = await worker.fetch(
-      new Request("https://device.test/admin/weather-configuration", {
-        headers: { "X-Admin-Token": env.GENERATION_SECRET }
+      new Request("https://dashboard-admin.example.com/admin/weather-configuration", {
+        headers: {
+          "Cf-Access-Authenticated-User-Email": "admin@example.com",
+          "Cf-Access-Jwt-Assertion": "validated-by-cloudflare-access",
+          "X-Admin-Token": env.GENERATION_SECRET
+        }
       }),
       env
     );
