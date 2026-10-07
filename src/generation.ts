@@ -9,6 +9,10 @@ import {
   type LunchIcon,
   type LunchSnapshot
 } from "./lunch";
+import {
+  isOperationalCode,
+  type OperationalCode
+} from "./operational-codes";
 
 export interface DashboardConfiguration extends WeatherLocation {
   timezone: string;
@@ -72,6 +76,7 @@ export interface Publication {
 export interface ScheduledGenerationPorts {
   claimSlot(slotKey: string): Promise<boolean>;
   claimRetry(now: string): Promise<{ slotKey: string } | null>;
+  prepareGeneration?(): Promise<void>;
   fetchWeather(location: WeatherLocation): Promise<WeatherSnapshot>;
   loadLatestWeather(): Promise<Snapshot<WeatherSnapshot> | null>;
   saveWeather(snapshot: WeatherSnapshot, fetchedAt: string): Promise<void>;
@@ -94,12 +99,12 @@ export interface ScheduledGenerationPorts {
   recordSourceFailure(
     slotKey: string,
     source: "weather" | "calendar" | "lunch",
-    code: string,
+    code: OperationalCode,
     message: string
   ): Promise<void>;
   failGeneration(
     slotKey: string,
-    code: string,
+    code: OperationalCode,
     message: string,
     retryAt: string | null
   ): Promise<void>;
@@ -124,7 +129,7 @@ export type ScheduledGenerationResult =
   | {
       status: "failed";
       slotKey: string;
-      code: string;
+      code: OperationalCode;
       nextWakeSeconds: number;
     };
 
@@ -236,15 +241,20 @@ function staleAgeMinutes(now: Date, fetchedAt: string): number {
   );
 }
 
-function errorDetails(error: unknown, fallbackCode: string, fallback: string) {
+function errorDetails(
+  error: unknown,
+  fallbackCode: OperationalCode,
+  fallback: string
+): { code: OperationalCode; message: string } {
+  const candidate =
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : null;
   return {
-    code:
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string"
-        ? error.code
-        : fallbackCode,
+    code: candidate && isOperationalCode(candidate) ? candidate : fallbackCode,
     message: error instanceof Error ? error.message : fallback
   };
 }
@@ -301,6 +311,8 @@ export async function runScheduledWeatherGeneration(
     retry = true;
   }
 
+  await ports.prepareGeneration?.();
+
   const configuredRetryDelay = input.retryDelayMinutes ?? 15;
   const retryDelayMinutes =
     Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
@@ -311,7 +323,7 @@ export async function runScheduledWeatherGeneration(
     : new Date(
         input.now.getTime() + retryDelayMinutes * 60_000
       ).toISOString();
-  const fail = async (code: string, message: string) => {
+  const fail = async (code: OperationalCode, message: string) => {
     await ports.failGeneration(slotKey, code, message, retryAt);
     return { status: "failed", slotKey, code, nextWakeSeconds } as const;
   };

@@ -1,5 +1,9 @@
 import { validateProtectedReviewCorrection } from "./gmail";
 import { noticeLifecycle } from "./notice-lifecycle";
+import {
+  statusSafeOperationalCode,
+  type OperationalCode
+} from "./operational-codes";
 
 export type AdministrationRole = "administrator" | "reviewer";
 
@@ -24,6 +28,7 @@ interface CalendarAccount {
   account_id: "mom" | "dad";
   display_label: string;
   oauth_status: "connected" | "disconnected" | "revoked";
+  gmail_disconnect_state: "revocation_pending" | "cleanup_pending" | null;
 }
 
 interface SelectedCalendar {
@@ -46,30 +51,6 @@ interface ProtectedReviewRow {
   created_at: string;
   expires_at: string;
 }
-
-const FIXED_ERROR_CODES = new Set([
-  "WEATHER_FETCH_FAILED",
-  "WEATHER_UPSTREAM_HTTP",
-  "WEATHER_UPSTREAM_NETWORK",
-  "WEATHER_INVALID_RESPONSE",
-  "LUNCH_UPSTREAM_HTTP",
-  "LUNCH_UPSTREAM_NETWORK",
-  "LUNCH_INVALID_RESPONSE",
-  "CALENDAR_FETCH_FAILED",
-  "CALENDAR_OAUTH_REVOKED",
-  "CALENDAR_UPSTREAM_HTTP",
-  "DAILY_BRIEF_RENDER_FAILED",
-  "CALENDAR_VIEW_RENDER_FAILED",
-  "LUNCH_VIEW_RENDER_FAILED",
-  "RENDERED_IMAGE_INVALID",
-  "GENERATION_PUBLICATION_FAILED",
-  "AI_QUOTA_EXHAUSTED",
-  "OAUTH_REVOKED_OR_EXPIRED",
-  "SOURCE_SCHEDULED_FAILURE",
-  "GENERATION_PUBLICATION_BLOCKED",
-  "DEVICE_AUTH_SUSPICIOUS",
-  "DEVICE_CHECK_IN_MISSING"
-]);
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, {
@@ -121,7 +102,7 @@ async function loadConfiguration(env: AdministrationEnv) {
        FROM dashboard_configuration WHERE id = 1`
     ).first<WeatherConfigurationRow>(),
     env.DB.prepare(
-      `SELECT account_id, display_label, oauth_status
+      `SELECT account_id, display_label, oauth_status, gmail_disconnect_state
        FROM calendar_accounts ORDER BY account_id`
     ).all<CalendarAccount>(),
     env.DB.prepare(
@@ -141,7 +122,12 @@ async function loadConfiguration(env: AdministrationEnv) {
       accounts: accounts.results.map((account) => ({
         accountId: account.account_id,
         displayLabel: account.display_label,
-        connected: account.oauth_status === "connected",
+        connected:
+          account.oauth_status === "connected" &&
+          account.gmail_disconnect_state == null,
+        ...(account.gmail_disconnect_state == null
+          ? {}
+          : { cleanupPending: true }),
         calendars: calendars.results
           .filter(({ account_id }) => account_id === account.account_id)
           .map(({ calendar_id, display_label }) => ({
@@ -280,10 +266,6 @@ async function configuration(
   }
 }
 
-function safeErrorCode(value: string | null): string | null {
-  return value && FIXED_ERROR_CODES.has(value) ? value : null;
-}
-
 async function operationalStatus(env: AdministrationEnv): Promise<Response> {
   const [device, render, attempt, sources, accounts, statuses, incidents] =
     await Promise.all([
@@ -318,7 +300,8 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
         error_code: string | null;
       }>(),
       env.DB.prepare(
-        `SELECT account_id, display_label, oauth_status
+        `SELECT account_id, display_label, oauth_status,
+                gmail_disconnect_state
          FROM calendar_accounts ORDER BY account_id`
       ).all<CalendarAccount>(),
       env.DB.prepare(
@@ -347,7 +330,7 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
             state: attempt.status,
             attempt: attempt.attempt_count,
             retryAt: attempt.retry_at,
-            errorCode: safeErrorCode(attempt.error_code)
+            errorCode: statusSafeOperationalCode(attempt.error_code)
           }
         : null
     },
@@ -355,18 +338,21 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
       source: source.source,
       state: source.state,
       lastSuccessfulAt: source.last_success_at,
-      errorCode: safeErrorCode(source.error_code)
+      errorCode: statusSafeOperationalCode(source.error_code)
     })),
     oauth: accounts.results.map((account) => ({
       accountId: account.account_id,
-      state: account.oauth_status
+      state:
+        account.gmail_disconnect_state == null
+          ? account.oauth_status
+          : account.gmail_disconnect_state
     })),
     aiQuota: ["available", "exhausted", "not_applicable"].includes(aiQuota)
       ? aiQuota
       : "not_applicable",
     incidents: incidents.results
       .map((incident) => ({
-        errorCode: safeErrorCode(incident.error_code),
+        errorCode: statusSafeOperationalCode(incident.error_code),
         occurredAt: incident.occurred_at,
         notifiedAt: incident.notified_at
       }))
@@ -374,7 +360,7 @@ async function operationalStatus(env: AdministrationEnv): Promise<Response> {
         (
           incident
         ): incident is {
-          errorCode: string;
+          errorCode: OperationalCode;
           occurredAt: string;
           notifiedAt: string | null;
         } =>
@@ -571,7 +557,7 @@ async function read(url){const response=await fetch(url,{headers:{accept:"applic
 async function load(){const [configuration,status,review]=await Promise.all([read("/admin/configuration"),read("/admin/status"),read("/admin/gmail-review")]);form.latitude.value=configuration.weather.latitude;form.longitude.value=configuration.weather.longitude;form.slots.value=configuration.weather.slots.join(", ");form.google.value=JSON.stringify(configuration.google,null,2);statusBox.textContent=JSON.stringify(status,null,2);reviewBox.textContent=JSON.stringify(review,null,2);if(role!=="administrator")for(const control of form.elements)control.disabled=true}
 form.addEventListener("submit",async event=>{event.preventDefault();result.textContent="Saving…";try{const google=JSON.parse(form.google.value);const response=await fetch("/admin/configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({weather:{latitude:Number(form.latitude.value),longitude:Number(form.longitude.value),slots:form.slots.value.split(",").map(value=>value.trim()).filter(Boolean)},google})});if(!response.ok)throw new Error("Save failed");result.textContent="Saved";await load()}catch{result.textContent="Configuration was not saved"}});
 for(const button of document.querySelectorAll("[data-connect]"))button.addEventListener("click",async()=>{try{const value=await read("/admin/calendar/oauth/start?account="+button.dataset.connect);location.assign(value.authorizationUrl)}catch{result.textContent="Google connection could not be started"}});
-for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!confirm("Revoke Google access and permanently delete retained account data?"))return;result.textContent="Disconnecting…";try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error("Disconnect failed");result.textContent="Disconnected and deleted retained data";await load()}catch{result.textContent="Google account was not disconnected"}});
+for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!confirm("Revoke Google access and permanently delete retained account data?"))return;result.textContent="Disconnecting…";try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error("Disconnect failed");const body=await response.json();result.textContent=body.cleanupPending?"Google access revoked; retained-data cleanup is pending":"Disconnected and deleted retained data";await load()}catch{result.textContent="Google account was not disconnected"}});
 load().catch(()=>{statusBox.textContent="Status unavailable"});`;
   return new Response(script, {
     headers: {

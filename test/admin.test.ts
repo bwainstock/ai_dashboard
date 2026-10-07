@@ -39,7 +39,14 @@ class AdminDatabase {
   ];
   publishedNotices: Array<Record<string, unknown>> = [];
   encryptedRefreshTokens = new Map<string, string>();
+  disconnectStates = new Map<
+    string,
+    "revocation_pending" | "cleanup_pending"
+  >();
   deletedAccountArtifacts: string[] = [];
+  failCleanupBatchOnce = false;
+  generationErrorCode = "DAILY_BRIEF_RENDER_FAILED";
+  sourceErrorCode = "CALENDAR_OAUTH_REVOKED";
 
   prepare(query: string) {
     let parameters: unknown[] = [];
@@ -79,9 +86,20 @@ class AdminDatabase {
             ? {
                 account_id: parameters[0],
                 encrypted_refresh_token: token,
-                oauth_status: "connected"
+                oauth_status: "connected",
+                gmail_disconnect_state:
+                  this.disconnectStates.get(String(parameters[0])) ?? null
               }
-            : null) as T | null;
+            : this.disconnectStates.has(String(parameters[0]))
+              ? {
+                  account_id: parameters[0],
+                  encrypted_refresh_token: null,
+                  oauth_status: "disconnected",
+                  gmail_disconnect_state: this.disconnectStates.get(
+                    String(parameters[0])
+                  )
+                }
+              : null) as T | null;
         }
         if (query.includes("FROM scheduled_generation_slots")) {
           return {
@@ -89,7 +107,7 @@ class AdminDatabase {
             status: "failed",
             attempt_count: 1,
             retry_at: "2026-10-07T19:15:00.000Z",
-            error_code: "DAILY_BRIEF_RENDER_FAILED"
+            error_code: this.generationErrorCode
           } as T;
         }
         if (
@@ -146,7 +164,7 @@ class AdminDatabase {
                 source: "calendar",
                 state: "error",
                 last_success_at: "2026-10-07T10:30:00.000Z",
-                error_code: "CALENDAR_OAUTH_REVOKED"
+                error_code: this.sourceErrorCode
               }
             ]
           } as D1Result<T>;
@@ -227,7 +245,23 @@ class AdminDatabase {
           query.includes("encrypted_refresh_token = NULL")
         ) {
           this.encryptedRefreshTokens.delete(String(parameters[0]));
+          this.disconnectStates.set(String(parameters[0]), "cleanup_pending");
           this.deletedAccountArtifacts.push("calendar_account_credentials");
+        }
+        if (
+          query.includes("UPDATE calendar_accounts") &&
+          query.includes("gmail_disconnect_state = 'revocation_pending'")
+        ) {
+          this.disconnectStates.set(
+            String(parameters[0]),
+            "revocation_pending"
+          );
+        }
+        if (
+          query.includes("UPDATE calendar_accounts") &&
+          query.includes("gmail_disconnect_state = NULL")
+        ) {
+          this.disconnectStates.delete(String(parameters[0]));
         }
         return { success: true };
       }
@@ -236,6 +270,13 @@ class AdminDatabase {
   }
 
   async batch(statements: D1PreparedStatement[]) {
+    if (
+      this.failCleanupBatchOnce &&
+      statements.length >= 6
+    ) {
+      this.failCleanupBatchOnce = false;
+      throw new Error("D1 unavailable");
+    }
     return Promise.all(
       statements.map((statement) =>
         (statement as unknown as { run(): Promise<unknown> }).run()
@@ -425,6 +466,42 @@ describe("Access-protected browser administration", () => {
     expect(mutation.status).toBe(403);
   });
 
+  test("status exposes canonical Notices and Gmail codes but drops arbitrary content", async () => {
+    const database = new AdminDatabase();
+    database.generationErrorCode = "NOTICES_VIEW_RENDER_FAILED";
+    database.sourceErrorCode = "GMAIL_PROCESSING_FAILED";
+    const response = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/status", {
+        headers: accessHeaders("reviewer@example.com")
+      }),
+      env(database)
+    );
+
+    const body = await response.json<{
+      rendering: { latestAttempt: { errorCode: string } };
+      sources: Array<{ errorCode: string | null }>;
+    }>();
+    expect(body.rendering.latestAttempt.errorCode).toBe(
+      "NOTICES_VIEW_RENDER_FAILED"
+    );
+    expect(body.sources[1].errorCode).toBe("GMAIL_PROCESSING_FAILED");
+
+    database.generationErrorCode = "subject: private school message";
+    const hidden = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/status", {
+        headers: accessHeaders("reviewer@example.com")
+      }),
+      env(database)
+    );
+    expect(
+      (
+        await hidden.json<{
+          rendering: { latestAttempt: { errorCode: string | null } };
+        }>()
+      ).rendering.latestAttempt.errorCode
+    ).toBeNull();
+  });
+
   test("both roles can inspect minimal protected Gmail records without raw content", async () => {
     for (const email of ["reviewer@example.com", "admin@example.com"]) {
       const response = await worker.fetch(
@@ -602,6 +679,87 @@ describe("Access-protected browser administration", () => {
         "selected_calendars"
       ].sort()
     );
+    revoke.mockRestore();
+  });
+
+  test("disconnect reports and resumes pending cleanup after an R2 failure", async () => {
+    const database = new AdminDatabase();
+    const encryptionKey = btoa("0123456789abcdef0123456789abcdef");
+    database.encryptedRefreshTokens.set(
+      "mom",
+      await encryptRefreshToken("refresh-token", encryptionKey)
+    );
+    const imageBucket = {
+      list: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("R2 unavailable"))
+        .mockResolvedValueOnce({ objects: [], truncated: false }),
+      delete: vi.fn().mockResolvedValue(undefined)
+    };
+    const revoke = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const environment = env(database, {
+      CALENDAR_TOKEN_ENCRYPTION_KEY: encryptionKey,
+      IMAGES: imageBucket as unknown as R2Bucket
+    });
+    const request = () =>
+      new Request(
+        "https://dashboard-admin.example.com/admin/gmail-accounts/mom/disconnect",
+        { method: "POST", headers: accessHeaders("admin@example.com") }
+      );
+
+    const first = await worker.fetch(request(), environment);
+    expect(first.status).toBe(202);
+    expect(await first.json()).toEqual({
+      accountId: "mom",
+      disconnected: true,
+      cleanupPending: true,
+      errorCode: "GOOGLE_ACCOUNT_CLEANUP_PENDING"
+    });
+    expect(database.encryptedRefreshTokens.has("mom")).toBe(false);
+    expect(database.deletedAccountArtifacts).toContain("household_notices");
+
+    const retry = await worker.fetch(request(), environment);
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({
+      accountId: "mom",
+      disconnected: true
+    });
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(database.disconnectStates.has("mom")).toBe(false);
+    revoke.mockRestore();
+  });
+
+  test("disconnect retries idempotently after a D1 cleanup failure", async () => {
+    const database = new AdminDatabase();
+    database.failCleanupBatchOnce = true;
+    const encryptionKey = btoa("0123456789abcdef0123456789abcdef");
+    database.encryptedRefreshTokens.set(
+      "dad",
+      await encryptRefreshToken("refresh-token", encryptionKey)
+    );
+    const imageBucket = {
+      list: vi.fn().mockResolvedValue({ objects: [], truncated: false }),
+      delete: vi.fn().mockResolvedValue(undefined)
+    };
+    const revoke = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const environment = env(database, {
+      CALENDAR_TOKEN_ENCRYPTION_KEY: encryptionKey,
+      IMAGES: imageBucket as unknown as R2Bucket
+    });
+    const request = () =>
+      new Request(
+        "https://dashboard-admin.example.com/admin/gmail-accounts/dad/disconnect",
+        { method: "POST", headers: accessHeaders("admin@example.com") }
+      );
+
+    expect((await worker.fetch(request(), environment)).status).toBe(202);
+    expect((await worker.fetch(request(), environment)).status).toBe(200);
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(imageBucket.list).toHaveBeenCalledTimes(2);
     revoke.mockRestore();
   });
 

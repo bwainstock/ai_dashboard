@@ -1,11 +1,9 @@
-export type IncidentCode =
-  | "OAUTH_REVOKED_OR_EXPIRED"
-  | "SOURCE_SCHEDULED_FAILURE"
-  | "GMAIL_PROCESSING_REPEATED_FAILURE"
-  | "AI_QUOTA_EXHAUSTED"
-  | "GENERATION_PUBLICATION_BLOCKED"
-  | "DEVICE_AUTH_SUSPICIOUS"
-  | "DEVICE_CHECK_IN_MISSING";
+import {
+  isPublicationBlockingOperationalCode,
+  type IncidentCode
+} from "./operational-codes";
+
+export type { IncidentCode } from "./operational-codes";
 
 export interface IncidentSnapshot {
   oauth: Array<{
@@ -70,14 +68,6 @@ export function operationalIncidentEmail(
   };
 }
 
-const PUBLICATION_BLOCKING_CODES = new Set([
-  "DAILY_BRIEF_RENDER_FAILED",
-  "CALENDAR_VIEW_RENDER_FAILED",
-  "LUNCH_VIEW_RENDER_FAILED",
-  "RENDERED_IMAGE_INVALID",
-  "GENERATION_PUBLICATION_FAILED"
-]);
-
 function desiredIncidents(
   snapshot: IncidentSnapshot,
   now: Date
@@ -108,7 +98,9 @@ function desiredIncidents(
   if (
     snapshot.latestGeneration.state === "failed" &&
     snapshot.latestGeneration.errorCode !== null &&
-    PUBLICATION_BLOCKING_CODES.has(snapshot.latestGeneration.errorCode)
+    isPublicationBlockingOperationalCode(
+      snapshot.latestGeneration.errorCode
+    )
   ) {
     desired.push({
       key: "generation:publication",

@@ -10,6 +10,7 @@ import {
 import { refreshCalendarAccessToken } from "./google-calendar";
 import { noticeLifecycle } from "./notice-lifecycle";
 import { purgeExpiredGmailData } from "./gmail-controls";
+import type { OperationalCode } from "./operational-codes";
 
 export interface GmailWorkerEnv {
   DB: D1Database;
@@ -78,10 +79,10 @@ export async function runGmailRetentionMaintenance(
 
 export async function recordGmailProcessingFailure(
   database: D1Database,
-  errorCode:
-    | "GMAIL_PROCESSING_FAILED"
-    | "GMAIL_OAUTH_REVOKED"
-    | "AI_QUOTA_EXHAUSTED"
+  errorCode: Extract<
+    OperationalCode,
+    "GMAIL_PROCESSING_FAILED" | "GMAIL_OAUTH_REVOKED" | "AI_QUOTA_EXHAUSTED"
+  >
 ): Promise<void> {
   await database
     .prepare(

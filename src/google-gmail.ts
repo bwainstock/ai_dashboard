@@ -1,4 +1,5 @@
 import type { GmailCandidate } from "./gmail";
+import type { OperationalCode } from "./operational-codes";
 
 type Requester = (
   input: string | URL | Request,
@@ -29,8 +30,13 @@ async function gmailJson<T>(
 ): Promise<T> {
   const response = await request(url, authorized(accessToken));
   if (!response.ok) {
+    const code: Extract<
+      OperationalCode,
+      "GMAIL_OAUTH_REVOKED" | "GMAIL_API_FAILED"
+    > =
+      response.status === 401 ? "GMAIL_OAUTH_REVOKED" : "GMAIL_API_FAILED";
     throw Object.assign(new Error("Gmail API request failed"), {
-      code: response.status === 401 ? "GMAIL_OAUTH_REVOKED" : "GMAIL_API_FAILED"
+      code
     });
   }
   return response.json<T>();

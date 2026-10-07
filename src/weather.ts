@@ -26,10 +26,12 @@ type Fetch = (
   init?: RequestInit
 ) => Promise<Response>;
 
-export type WeatherAdapterErrorCode =
+export type WeatherAdapterErrorCode = Extract<
+  OperationalCode,
   | "WEATHER_UPSTREAM_HTTP"
   | "WEATHER_UPSTREAM_NETWORK"
-  | "WEATHER_INVALID_RESPONSE";
+  | "WEATHER_INVALID_RESPONSE"
+>;
 
 export class WeatherAdapterError extends Error {
   constructor(
@@ -176,3 +178,4 @@ export async function fetchWeather(
     );
   }
 }
+import type { OperationalCode } from "./operational-codes";

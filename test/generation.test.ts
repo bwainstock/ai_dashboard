@@ -74,7 +74,8 @@ function ports(
 
 describe("scheduled weather generation", () => {
   test("a due local slot normalizes, renders, validates, and publishes an immutable Daily Brief", async () => {
-    const boundary = ports();
+    const prepareGeneration = vi.fn().mockResolvedValue(undefined);
+    const boundary = ports({ prepareGeneration });
 
     const result = await runScheduledWeatherGeneration(
       {
@@ -96,6 +97,7 @@ describe("scheduled weather generation", () => {
       filename: "daily-brief-20261007T173000Z.png",
       nextWakeSeconds: 16_200
     });
+    expect(prepareGeneration).toHaveBeenCalledOnce();
     expect(boundary.renderDailyBrief).toHaveBeenCalledWith({
       weather: WEATHER,
       stale: false,
@@ -109,6 +111,7 @@ describe("scheduled weather generation", () => {
       },
       updatedAt: "2026-10-07T17:30:00.000Z"
     });
+
     expect(boundary.renderCalendarView).toHaveBeenCalledWith({
       calendar: [],
       timezone: "America/Los_Angeles",
@@ -164,6 +167,28 @@ describe("scheduled weather generation", () => {
       lunch: LUNCH,
       generatedAt: "2026-10-07T17:30:00.000Z"
     });
+  });
+
+  test("a non-due cron invocation does not prepare Gmail processing", async () => {
+    const prepareGeneration = vi.fn().mockResolvedValue(undefined);
+    const boundary = ports({ prepareGeneration });
+
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:31:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(result.status).toBe("not_due");
+    expect(prepareGeneration).not.toHaveBeenCalled();
   });
 
   test("renders at most eight active notices and Private Notice Markers into Notices View", async () => {
@@ -604,7 +629,8 @@ describe("scheduled weather generation", () => {
     );
 
     const retry = ports({
-      claimRetry: vi.fn().mockResolvedValue({ slotKey })
+      claimRetry: vi.fn().mockResolvedValue({ slotKey }),
+      prepareGeneration: vi.fn().mockResolvedValue(undefined)
     });
     const result = await runScheduledWeatherGeneration(
       {
@@ -622,6 +648,7 @@ describe("scheduled weather generation", () => {
 
     expect(result).toMatchObject({ status: "published", slotKey });
     expect(retry.claimSlot).not.toHaveBeenCalled();
+    expect(retry.prepareGeneration).toHaveBeenCalledOnce();
     expect(retry.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         generationId: "20261007T174500Z",

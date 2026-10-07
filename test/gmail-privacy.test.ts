@@ -104,7 +104,8 @@ describe("Gmail privacy inspection", () => {
             "0010_gmail_notices.sql",
             "0011_protected_gmail_review.sql",
             "0012_notices_view.sql",
-            "0013_gmail_controls.sql"
+            "0013_gmail_controls.sql",
+            "0014_resumable_google_disconnect.sql"
           ].map((name) => readFile(`migrations/${name}`, "utf8"))
         ).then((files) => files.join("\n")),
         readFile("wrangler.gmail.toml", "utf8")

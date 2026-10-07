@@ -11,12 +11,17 @@ Google refresh token. It then clears encrypted credentials, Gmail scan cursors,
 selected calendars, account notices and review rows, combined calendar
 snapshots, every retained render-generation row, and every private R2 image.
 If Google revocation fails, deletion does not begin and the control reports a
-fixed error so the administrator can retry.
+fixed error so the administrator can retry. After successful revocation the
+account is no longer presented as connected. Cleanup state is durable: partial
+D1 or R2 failure returns `GOOGLE_ACCOUNT_CLEANUP_PENDING`, and the same control
+resumes idempotent cleanup without attempting revocation again.
 
 ## Worker boundary
 
 `family-dashboard-gmail` is a dedicated, non-public Worker invoked through the
-device Worker's service binding immediately before scheduled generation. It
+device Worker's service binding only immediately before a claimed due
+generation or claimed retry. Non-due five-minute cron invocations do not scan
+Gmail. It
 uses a direct Workers AI binding; no AI Gateway is configured. Its Wrangler
 configuration disables observability. Application code contains no content
 logging, and error responses contain fixed codes only.
@@ -118,8 +123,9 @@ authenticated upstream API request and are never logged or retained.
 ## Deployment
 
 Apply D1 migrations `0010_gmail_notices.sql`,
-`0011_protected_gmail_review.sql`, and `0013_gmail_controls.sql`. Set these
-secrets on both Workers as applicable:
+`0011_protected_gmail_review.sql`, `0013_gmail_controls.sql`, and
+`0014_resumable_google_disconnect.sql`. Set these secrets on both Workers as
+applicable:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
