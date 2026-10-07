@@ -5,6 +5,7 @@ import {
   type ScheduledGenerationPorts
 } from "../src/generation";
 import type { WeatherSnapshot } from "../src/weather";
+import type { CalendarEvent } from "../src/calendar";
 
 const WEATHER: WeatherSnapshot = {
   observedAt: "2026-10-07T10:25",
@@ -94,6 +95,7 @@ describe("scheduled weather generation", () => {
     const failure = Object.assign(new Error("Open-Meteo returned HTTP 503"), {
       code: "WEATHER_UPSTREAM_HTTP"
     });
+
     const boundary = ports({
       fetchWeather: vi.fn().mockRejectedValue(failure),
       loadLatestWeather: vi.fn().mockResolvedValue(WEATHER)
@@ -124,6 +126,51 @@ describe("scheduled weather generation", () => {
       "WEATHER_UPSTREAM_HTTP",
       "Open-Meteo returned HTTP 503"
     );
+  });
+
+  test("calendar events are refreshed and supplied to the Daily Brief generation seam", async () => {
+    const calendar: CalendarEvent[] = [
+      {
+        occurrenceId: "school|2026-10-07",
+        title: "School holiday",
+        start: "2026-10-07",
+        end: "2026-10-08",
+        allDay: true,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Mom", "Dad"]
+      }
+    ];
+    const boundary = ports({
+      fetchCalendar: vi.fn().mockResolvedValue(calendar),
+      loadLatestCalendar: vi.fn().mockResolvedValue([]),
+      saveCalendar: vi.fn().mockResolvedValue(undefined)
+    });
+
+    await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["06:30", "10:30", "15:00", "19:00"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(boundary.saveCalendar).toHaveBeenCalledWith(
+      calendar,
+      "2026-10-07T17:30:00.000Z"
+    );
+    expect(boundary.renderDailyBrief).toHaveBeenCalledWith({
+      weather: WEATHER,
+      calendar,
+      stale: false,
+      updatedAt: "2026-10-07T17:30:00.000Z"
+    });
   });
 
   test("an upstream failure without a last valid snapshot fails explicitly", async () => {

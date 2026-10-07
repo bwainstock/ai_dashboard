@@ -34,6 +34,9 @@ Do not build source integrations until this path is proven.
 
 1. Open-Meteo adapter for current, today, and tomorrow forecasts.
 2. Google OAuth and Calendar adapters for both consumer accounts.
+   - Implemented with read-only scopes, encrypted refresh-token storage,
+     administrator selection/labels, and minimized normalized snapshots. See
+     [Google Calendar integration](calendar-integration.md).
 3. MealViewer adapter isolated behind an interface that:
    - Uses low-frequency server-side requests.
    - Validates the undocumented response schema.
