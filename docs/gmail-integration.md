@@ -16,6 +16,19 @@ account is no longer presented as connected. Cleanup state is durable: partial
 D1 or R2 failure returns `GOOGLE_ACCOUNT_CLEANUP_PENDING`, and the same control
 resumes idempotent cleanup without attempting revocation again.
 
+The Sender-Domain Allowlist is a full-section replacement containing at most
+50 normalized ASCII DNS domains. Input is trimmed and lowercased. Wildcards,
+leading or trailing dots, consecutive dots, invalid DNS labels or characters,
+and duplicates after normalization are rejected. Every domain has exactly one
+`school` or `childcare` classification. A configured domain matches that exact
+sender domain and its subdomains. An empty Sender-Domain Allowlist is allowed;
+the administration interface warns that no Gmail senders will qualify.
+
+Reviewers may read this safe configuration and the content-free account
+connection and last-processed context. Only administrators may mutate it or
+connect, reconnect, discover, or disconnect Google accounts. Failed saves
+leave the current Sender-Domain Allowlist unchanged.
+
 ## Worker boundary
 
 `family-dashboard-gmail` is a dedicated, non-public Worker invoked through the
@@ -33,6 +46,13 @@ Social, Promotions, list/bulk mail, marketing, and obvious newsletters are
 rejected deterministically before Workers AI. Configured school and childcare
 domains override Promotions/list heuristics, but never Spam, Trash, Social, or
 non-Inbox exclusion.
+
+Initial and incremental scans hydrate Gmail messages through the Gmail
+multipart batch endpoint. IDs are deduplicated in provider order and split
+into groups of 40 `messages.get?format=full` calls. Each multipart result is
+matched by `Content-ID`; any outer or inner failure, malformed part, duplicate
+or missing result, or invalid JSON fails the complete scan before its history
+cursor can advance.
 
 ## Data minimization and validation
 

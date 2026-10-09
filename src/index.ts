@@ -51,6 +51,15 @@ import {
   revokeGoogleAccess
 } from "./google-calendar";
 import type { OperationalCode } from "./operational-codes";
+import {
+  type CalendarConfigurationAccount,
+  type CalendarSelectionValidationFailure,
+  calendarSelectionValidationError,
+  normalizeCalendarConfiguration,
+  normalizeGmailSenderDomains,
+  replaceCalendarConfiguration,
+  replaceWeatherConfiguration
+} from "./administration-configuration";
 
 export interface Env {
   DB: D1Database;
@@ -82,6 +91,13 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "cache-control": "no-store" }
   });
+}
+
+async function administrationBodyTooLarge(request: Request): Promise<boolean> {
+  if (!["POST", "PUT", "PATCH"].includes(request.method)) return false;
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > 65_536) return true;
+  return (await request.clone().arrayBuffer()).byteLength > 65_536;
 }
 
 function randomToken(byteLength: number): string {
@@ -326,10 +342,18 @@ async function weatherConfiguration(
   request: Request,
   env: Env
 ): Promise<Response> {
-  if (!isAdministrator(request, env)) {
+  if (!isSectionConfigurationAuthorized(request, env)) {
     return json({ error: "Unauthorized" }, 401);
   }
   return weatherConfigurationAuthorized(request, env);
+}
+
+function isSectionConfigurationAuthorized(request: Request, env: Env): boolean {
+  if (isAdministrator(request, env)) return true;
+  return (
+    request.method === "GET" &&
+    request.headers.get("X-Administration-Role") === "reviewer"
+  );
 }
 
 function calendarSecrets(env: Env) {
@@ -363,63 +387,70 @@ interface SelectedCalendarRow {
     display_label: string;
   }
 
+async function validateNewSelectedCalendars(
+  env: Env,
+  accounts: CalendarConfigurationAccount[]
+): Promise<CalendarSelectionValidationFailure | null> {
+  const current = await env.DB.prepare(
+    `SELECT account_id, calendar_id, display_label
+     FROM selected_calendars ORDER BY account_id, calendar_id`
+  ).all<SelectedCalendarRow>();
+  for (const accountInput of accounts) {
+    const existingIds = new Set(
+      current.results
+        .filter(({ account_id }) => account_id === accountInput.accountId)
+        .map(({ calendar_id }) => calendar_id)
+    );
+    const newIds = accountInput.calendars
+      .map(({ id }) => id)
+      .filter((id) => !existingIds.has(id));
+    if (newIds.length === 0) continue;
+    const account = await env.DB.prepare(
+      `SELECT account_id, display_label, encrypted_refresh_token,
+              oauth_status
+       FROM calendar_accounts WHERE account_id = ?`
+    )
+      .bind(accountInput.accountId)
+      .first<CalendarAccountRow>();
+    if (!account || account.oauth_status !== "connected") return "disconnected";
+    try {
+      const discovered = await listGoogleCalendars(
+        await accessTokenForAccount(env, account)
+      );
+      const discoveredIds = new Set(discovered.map(({ id }) => id));
+      if (newIds.some((id) => !discoveredIds.has(id))) return "not_discovered";
+    } catch {
+      return "discovery_failed";
+    }
+  }
+  return null;
+}
+
 async function calendarConfiguration(
     request: Request,
     env: Env
   ): Promise<Response> {
-    if (!isAdministrator(request, env)) {
+    if (!isSectionConfigurationAuthorized(request, env)) {
       return json({ error: "Unauthorized" }, 401);
     }
     if (request.method === "PUT") {
-      const input = await request.json<{
-        accounts?: Array<{
-          accountId?: string;
-          displayLabel?: string;
-          calendars?: Array<{ id?: string; label?: string }>;
-        }>;
-      }>();
-      if (
-        !Array.isArray(input.accounts) ||
-        input.accounts.length !== 2 ||
-        new Set(input.accounts.map(({ accountId }) => accountId)).size !== 2 ||
-        input.accounts.some(
-          ({ accountId, displayLabel, calendars }) =>
-            !["mom", "dad"].includes(accountId ?? "") ||
-            typeof displayLabel !== "string" ||
-            displayLabel.trim().length < 1 ||
-            displayLabel.trim().length > 20 ||
-            displayLabel.includes("@") ||
-            !Array.isArray(calendars) ||
-            calendars.some(
-              ({ id, label }) =>
-                typeof id !== "string" ||
-                !id ||
-                typeof label !== "string" ||
-                !label ||
-                label.length > 80
-            )
-        )
-      ) {
+      let input: { accounts?: unknown };
+      try {
+        input = await request.json();
+      } catch {
         return json({ error: "Invalid calendar configuration" }, 400);
       }
-      const statements = input.accounts.flatMap((account) => [
-        env.DB.prepare(
-          `UPDATE calendar_accounts
-           SET display_label = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE account_id = ?`
-        ).bind(account.displayLabel!.trim(), account.accountId),
-        env.DB.prepare(
-          "DELETE FROM selected_calendars WHERE account_id = ?"
-        ).bind(account.accountId),
-        ...account.calendars!.map((calendar) =>
-          env.DB.prepare(
-            `INSERT INTO selected_calendars
-               (account_id, calendar_id, display_label)
-             VALUES (?, ?, ?)`
-          ).bind(account.accountId, calendar.id, calendar.label)
-        )
-      ]);
-      await env.DB.batch(statements);
+      const accounts = normalizeCalendarConfiguration(input.accounts);
+      if (!accounts) {
+        return json({ error: "Invalid calendar configuration" }, 400);
+      }
+      const validationError = calendarSelectionValidationError(
+        await validateNewSelectedCalendars(env, accounts)
+      );
+      if (validationError) {
+        return json({ error: validationError.error }, validationError.status);
+      }
+      await replaceCalendarConfiguration(env.DB, accounts);
     }
     const accounts = await env.DB.prepare(
       `SELECT account_id, display_label, oauth_status, gmail_disconnect_state
@@ -436,6 +467,9 @@ async function calendarConfiguration(
         connected:
           account.oauth_status === "connected" &&
           account.gmail_disconnect_state == null,
+        ...(account.oauth_status === "revoked"
+          ? { reconnectRequired: true }
+          : {}),
         ...(account.gmail_disconnect_state == null
           ? {}
           : { cleanupPending: true }),
@@ -485,16 +519,24 @@ async function calendarOAuthCallback(
     if (!isAdministrator(request, env)) {
       return json({ error: "Unauthorized" }, 401);
     }
+    const wantsJson = request.headers
+      .get("accept")
+      ?.split(",")
+      .some((value) => value.trim().split(";")[0] === "application/json");
+    let accountId: "mom" | "dad" | null = null;
     try {
       const secrets = calendarSecrets(env);
       const url = new URL(request.url);
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
-      if (!code || !state) return json({ error: "Invalid OAuth callback" }, 400);
-      const accountId = await verifyCalendarOAuthState(
+      if (!state) throw new Error("Invalid OAuth callback");
+      accountId = await verifyCalendarOAuthState(
         state,
         secrets.encryptionKey
       );
+      if (!code || url.searchParams.has("error")) {
+        throw new Error("Calendar authorization failed");
+      }
       const tokens = await exchangeCalendarAuthorizationCode({
         clientId: secrets.clientId,
         clientSecret: secrets.clientSecret,
@@ -513,9 +555,22 @@ async function calendarOAuthCallback(
       )
         .bind(encrypted, accountId)
         .run();
-      return json({ accountId, connected: true });
+      return wantsJson
+        ? json({ accountId, connected: true })
+        : new Response(null, {
+            status: 302,
+            headers: { location: `/admin?calendar=${accountId}-connected` }
+          });
     } catch {
-      return json({ error: "Calendar authorization failed" }, 400);
+      if (wantsJson) {
+        return json({ error: "Calendar authorization failed" }, 400);
+      }
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: `/admin?calendar=${accountId ?? "unknown"}-authorization-failed`
+        }
+      });
     }
   }
 
@@ -523,32 +578,28 @@ async function gmailConfiguration(
   request: Request,
   env: Env
 ): Promise<Response> {
-  if (!isAdministrator(request, env)) {
+  if (!isSectionConfigurationAuthorized(request, env)) {
     return json({ error: "Unauthorized" }, 401);
   }
 
   if (request.method === "PUT") {
-    const input = await request.json<{
-      senders?: Array<{ domain?: string; kind?: string }>;
-    }>();
-    if (
-      !Array.isArray(input.senders) ||
-      input.senders.some(
-        ({ domain, kind }) =>
-          typeof domain !== "string" ||
-          !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain) ||
-          !["school", "childcare"].includes(kind ?? "")
-      )
-    ) {
+    let input: { senders?: unknown };
+    try {
+      input = await request.json();
+    } catch {
+      return json({ error: "Invalid Gmail sender configuration" }, 400);
+    }
+    const senders = normalizeGmailSenderDomains(input.senders);
+    if (!senders) {
       return json({ error: "Invalid Gmail sender configuration" }, 400);
     }
     await env.DB.batch([
       env.DB.prepare("DELETE FROM gmail_sender_allowlist"),
-      ...input.senders.map(({ domain, kind }) =>
+      ...senders.map(({ domain, kind }) =>
         env.DB.prepare(
           `INSERT INTO gmail_sender_allowlist (domain, kind)
            VALUES (?, ?)`
-        ).bind(domain!.toLowerCase(), kind)
+        ).bind(domain, kind)
       )
     ]);
   }
@@ -573,6 +624,9 @@ async function gmailConfiguration(
       connected:
         account.oauth_status === "connected" &&
         account.gmail_disconnect_state == null,
+      ...(account.oauth_status === "revoked"
+        ? { reconnectRequired: true }
+        : {}),
       lastProcessedAt: account.gmail_scan_completed_at,
       ...(account.gmail_disconnect_state == null
         ? {}
@@ -817,6 +871,7 @@ async function fetchCalendarSnapshot(
        FROM selected_calendars ORDER BY account_id, calendar_id`
     ).all<SelectedCalendarRow>();
     const source: CalendarSourceEvent[] = [];
+    const pageBudget = { remaining: 100 };
     for (const account of accounts.results) {
       const calendarIds = selected.results
         .filter(({ account_id }) => account_id === account.account_id)
@@ -829,7 +884,8 @@ async function fetchCalendarSnapshot(
           ownerLabel: account.display_label,
           calendarIds,
           timeMin: now.toISOString(),
-          timeMax: new Date(now.getTime() + 4 * 86_400_000).toISOString()
+          timeMax: new Date(now.getTime() + 4 * 86_400_000).toISOString(),
+          pageBudget
         }))
       );
     }
@@ -841,35 +897,15 @@ async function weatherConfigurationAuthorized(
   env: Env
 ): Promise<Response> {
   if (request.method === "PUT") {
-    const input = await request.json<{
-      latitude?: number;
-      longitude?: number;
-      slots?: string[];
-    }>();
-    const slots = input.slots;
-    if (
-      typeof input.latitude !== "number" ||
-      input.latitude < -90 ||
-      input.latitude > 90 ||
-      typeof input.longitude !== "number" ||
-      input.longitude < -180 ||
-      input.longitude > 180 ||
-      !Array.isArray(slots) ||
-      slots.length === 0 ||
-      new Set(slots).size !== slots.length ||
-      slots.some((slot) => !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(slot))
-    ) {
+    let input: unknown;
+    try {
+      input = await request.json();
+    } catch {
       return json({ error: "Invalid weather configuration" }, 400);
     }
-    const sortedSlots = [...slots].sort();
-    await env.DB.prepare(
-      `UPDATE dashboard_configuration
-       SET latitude = ?, longitude = ?, slots_json = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = 1`
-    )
-      .bind(input.latitude, input.longitude, JSON.stringify(sortedSlots))
-      .run();
+    if (!(await replaceWeatherConfiguration(env.DB, input))) {
+      return json({ error: "Invalid weather configuration" }, 400);
+    }
   }
 
   let stored: DashboardConfiguration;
@@ -953,105 +989,59 @@ async function generateFixture(request: Request, env: Env): Promise<Response> {
 }
 
 async function renderDailyBrief(
-  env: Env,
+  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
   model: DailyBriefWeatherModel
 ): Promise<Uint8Array> {
-  const browser = await puppeteer.launch(env.BROWSER);
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({
-      width: 800,
-      height: 480,
-      deviceScaleFactor: 1
-    });
-    await page.setContent(dailyBriefHtml(model), { waitUntil: "networkidle0" });
-    await validateRenderedPage(page, "Daily Brief");
-    return await page.screenshot({
-      type: "png",
-      fullPage: false,
-      captureBeyondViewport: false
-    });
-  } finally {
-    await browser.close();
-  }
+  return renderDashboardView(
+    browser,
+    dailyBriefHtml(model),
+    "Daily Brief"
+  );
 }
 
 async function renderCalendarView(
-  env: Env,
+  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
   model: CalendarViewModel
 ): Promise<Uint8Array> {
-  const browser = await puppeteer.launch(env.BROWSER);
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({
-      width: 800,
-      height: 480,
-      deviceScaleFactor: 1
-    });
-    await page.setContent(calendarViewHtml(model), {
-      waitUntil: "networkidle0"
-    });
-    await validateRenderedPage(page, "Calendar View");
-    return await page.screenshot({
-      type: "png",
-      fullPage: false,
-      captureBeyondViewport: false
-    });
-  } finally {
-    await browser.close();
-  }
+  return renderDashboardView(
+    browser,
+    calendarViewHtml(model),
+    "Calendar View"
+  );
 }
 
 async function renderLunchView(
-  env: Env,
+  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
   model: LunchViewModel
 ): Promise<Uint8Array> {
-  const browser = await puppeteer.launch(env.BROWSER);
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({
-      width: 800,
-      height: 480,
-      deviceScaleFactor: 1
-    });
-    await page.setContent(lunchViewHtml(model), {
-      waitUntil: "networkidle0"
-    });
-    await validateRenderedPage(page, "Lunch View");
-    return await page.screenshot({
-      type: "png",
-      fullPage: false,
-      captureBeyondViewport: false
-    });
-  } finally {
-    await browser.close();
-  }
+  return renderDashboardView(browser, lunchViewHtml(model), "Lunch View");
 }
 
 async function renderNoticesView(
-  env: Env,
+  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
   model: NoticesViewModel
 ): Promise<Uint8Array> {
-  const browser = await puppeteer.launch(env.BROWSER);
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({
-      width: 800,
-      height: 480,
-      deviceScaleFactor: 1
-    });
-    await page.setContent(noticesViewHtml(model), {
-      waitUntil: "networkidle0"
-    });
-    await validateRenderedPage(page, "Notices View");
-    return await page.screenshot({
-      type: "png",
-      fullPage: false,
-      captureBeyondViewport: false
-    });
-  } finally {
-    await browser.close();
-  }
+  return renderDashboardView(browser, noticesViewHtml(model), "Notices View");
+}
+
+async function renderDashboardView(
+  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
+  html: string,
+  view: "Daily Brief" | "Calendar View" | "Lunch View" | "Notices View"
+): Promise<Uint8Array> {
+  const page = await browser.newPage();
+  await page.setViewport({
+    width: 800,
+    height: 480,
+    deviceScaleFactor: 1
+  });
+  await page.setContent(html, { waitUntil: "networkidle0" });
+  await validateRenderedPage(page, view);
+  return page.screenshot({
+    type: "png",
+    fullPage: false,
+    captureBeyondViewport: false
+  });
 }
 
 async function publishGeneration(
@@ -1114,17 +1104,25 @@ async function publishGeneration(
 async function runScheduled(env: Env, now: Date): Promise<void> {
   const configuration = await loadConfiguration(env);
   const configuredRetryDelay = Number(env.GENERATION_RETRY_MINUTES);
-  await runScheduledWeatherGeneration(
-    {
-      now,
-      configuration,
-      maximumImageBytes: effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES),
-      retryDelayMinutes:
-        Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
-          ? configuredRetryDelay
-          : 15
-    },
-    {
+  const session: {
+    browser?: Awaited<ReturnType<typeof puppeteer.launch>>;
+  } = {};
+  const scheduledBrowser = async () => {
+    session.browser ??= await puppeteer.launch(env.BROWSER);
+    return session.browser;
+  };
+  try {
+    await runScheduledWeatherGeneration(
+      {
+        now,
+        configuration,
+        maximumImageBytes: effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES),
+        retryDelayMinutes:
+          Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
+            ? configuredRetryDelay
+            : 15
+      },
+      {
       async claimSlot(slotKey) {
         const result = await env.DB.prepare(
           `INSERT OR IGNORE INTO scheduled_generation_slots
@@ -1170,7 +1168,9 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
               headers: { "X-Gmail-Processor-Key": env.GMAIL_PROCESSOR_KEY }
             }
           );
-          if (!response.ok) throw new Error("Gmail processor unavailable");
+          if (!response.ok) {
+            throw new Error("Gmail processor unavailable");
+          }
         } catch {
           const code =
             "GMAIL_PROCESSOR_UNREACHABLE" satisfies OperationalCode;
@@ -1390,10 +1390,14 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .all<{ account_id: "mom" | "dad" }>();
         return rows.results.map(({ account_id }) => ({ accountId: account_id }));
       },
-      renderDailyBrief: (model) => renderDailyBrief(env, model),
-      renderCalendarView: (model) => renderCalendarView(env, model),
-      renderLunchView: (model) => renderLunchView(env, model),
-      renderNoticesView: (model) => renderNoticesView(env, model),
+      renderDailyBrief: async (model) =>
+        renderDailyBrief(await scheduledBrowser(), model),
+      renderCalendarView: async (model) =>
+        renderCalendarView(await scheduledBrowser(), model),
+      renderLunchView: async (model) =>
+        renderLunchView(await scheduledBrowser(), model),
+      renderNoticesView: async (model) =>
+        renderNoticesView(await scheduledBrowser(), model),
       publish: (publication) => publishGeneration(env, publication),
       async recordSourceFailure(slotKey, source, code, message) {
         void message;
@@ -1425,8 +1429,11 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           ).bind(now.toISOString(), code, code, retryAt, slotKey)
         ]);
       }
-    }
-  );
+      }
+    );
+  } finally {
+    await session.browser?.close();
+  }
 }
 
 export default {
@@ -1444,6 +1451,9 @@ export default {
       }
       const identity = await authorizeAdministration(request, env);
       if (identity instanceof Response) return identity;
+      if (await administrationBodyTooLarge(request)) {
+        return json({ error: "Administration request is too large" }, 413);
+      }
       if (
         url.pathname === "/admin" ||
         url.pathname === "/admin/app.js" ||
@@ -1452,14 +1462,27 @@ export default {
         url.pathname === "/admin/gmail-review" ||
         url.pathname.startsWith("/admin/gmail-review/")
       ) {
-        return handleAuthorizedAdministration(request, env, identity);
-      }
-      if (identity.role !== "administrator") {
-        return json({ error: "Administrator role required" }, 403);
+        return handleAuthorizedAdministration(
+          request,
+          {
+            ...env,
+            validateCalendarSelection: (accounts) =>
+              validateNewSelectedCalendars(env, accounts)
+          },
+          identity
+        );
       }
       const headers = new Headers(request.headers);
       headers.set("X-Administration-Role", identity.role);
       request = new Request(request, { headers });
+      const reviewerReadable =
+        request.method === "GET" &&
+        (url.pathname === "/admin/weather-configuration" ||
+          url.pathname === "/admin/calendar-configuration" ||
+          url.pathname === "/admin/gmail-configuration");
+      if (identity.role !== "administrator" && !reviewerReadable) {
+        return json({ error: "Administrator role required" }, 403);
+      }
     }
     if (!url.pathname.startsWith("/admin") && isAdministrationHost(request, env)) {
       return json({ error: "Not found" }, 404);

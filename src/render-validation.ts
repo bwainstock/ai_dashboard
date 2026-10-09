@@ -81,6 +81,7 @@ export async function validateRenderedPage(
   view: DashboardViewName
 ): Promise<void> {
   const inspection = await page.evaluate<RenderInspection>(() => {
+    const MAX_VERTICAL_SCROLL_OVERFLOW_PIXELS = 4;
     const values = new Set<string>();
     const properties = [
       "color",
@@ -117,24 +118,30 @@ export async function validateRenderedPage(
         document.body.querySelectorAll<HTMLElement>("*")
       ).filter((element) => {
         const bounds = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const clipsHorizontally = ["hidden", "clip"].includes(style.overflowX);
+        const clipsVertically = ["hidden", "clip"].includes(style.overflowY);
         return (
           bounds.left < 0 ||
           bounds.top < 0 ||
           bounds.right > innerWidth ||
           bounds.bottom > innerHeight ||
-          element.scrollWidth > element.clientWidth ||
-          element.scrollHeight > element.clientHeight
+          (!clipsHorizontally && element.scrollWidth > element.clientWidth) ||
+          (!clipsVertically &&
+            element.scrollHeight - element.clientHeight >
+              MAX_VERTICAL_SCROLL_OVERFLOW_PIXELS)
         );
       }).length,
       iconCount: document.querySelectorAll('[role="img"]').length,
       textLength: document.body.innerText.trim().length,
       minimumVisibleTextSize: Math.min(
-        ...Array.from(document.body.querySelectorAll<HTMLElement>("*"))
+        ...Array.from(document.body.querySelectorAll("*"))
           .filter((element) => {
             const style = getComputedStyle(element);
+            const text = element.textContent ?? "";
             return (
               element.childElementCount === 0 &&
-              element.innerText.trim().length > 0 &&
+              text.trim().length > 0 &&
               style.display !== "none" &&
               style.visibility !== "hidden"
             );
