@@ -927,18 +927,19 @@ async function generateFixture(request: Request, env: Env): Promise<Response> {
   const generationId = `${timestamp}-${randomToken(5)}`;
   const filename = `daily-brief-${generationId}.png`;
   const objectKey = `generations/${generationId}/daily-brief.png`;
-
-  await env.IMAGES.put(objectKey, screenshot, {
-    httpMetadata: { contentType: "image/png" },
-    customMetadata: { width: "800", height: "480", palette: "monochrome" }
+  await publishGeneration(env, {
+    generationId,
+    slotKey: generationId,
+    generatedAt: new Date().toISOString(),
+    views: [
+      {
+        viewType: "daily_brief",
+        filename,
+        objectKey,
+        image: screenshot
+      }
+    ]
   });
-  await env.DB.prepare(
-    `INSERT INTO render_generations
-       (filename, object_key, byte_size, width, height, published_at)
-     VALUES (?, ?, ?, 800, 480, CURRENT_TIMESTAMP)`
-  )
-    .bind(filename, objectKey, screenshot.byteLength)
-    .run();
 
   return json(
     {
@@ -1053,7 +1054,13 @@ async function renderNoticesView(
   }
 }
 
-async function publishGeneration(env: Env, publication: Publication) {
+async function publishGeneration(
+  env: Env,
+  publication: Pick<
+    Publication,
+    "generationId" | "slotKey" | "views" | "generatedAt"
+  >
+) {
   await Promise.all(
     publication.views.map((view) =>
       env.IMAGES.put(view.objectKey, view.image, {
@@ -1425,6 +1432,12 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (
+      request.method === "POST" &&
+      url.pathname === "/admin/fixture-generations"
+    ) {
+      return generateFixture(request, env);
+    }
     if (url.pathname.startsWith("/admin")) {
       if (!isAdministrationHost(request, env)) {
         return json({ error: "Not found" }, 404);
@@ -1459,12 +1472,6 @@ export default {
     }
     if (request.method === "GET" && url.pathname.startsWith("/images/")) {
       return image(request, env, url.pathname.slice("/images/".length));
-    }
-    if (
-      request.method === "POST" &&
-      url.pathname === "/admin/fixture-generations"
-    ) {
-      return generateFixture(request, env);
     }
     if (
       (request.method === "GET" || request.method === "PUT") &&
