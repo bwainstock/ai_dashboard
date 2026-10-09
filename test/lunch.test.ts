@@ -7,6 +7,134 @@ import {
 } from "../src/lunch";
 
 describe("MealViewer lunch adapter", () => {
+  test("requests the dated school feed and normalizes the current response shape", async () => {
+    const request = vi.fn().mockResolvedValue(
+      Response.json({
+        menuSchedules: [
+          {
+            dateInformation: { dateFull: "2026-10-07T00:00:00" },
+            menuBlocks: [
+              {
+                blockName: "Lunch",
+                blackedOut: false,
+                noScheduleText: null,
+                cafeteriaLineList: {
+                  data: [
+                    {
+                      foodItemList: {
+                        data: [
+                          {
+                            item_Name: "  Cheese   Pizza  ",
+                            item_Type: "ENTREES"
+                          },
+                          {
+                            item_Name: "Garden Salad",
+                            item_Type: "VEGETABLES/BEANS"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            dateInformation: { dateFull: "2026-10-08T00:00:00" },
+            menuBlocks: [
+              {
+                blockName: "Lunch",
+                blackedOut: true,
+                noScheduleText: "No school",
+                cafeteriaLineList: { data: [] }
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    const snapshot = await fetchMealViewerMenu(
+      "https://example.test/api/v4/school/example-school",
+      request,
+      {
+        now: new Date("2026-10-07T17:30:00.000Z"),
+        timezone: "America/Los_Angeles"
+      }
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      "https://example.test/api/v4/school/example-school/10-05-2026/10-16-2026/1",
+      expect.objectContaining({
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal)
+      })
+    );
+    expect(snapshot).toEqual({
+      days: [
+        {
+          date: "2026-10-07",
+          status: "menu",
+          entrees: ["Cheese Pizza"]
+        },
+        { date: "2026-10-08", status: "closed", entrees: [] }
+      ]
+    });
+  });
+
+  test("rejects impossible school dates and malformed discarded item names", async () => {
+    const response = {
+      menuSchedules: [
+        {
+          dateInformation: { dateFull: "2026-02-30T00:00:00" },
+          menuBlocks: [
+            {
+              blockName: "Lunch",
+              blackedOut: false,
+              cafeteriaLineList: {
+                data: [
+                  {
+                    foodItemList: {
+                      data: [{ item_Name: "", item_Type: "VEGETABLES/BEANS" }]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    };
+
+    await expect(
+      fetchMealViewerMenu(
+        "https://example.test/api/v4/school/example-school",
+        vi.fn().mockResolvedValue(Response.json(response)),
+        { now: new Date("2026-02-23T12:00:00.000Z") }
+      )
+    ).rejects.toEqual(
+      new LunchAdapterError(
+        "LUNCH_INVALID_RESPONSE",
+        "MealViewer day has an invalid date"
+      )
+    );
+
+    response.menuSchedules[0].dateInformation.dateFull =
+      "2026-02-23T00:00:00";
+    await expect(
+      fetchMealViewerMenu(
+        "https://example.test/api/v4/school/example-school",
+        vi.fn().mockResolvedValue(Response.json(response)),
+        { now: new Date("2026-02-23T12:00:00.000Z") }
+      )
+    ).rejects.toEqual(
+      new LunchAdapterError(
+        "LUNCH_INVALID_RESPONSE",
+        "MealViewer menu item has an invalid name"
+      )
+    );
+  });
+
   test("retains only normalized school dates, entree names, and reliable closures", async () => {
     const request = vi.fn().mockResolvedValue(
       Response.json({
@@ -73,6 +201,44 @@ describe("MealViewer lunch adapter", () => {
     await expect(
       fetchMealViewerMenu("https://example.test/api/v4/menu", request)
     ).resolves.toEqual({ days: [] });
+  });
+
+  test("recovers an obsolete static menu configuration through the dated endpoint", async () => {
+    const request = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith("/menu")
+        ? new Response("not found", { status: 404 })
+        : Response.json({ menuSchedules: [] })
+    );
+
+    await expect(
+      fetchMealViewerMenu(
+        "https://example.test/api/v4/school/example-school/menu",
+        request,
+        {
+          now: new Date("2026-10-07T17:30:00.000Z"),
+          timezone: "America/Los_Angeles",
+          timeoutMilliseconds: 2_000
+        }
+      )
+    ).resolves.toEqual({ days: [] });
+    expect(request).toHaveBeenCalledWith(
+      "https://example.test/api/v4/school/example-school/10-05-2026/10-16-2026/1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  test("HTTP failures use the canonical Lunch adapter code", async () => {
+    await expect(
+      fetchMealViewerMenu(
+        "https://example.test/api/v4/school/example-school",
+        vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 }))
+      )
+    ).rejects.toEqual(
+      new LunchAdapterError(
+        "LUNCH_UPSTREAM_HTTP",
+        "MealViewer returned HTTP 503"
+      )
+    );
   });
 
   test("schema drift is an explicit adapter failure rather than an empty menu", async () => {

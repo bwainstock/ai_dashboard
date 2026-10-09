@@ -3,13 +3,14 @@
 ## MealViewer boundary
 
 `src/lunch.ts` is the replaceable boundary around the undocumented MealViewer
-`/api/v4` integration. The URL is deployment configuration in
-`MEALVIEWER_MENU_URL`; callers and renderers do not depend on the upstream
-payload.
+`/api/v4` integration. `MEALVIEWER_MENU_URL` configures the school endpoint;
+the adapter adds a bounded current-and-next-school-week date range and the
+language identifier required by MealViewer. Callers and renderers do not
+depend on the upstream payload.
 
-The adapter requires the observed `menuSchedules` contract, validates every
-school date, closure flag, menu block, category, and item name, then returns
-only:
+The adapter accepts the legacy `menuSchedules` contract and the current nested
+`dateInformation` / `cafeteriaLineList` contract. It validates every school
+date, blackout flag, menu block, item type, and item name, then returns only:
 
 - normalized `YYYY-MM-DD` school dates;
 - normalized entree names from Lunch blocks; and
