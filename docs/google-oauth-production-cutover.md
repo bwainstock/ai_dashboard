@@ -127,7 +127,7 @@ The agent can:
    above and that both Workers use the same Google client credentials.
 2. Confirm that no repository change is scheduled during the cutover.
 3. Record privacy-safe baseline and acceptance evidence from the protected
-   administration/status surfaces: account labels, connection states,
+   administration/status surfaces: Household Labels, connection states,
    freshness timestamps, fixed error codes and generation identifiers only.
 4. Guide the administrator through the sequence and stop after any failed
    gate.
@@ -161,8 +161,9 @@ Do not start until all of the following are true:
   OAuth-revoked incident. Record timestamps and fixed status codes, not event
   titles, email subjects, addresses, sender names, tokens or message IDs.
 - Both account holders are available during the change window.
-- The window is between scheduled generations and leaves enough time to
-  validate one account before touching the other.
+- The plan allows one scheduled generation after reconnecting each account, so
+  Calendar and Gmail can both be validated before reconnecting the other
+  account.
 - The live OAuth client ID matches the Worker secrets; the exact production
   callback is the registered HTTPS redirect URI.
 - Gmail API and Calendar API are enabled, and the Data Access page declares
@@ -182,7 +183,7 @@ Do not start until all of the following are true:
 
 Every gate is fail-closed. Do not start `dad` until `mom` has passed.
 
-1. **Agent — baseline.** Capture the protected status for both labels:
+1. **Agent — baseline.** Capture the protected status for both Household Labels:
    connected state, Calendar/Gmail freshness, current generation ID and active
    fixed-code incidents. Confirm the next scheduled generation time.
 2. **Administrator — final Console review.** In Google Auth Platform, confirm
@@ -205,22 +206,30 @@ Every gate is fail-closed. Do not start `dad` until `mom` has passed.
    offline access; Google documents offline access as the mechanism that lets a
    web-server app refresh access after the user leaves
    ([Google: Web-server offline access](https://developers.google.com/identity/protocols/oauth2/web-server#offline)).
-6. **Agent — validate `mom`.** Require a successful callback and connected
-   state, then refresh `mom` Calendar discovery. Confirm the configured
-   calendar count/labels are unchanged; do not record provider IDs or event
-   content. If the callback fails, the repository leaves the previous token in
-   place: stop and use the rollback section.
-7. **Administrator and Dad account holder — reconnect `dad`.** Repeat the same
-   consent review and reconnect only after `mom` passes.
-8. **Agent — validate `dad`.** Require connected state, successful Calendar
-   discovery, and unchanged configured calendar count/labels.
-9. **Agent — production-flow gate.** Allow the next due generation to run. The
-   Gmail Worker is invoked only immediately before that due generation, and
-   Calendar refresh occurs during generation. Require one newly published
-   complete generation with fresh Calendar status, a successful Gmail
-   last-processed timestamp for both accounts, and no new OAuth or repeated
-   Gmail-failure incident.
-10. **Administrator — close.** Confirm both grants appear under each account's
+6. **Agent — validate `mom` Calendar.** Require a successful callback and
+   connected state, then refresh `mom` Calendar discovery. Confirm the Selected
+   Calendar count and Calendar Labels are unchanged; do not record provider
+   IDs or event content. If the callback fails, the repository leaves the
+   previous token in place: stop and use the rollback section.
+7. **Agent — validate `mom` Gmail before touching `dad`.** Allow the next due
+   generation to run. The Gmail Worker is invoked only immediately before that
+   due generation, and Calendar refresh occurs during generation. Require a
+   newly published complete generation, fresh Calendar status, an advanced
+   Gmail last-processed timestamp for `mom`, and no new OAuth or repeated
+   Gmail-failure incident. Google permits users to grant only some scopes from
+   a multi-scope request, so successful Calendar discovery alone does not prove
+   that `gmail.readonly` was granted
+   ([Google OAuth policy: handle consent for multiple scopes](https://developers.google.com/identity/protocols/oauth2/policies#handle-consent-for-multiple-scopes)).
+8. **Administrator and Dad account holder — reconnect `dad`.** Repeat the same
+   consent review only after both `mom` flows pass.
+9. **Agent — validate `dad` Calendar.** Require connected state, successful
+   Calendar discovery, and unchanged Selected Calendar count and Calendar
+   Labels.
+10. **Agent — validate `dad` Gmail.** Allow the next due generation to run and
+    require another newly published complete generation, fresh Calendar
+    status, an advanced Gmail last-processed timestamp for `dad`, and no new
+    OAuth or repeated Gmail-failure incident.
+11. **Administrator — close.** Confirm both grants appear under each account's
     Google third-party connections and retain only the privacy-safe cutover
     evidence described below.
 
@@ -230,8 +239,8 @@ The cutover is accepted only when:
 
 - `mom` and `dad` both report connected, with no cleanup pending or reconnect
   required.
-- Calendar discovery succeeds independently for each account and the saved
-  calendar counts and administrator-defined labels are unchanged.
+- Calendar discovery succeeds independently for each account and the Selected
+  Calendar counts and Calendar Labels are unchanged.
 - A post-cutover generation has a new generation ID and a fresh Calendar
   timestamp; the prior complete generation remained available until atomic
   publication.
@@ -240,7 +249,7 @@ The cutover is accepted only when:
   `GMAIL_PROCESSING_REPEATED_FAILURE`, or processor-unreachable condition.
 - The shared display still shows only the repository's minimized Calendar and
   Household Notice output. A private Gmail result, if naturally present,
-  remains only a `Mom` or `Dad` Private Notice marker.
+  remains only a `Mom` or `Dad` Private Notice Marker.
 - Evidence contains no account email, token, Google authorization code,
   calendar provider ID, event title/location, Gmail sender/subject/body,
   message/thread ID, prompt, model output or screenshot of household content.
@@ -277,6 +286,10 @@ rollback.**
 - **One account passes and the other fails:** retain the passing Production
   grant, stop, and remediate only the failing account. Do not disconnect the
   passing account and do not republish or rotate credentials.
+- **Calendar succeeds but Gmail fails for one account:** stop before
+  reconnecting the other account. Treat the token as missing or lacking usable
+  `gmail.readonly` authorization, correct the account's consent, and repeat
+  that account's Calendar and Gmail gates.
 - **Post-cutover Calendar/Gmail generation fails:** preserve the last complete
   published generation and repository stale fallback, inspect only fixed-code
   protected status, and reconnect the affected account. Do not weaken scopes,
