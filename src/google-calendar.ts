@@ -26,6 +26,16 @@ interface GoogleEventsPage {
   nextPageToken?: string;
 }
 
+function discoveredCalendarLabel(value: string | undefined): string {
+  const sanitized = (value ?? "Calendar")
+    .replaceAll(/[^\p{L}\p{N} &'’.-]+/gu, " ")
+    .replaceAll(/\s+/gu, " ")
+    .trim()
+    .slice(0, 40)
+    .trim();
+  return sanitized || "Calendar";
+}
+
 export interface GoogleCalendarFetchInput {
   accessToken: string;
   accountId: string;
@@ -33,6 +43,7 @@ export interface GoogleCalendarFetchInput {
   calendarIds: string[];
   timeMin: string;
   timeMax: string;
+  pageBudget?: { remaining: number };
 }
 
 function responseStatus(event: GoogleEvent): CalendarResponseStatus {
@@ -49,6 +60,14 @@ export async function fetchGoogleCalendarEvents(
   for (const calendarId of input.calendarIds) {
     let pageToken: string | undefined;
     do {
+      if (input.pageBudget) {
+        if (input.pageBudget.remaining <= 0) {
+          throw Object.assign(new Error("Calendar page budget exceeded"), {
+            code: "CALENDAR_PAGE_BUDGET_EXCEEDED"
+          });
+        }
+        input.pageBudget.remaining -= 1;
+      }
       const url = new URL(
         `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
       );
@@ -187,15 +206,36 @@ export async function listGoogleCalendars(
   accessToken: string,
   request: Fetch = fetch
 ): Promise<Array<{ id: string; label: string }>> {
-  const response = await request(
-    "https://www.googleapis.com/calendar/v3/users/me/calendarList?fields=items(id,summary,deleted)",
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!response.ok) throw new Error("Unable to list Google calendars");
-  const result = await response.json<{
-    items?: Array<{ id: string; summary?: string; deleted?: boolean }>;
-  }>();
-  return (result.items ?? [])
-    .filter(({ deleted }) => !deleted)
-    .map(({ id, summary }) => ({ id, label: summary ?? "Calendar" }));
+  const calendars: Array<{ id: string; label: string }> = [];
+  let pageToken: string | undefined;
+  for (let pageNumber = 0; pageNumber < 20; pageNumber += 1) {
+    const url = new URL(
+      "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+    );
+    url.search = new URLSearchParams({
+      fields: "items(id,summary,deleted),nextPageToken",
+      ...(pageToken ? { pageToken } : {})
+    }).toString();
+    const headers = new Headers();
+    headers.set("Authorization", "Bearer " + accessToken);
+    const response = await request(url.toString(), { headers });
+    if (!response.ok) throw new Error("Unable to list Google calendars");
+    const result = await response.json<{
+      items?: Array<{ id: string; summary?: string; deleted?: boolean }>;
+      nextPageToken?: string;
+    }>();
+    calendars.push(
+      ...(result.items ?? [])
+        .filter(({ deleted }) => !deleted)
+        .map(({ id, summary }) => ({
+          id,
+          label: discoveredCalendarLabel(summary)
+        }))
+    );
+    pageToken = result.nextPageToken;
+    if (!pageToken) return calendars;
+  }
+  throw Object.assign(new Error("Calendar discovery page limit exceeded"), {
+    code: "CALENDAR_DISCOVERY_PAGE_LIMIT"
+  });
 }

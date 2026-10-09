@@ -1,4 +1,13 @@
 import { validateProtectedReviewCorrection } from "./gmail";
+import {
+  type CalendarConfigurationAccount,
+  type CalendarSelectionValidationFailure,
+  calendarSelectionValidationError,
+  normalizeCalendarConfiguration,
+  normalizeWeatherConfiguration,
+  replaceCalendarConfiguration,
+  replaceWeatherConfiguration
+} from "./administration-configuration";
 import { noticeLifecycle } from "./notice-lifecycle";
 import {
   statusSafeOperationalCode,
@@ -11,6 +20,9 @@ export interface AdministrationEnv {
   DB: D1Database;
   ADMIN_ORIGIN?: string;
   NOTICE_GRACE_DAYS?: string;
+  validateCalendarSelection?(
+    accounts: CalendarConfigurationAccount[]
+  ): Promise<CalendarSelectionValidationFailure | null>;
 }
 
 interface AdministrationUser {
@@ -125,6 +137,9 @@ async function loadConfiguration(env: AdministrationEnv) {
         connected:
           account.oauth_status === "connected" &&
           account.gmail_disconnect_state == null,
+        ...(account.oauth_status === "revoked"
+          ? { reconnectRequired: true }
+          : {}),
         ...(account.gmail_disconnect_state == null
           ? {}
           : { cleanupPending: true }),
@@ -137,56 +152,6 @@ async function loadConfiguration(env: AdministrationEnv) {
       }))
     }
   };
-}
-
-function validSlots(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    new Set(value).size === value.length &&
-    value.every(
-      (slot) =>
-        typeof slot === "string" &&
-        /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(slot)
-    )
-  );
-}
-
-function validGoogleAccounts(
-  value: unknown
-): value is Array<{
-  accountId: "mom" | "dad";
-  displayLabel: string;
-  calendars: Array<{ id: string; label: string }>;
-}> {
-  if (!Array.isArray(value) || value.length !== 2) return false;
-  const ids = new Set(value.map((account: { accountId?: unknown }) => account.accountId));
-  return (
-    ids.size === 2 &&
-    ids.has("mom") &&
-    ids.has("dad") &&
-    value.every(
-      (account: {
-        accountId?: unknown;
-        displayLabel?: unknown;
-        calendars?: unknown;
-      }) =>
-        (account.accountId === "mom" || account.accountId === "dad") &&
-        typeof account.displayLabel === "string" &&
-        account.displayLabel.trim().length >= 1 &&
-        account.displayLabel.trim().length <= 20 &&
-        !account.displayLabel.includes("@") &&
-        Array.isArray(account.calendars) &&
-        account.calendars.every(
-          (calendar: { id?: unknown; label?: unknown }) =>
-            typeof calendar.id === "string" &&
-            calendar.id.length > 0 &&
-            typeof calendar.label === "string" &&
-            calendar.label.length > 0 &&
-            calendar.label.length <= 80
-        )
-    )
-  );
 }
 
 async function configuration(
@@ -207,57 +172,35 @@ async function configuration(
     } catch {
       return json({ error: "Invalid configuration" }, 400);
     }
-    const statements: D1PreparedStatement[] = [];
-    if (input.weather) {
-      const { latitude, longitude, slots } = input.weather;
-      if (
-        typeof latitude !== "number" ||
-        latitude < -90 ||
-        latitude > 90 ||
-        typeof longitude !== "number" ||
-        longitude < -180 ||
-        longitude > 180 ||
-        !validSlots(slots)
-      ) {
-        return json({ error: "Invalid weather configuration" }, 400);
-      }
-      statements.push(
-        env.DB.prepare(
-          `UPDATE dashboard_configuration
-           SET latitude = ?, longitude = ?, slots_json = ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = 1`
-        ).bind(latitude, longitude, JSON.stringify([...slots].sort()))
+    const weather = input.weather
+      ? normalizeWeatherConfiguration(input.weather)
+      : null;
+    const accounts = input.google
+      ? normalizeCalendarConfiguration(input.google.accounts)
+      : null;
+    if (input.weather && !weather) {
+      return json({ error: "Invalid weather configuration" }, 400);
+    }
+    if (input.google && !accounts) {
+      return json({ error: "Invalid Google configuration" }, 400);
+    }
+    if (accounts && env.validateCalendarSelection) {
+      const validationError = calendarSelectionValidationError(
+        await env.validateCalendarSelection(accounts)
       );
-    }
-    if (input.google) {
-      if (!validGoogleAccounts(input.google.accounts)) {
-        return json({ error: "Invalid Google configuration" }, 400);
-      }
-      for (const account of input.google.accounts) {
-        statements.push(
-          env.DB.prepare(
-            `UPDATE calendar_accounts
-             SET display_label = ?, updated_at = CURRENT_TIMESTAMP
-             WHERE account_id = ?`
-          ).bind(account.displayLabel.trim(), account.accountId),
-          env.DB.prepare(
-            "DELETE FROM selected_calendars WHERE account_id = ?"
-          ).bind(account.accountId),
-          ...account.calendars.map((calendar) =>
-            env.DB.prepare(
-              `INSERT INTO selected_calendars
-                 (account_id, calendar_id, display_label)
-               VALUES (?, ?, ?)`
-            ).bind(account.accountId, calendar.id, calendar.label)
-          )
-        );
+      if (validationError) {
+        return json({ error: validationError.error }, validationError.status);
       }
     }
-    if (statements.length === 0) {
+    if (!weather && !accounts) {
       return json({ error: "Invalid configuration" }, 400);
     }
-    await env.DB.batch(statements);
+    if (input.weather) {
+      await replaceWeatherConfiguration(env.DB, weather);
+    }
+    if (input.google) {
+      await replaceCalendarConfiguration(env.DB, accounts);
+    }
   }
   try {
     return json(await loadConfiguration(env));
@@ -514,24 +457,49 @@ async function protectedGmailReview(
 }
 
 function administrationPage(role: AdministrationRole): Response {
+  const administratorControls =
+    role === "administrator"
+      ? `<p><button type="button" data-connect="mom">Connect or reconnect Mom Google</button>
+<button type="button" data-disconnect="mom">Disconnect Mom Google</button></p>
+<p><button type="button" data-connect="dad">Connect or reconnect Dad Google</button>
+<button type="button" data-disconnect="dad">Disconnect Dad Google</button></p>`
+      : "";
+  const disabled = role === "administrator" ? "" : " disabled";
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Family Dashboard administration</title>
-<style>body{font:16px system-ui;max-width:60rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.75rem 0}input,textarea,button{font:inherit}textarea{width:100%;min-height:10rem}pre{white-space:pre-wrap;background:#f3f3f3;padding:1rem}fieldset{margin:1rem 0}</style>
-</head><body data-role="${role}"><main><h1>Family Dashboard administration</h1>
+<style>body{font:16px system-ui;max-width:64rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.75rem 0}input,select,button{font:inherit}pre{white-space:pre-wrap;background:#f3f3f3;padding:1rem}fieldset,section{margin:1rem 0;padding:1rem}.calendar-row,.sender-row{display:grid;grid-template-columns:auto 1fr 1fr;gap:.5rem;align-items:center}.muted{color:#555}.banner{padding:.75rem;background:#eef6ff}</style>
+</head><body data-role="${role}" data-read-only="${role !== "administrator"}"><main><h1>Family Dashboard administration</h1>
 <p>Signed in with the <strong>${role}</strong> role.</p>
-<section><h2>Configuration</h2><form id="configuration">
-<fieldset><legend>Weather and refresh slots</legend>
-<label>Latitude <input name="latitude" type="number" step="any" required></label>
-<label>Longitude <input name="longitude" type="number" step="any" required></label>
-<label>Refresh times <input name="slots" required></label></fieldset>
-<label>Google accounts, labels, and selected calendars
-<textarea name="google" spellcheck="false" required></textarea></label>
-<p><button type="button" data-connect="mom">Connect Mom Google</button>
-<button type="button" data-connect="dad">Connect Dad Google</button>
-<button type="button" data-disconnect="mom">Disconnect Mom Google</button>
-<button type="button" data-disconnect="dad">Disconnect Dad Google</button></p>
-<button type="submit">Save configuration</button> <output id="save-result"></output>
+<p id="oauth-banner" class="banner" hidden></p>
+<h2>Configuration</h2>
+<section><h2>Weather</h2><form id="weather-form">
+<label>Latitude <input name="latitude" type="number" step="any" required${disabled}></label>
+<label>Longitude <input name="longitude" type="number" step="any" required${disabled}></label>
+<label>Refresh times <input name="slots" required${disabled}></label>
+<button type="submit"${disabled}>Save weather</button> <output></output>
+</form></section>
+<section><h2>Household accounts and calendars</h2>
+<p class="muted">Household Label is device-visible. Calendar Label is administrator-only.</p>
+${(["mom", "dad"] as const)
+  .map(
+    (accountId) => `<form class="calendar-form" data-account="${accountId}">
+<h3>${accountId === "mom" ? "Mom" : "Dad"} account</h3>
+<p data-account-status>Loading…</p>
+<label>Household Label <input name="householdLabel" maxlength="20" required${disabled}></label>
+<label>Filter Discovered Calendars <input name="filter" type="search"></label>
+<p><button type="button" data-refresh="${accountId}"${disabled}>Refresh Discovered Calendars</button></p>
+<p data-discovery-status></p><div data-calendars></div>
+<button type="submit"${disabled}>Save ${accountId === "mom" ? "Mom" : "Dad"} calendars</button> <output></output>
+</form>`
+  )
+  .join("")}
+${administratorControls}</section>
+<section><h2>Gmail Sender-Domain Allowlist</h2><form id="gmail-form">
+<p>Domains match the exact domain and its subdomains. An empty list is allowed, but no Gmail senders will qualify.</p>
+<div id="gmail-accounts"></div><div id="senders"></div>
+<p><button type="button" id="add-sender"${disabled}>Add domain</button></p>
+<button type="submit"${disabled}>Save Sender-Domain Allowlist</button> <output></output>
 </form></section>
 <section><h2>Operational status</h2><pre id="status">Loading…</pre></section>
 <section><h2>Protected Gmail review</h2><pre id="gmail-review">Loading…</pre></section>
@@ -548,17 +516,36 @@ function administrationPage(role: AdministrationRole): Response {
 }
 
 function administrationScript(): Response {
-  const script = `const form=document.querySelector("#configuration");
+  const script = `const weatherForm=document.querySelector("#weather-form");
+const gmailForm=document.querySelector("#gmail-form");
 const statusBox=document.querySelector("#status");
 const reviewBox=document.querySelector("#gmail-review");
-const result=document.querySelector("#save-result");
 const role=document.body.dataset.role;
+const dirty=new Set();
+const discovered={mom:[],dad:[]};
+const discoveryState={mom:"not-attempted",dad:"not-attempted"};
+const calendarDraft={mom:new Map(),dad:new Map()};
 async function read(url){const response=await fetch(url,{headers:{accept:"application/json"}});if(!response.ok)throw new Error("Request failed");return response.json()}
-async function load(){const [configuration,status,review]=await Promise.all([read("/admin/configuration"),read("/admin/status"),read("/admin/gmail-review")]);form.latitude.value=configuration.weather.latitude;form.longitude.value=configuration.weather.longitude;form.slots.value=configuration.weather.slots.join(", ");form.google.value=JSON.stringify(configuration.google,null,2);statusBox.textContent=JSON.stringify(status,null,2);reviewBox.textContent=JSON.stringify(review,null,2);if(role!=="administrator")for(const control of form.elements)control.disabled=true}
-form.addEventListener("submit",async event=>{event.preventDefault();result.textContent="Saving…";try{const google=JSON.parse(form.google.value);const response=await fetch("/admin/configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({weather:{latitude:Number(form.latitude.value),longitude:Number(form.longitude.value),slots:form.slots.value.split(",").map(value=>value.trim()).filter(Boolean)},google})});if(!response.ok)throw new Error("Save failed");result.textContent="Saved";await load()}catch{result.textContent="Configuration was not saved"}});
-for(const button of document.querySelectorAll("[data-connect]"))button.addEventListener("click",async()=>{try{const value=await read("/admin/calendar/oauth/start?account="+button.dataset.connect);location.assign(value.authorizationUrl)}catch{result.textContent="Google connection could not be started"}});
-for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!confirm("Revoke Google access and permanently delete retained account data?"))return;result.textContent="Disconnecting…";try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error("Disconnect failed");const body=await response.json();result.textContent=body.cleanupPending?"Google access revoked; retained-data cleanup is pending":"Disconnected and deleted retained data";await load()}catch{result.textContent="Google account was not disconnected"}});
-load().catch(()=>{statusBox.textContent="Status unavailable"});`;
+function safeNavigate(message){return dirty.size===0||confirm(message)}
+function markDirty(event){dirty.add(event.currentTarget.id||event.currentTarget.dataset.account)}
+function senderRow(sender={domain:"",kind:"school"}){const row=document.createElement("div");row.className="sender-row";row.innerHTML='<button type="button" data-remove aria-label="Remove domain">Remove</button><input name="domain" placeholder="school.example.org" value="'+sender.domain+'"><select name="kind"><option value="school">school</option><option value="childcare">childcare</option></select>';row.querySelector("select").value=sender.kind;if(role!=="administrator")for(const control of row.querySelectorAll("input,select,button"))control.disabled=true;row.querySelector("[data-remove]").addEventListener("click",()=>{row.remove();dirty.add("gmail-form")});return row}
+function renderSenders(senders){const box=document.querySelector("#senders");box.replaceChildren(...senders.map(senderRow))}
+function renderCalendars(accountId){const form=document.querySelector('[data-account="'+accountId+'"]');const filter=form.filter.value.toLocaleLowerCase();const draft=calendarDraft[accountId];const byId=new Map(discovered[accountId].map(item=>[item.id,item]));for(const [id,item] of draft)if(item.selected&&!byId.has(id))byId.set(id,{id,label:item.label,unavailable:discoveryState[accountId]==="succeeded"});const rows=[...byId.values()].filter(item=>item.label.toLocaleLowerCase().includes(filter)).sort((a,b)=>Number(draft.get(b.id)?.selected)-Number(draft.get(a.id)?.selected)||a.label.localeCompare(b.label,undefined,{sensitivity:"base"}));const box=form.querySelector("[data-calendars]");box.replaceChildren(...rows.map(item=>{const row=document.createElement("div");row.className="calendar-row";const state=draft.get(item.id)??{selected:false,label:item.label};row.innerHTML='<input type="checkbox" name="calendar" value="'+item.id+'"><span>'+item.label+(item.unavailable?" — Unavailable":"")+'</span><label>Calendar Label <input name="calendarLabel" maxlength="40" value="'+state.label+'"></label>';const checkbox=row.querySelector('[name="calendar"]');const label=row.querySelector('[name="calendarLabel"]');checkbox.checked=state.selected;checkbox.addEventListener("input",()=>{draft.set(item.id,{selected:checkbox.checked,label:label.value});dirty.add(accountId)});label.addEventListener("input",()=>{draft.set(item.id,{selected:checkbox.checked,label:label.value});dirty.add(accountId)});if(role!=="administrator"){checkbox.disabled=true;label.disabled=true}return row}));}
+async function loadWeatherConfiguration(){const weather=await read("/admin/weather-configuration");weatherForm.latitude.value=weather.latitude;weatherForm.longitude.value=weather.longitude;weatherForm.slots.value=weather.slots.join(", ")}
+async function loadCalendarConfiguration(accountId){const calendar=await read("/admin/calendar-configuration");for(const account of calendar.accounts){if(accountId&&account.accountId!==accountId)continue;const form=document.querySelector('[data-account="'+account.accountId+'"]');form.householdLabel.value=account.displayLabel;form.querySelector("[data-account-status]").textContent=account.cleanupPending?"Cleanup pending":account.reconnectRequired?"Reconnect required":account.connected?"Connected":"Disconnected";calendarDraft[account.accountId]=new Map(account.calendars.map(item=>[item.id,{selected:true,label:item.label}]));renderCalendars(account.accountId)}}
+async function loadGmailConfiguration(){const gmail=await read("/admin/gmail-configuration");renderSenders(gmail.senders);document.querySelector("#gmail-accounts").textContent=gmail.accounts.map(account=>account.accountId+": "+(account.cleanupPending?"cleanup pending":account.reconnectRequired?"reconnect required":account.connected?"connected":"disconnected")+(account.lastProcessedAt?" · last processed "+account.lastProcessedAt:"")).join("\\n")}
+async function loadConfiguration(){await Promise.all([loadWeatherConfiguration(),loadCalendarConfiguration(),loadGmailConfiguration()]);dirty.clear()}
+async function refreshDiscovery(accountId){const form=document.querySelector('[data-account="'+accountId+'"]');const output=form.querySelector("[data-discovery-status]");if(!safeNavigate("Discard unsaved configuration changes and refresh Discovered Calendars?"))return;discoveryState[accountId]="loading";output.textContent="Loading Discovered Calendars…";renderCalendars(accountId);try{const body=await read("/admin/calendar/discovery?account="+accountId);discovered[accountId]=body.calendars;discoveryState[accountId]="succeeded";output.textContent="Discovered Calendars refreshed";renderCalendars(accountId)}catch{discoveryState[accountId]="failed";output.textContent="Calendar discovery failed";renderCalendars(accountId)}}
+weatherForm.addEventListener("input",markDirty);weatherForm.addEventListener("submit",async event=>{event.preventDefault();const output=weatherForm.querySelector("output");output.textContent="Saving…";try{const response=await fetch("/admin/weather-configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({latitude:Number(weatherForm.latitude.value),longitude:Number(weatherForm.longitude.value),slots:weatherForm.slots.value.split(",").map(value=>value.trim()).filter(Boolean)})});if(!response.ok)throw new Error();await loadWeatherConfiguration();output.textContent="Saved";dirty.delete("weather-form")}catch{output.textContent="Weather was not saved"}});
+for(const form of document.querySelectorAll(".calendar-form")){form.addEventListener("input",event=>{if(event.target.name!=="filter")dirty.add(form.dataset.account)});form.filter.addEventListener("input",()=>renderCalendars(form.dataset.account));form.addEventListener("submit",async event=>{event.preventDefault();const calendars=[...calendarDraft[form.dataset.account]].filter(([,item])=>item.selected).map(([id,item])=>({id,label:item.label}));const output=form.querySelector("output");output.textContent="Saving…";try{const current=await read("/admin/calendar-configuration");const accounts=current.accounts.map(account=>account.accountId===form.dataset.account?{accountId:account.accountId,displayLabel:form.householdLabel.value,calendars}:{accountId:account.accountId,displayLabel:account.displayLabel,calendars:account.calendars});const response=await fetch("/admin/calendar-configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({accounts})});if(!response.ok)throw new Error();await loadCalendarConfiguration(form.dataset.account);output.textContent="Saved";dirty.delete(form.dataset.account)}catch{output.textContent="Calendar configuration was not saved"}})}
+gmailForm.addEventListener("input",markDirty);gmailForm.addEventListener("submit",async event=>{event.preventDefault();const senders=[...document.querySelectorAll(".sender-row")].map(row=>({domain:row.querySelector('[name="domain"]').value,kind:row.querySelector('[name="kind"]').value}));const output=gmailForm.querySelector("output");output.textContent="Saving…";try{const response=await fetch("/admin/gmail-configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({senders})});if(!response.ok)throw new Error();await loadGmailConfiguration();output.textContent=senders.length?"Saved":"Saved — Sender-Domain Allowlist is empty";dirty.delete("gmail-form")}catch{output.textContent="Sender-Domain Allowlist was not saved"}});
+document.querySelector("#add-sender")?.addEventListener("click",()=>{document.querySelector("#senders").append(senderRow());dirty.add("gmail-form")});
+for(const button of document.querySelectorAll("[data-refresh]"))button.addEventListener("click",()=>refreshDiscovery(button.dataset.refresh));
+for(const button of document.querySelectorAll("[data-connect]"))button.addEventListener("click",async()=>{if(!safeNavigate("Discard unsaved configuration changes and reconnect this account?"))return;try{const value=await read("/admin/calendar/oauth/start?account="+button.dataset.connect);location.assign(value.authorizationUrl)}catch{button.closest("section").querySelector("output").textContent="Google connection could not be started"}});
+for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!safeNavigate("Discard unsaved configuration changes and disconnect this account?")||!confirm("Revoke Google access and permanently delete retained account data?"))return;try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error();await loadConfiguration()}catch{button.closest("section").querySelector("output").textContent="Google account was not disconnected"}});
+addEventListener("beforeunload",event=>{if(dirty.size){event.preventDefault();event.returnValue=""}});
+const oauthStatus=new URL(location.href).searchParams.get("calendar");if(oauthStatus){const banner=document.querySelector("#oauth-banner");banner.hidden=false;banner.textContent=oauthStatus.endsWith("-connected")?"Google account connected":"Google account connection failed";history.replaceState(null,"",location.pathname);const account=oauthStatus.startsWith("mom-")?"mom":oauthStatus.startsWith("dad-")?"dad":null;if(account)queueMicrotask(()=>refreshDiscovery(account))}
+Promise.all([loadConfiguration(),read("/admin/status").then(value=>statusBox.textContent=JSON.stringify(value,null,2)),read("/admin/gmail-review").then(value=>reviewBox.textContent=JSON.stringify(value,null,2))]).catch(()=>{statusBox.textContent="Status unavailable"});`;
   return new Response(script, {
     headers: {
       "cache-control": "no-store",

@@ -312,9 +312,12 @@ export default {
       return new Response(null, { status: 404 });
     }
     try {
-      return Response.json(await processConnectedGmailAccounts(env), {
-        headers: { "cache-control": "no-store" }
-      });
+      return Response.json(
+        await processConnectedGmailAccounts(env, new Date()),
+        {
+          headers: { "cache-control": "no-store" }
+        }
+      );
     } catch (error) {
       const quota =
         error !== null &&

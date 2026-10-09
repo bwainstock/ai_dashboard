@@ -18,7 +18,9 @@ The Worker requires both Access identity headers:
 Access must validate the assertion before forwarding the request. The Worker
 then looks up the normalized email in D1 `administration_users`. An
 `administrator` may mutate configuration and start Google OAuth; a `reviewer`
-may read configuration and status. Anonymous, unknown, inactive, and
+may read weather, safe calendar configuration, Sender-Domain Allowlist
+configuration, and status in the structured read-only interface. Anonymous,
+unknown, inactive, and
 device-token-only requests are denied.
 
 After applying migrations, bootstrap the household roles with parameterized D1
@@ -39,13 +41,16 @@ secrets.
 - `GET /admin` provides the browser entry point.
 - `GET /admin/configuration` is available to reviewers and administrators.
 - `PUT /admin/configuration` is administrator-only and manages weather
-  coordinates, render slots, selected calendars, and the Mom/Dad display
-  labels.
+  coordinates, render slots, Selected Calendars, and the Mom/Dad Household
+  Labels. It remains compatible for existing clients and uses the same
+  validation and replacement services as the section-specific routes.
 - `GET /admin/calendar/oauth/start`, OAuth callback, calendar discovery, and
-  the existing calendar configuration contract are administrator-only.
+  calendar mutations are administrator-only. Reviewers may read
+  `GET /admin/calendar-configuration`.
 - `GET /admin/status` is available to reviewers and administrators.
-- `GET`/`PUT /admin/gmail-configuration` is administrator-only and manages
-  school/childcare sender domains plus content-free processing status. See
+- `GET /admin/gmail-configuration` is available to reviewers and
+  administrators. `PUT` is administrator-only and replaces the complete
+  Sender-Domain Allowlist plus its school/childcare classifications. See
   [Privacy-isolated Gmail processing](gmail-integration.md).
 - `GET /admin/gmail-review` is available to reviewers and administrators and
   returns only minimal validated Protected Review Record fields.
@@ -78,3 +83,16 @@ source-failure records.
 Google client credentials, the OAuth token-encryption key, and other deployment
 secrets remain Wrangler secrets. OAuth refresh tokens remain encrypted in D1
 and are never returned by administration contracts.
+
+The browser interface has independent Weather, household-account calendar, and
+Gmail Sender-Domain Allowlist saves. Saving one section does not reset another.
+Unsaved section drafts trigger a warning before refresh, reconnect, disconnect,
+or navigation. Responses and browser banners use fixed safe status text only.
+All administration JSON request bodies are limited to 64 KiB; larger bodies
+receive `413`.
+
+Ordinary OAuth callback navigation redirects to `/admin` with a fixed,
+account-specific status code. An explicit `Accept: application/json` retains
+the existing JSON response contract. Provider codes and errors are never
+included in either response. The browser removes the status query after
+displaying its fixed banner.

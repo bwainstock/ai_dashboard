@@ -31,15 +31,15 @@ function categoryIcon(category: DailyBriefNotice["category"]): string {
 }
 
 export function noticesViewHtml(model: NoticesViewModel): string {
-  const markers = model.privateNoticeMarkers
-    .slice(0, 2)
+  const selectedMarkers = model.privateNoticeMarkers.slice(0, 2);
+  const markers = selectedMarkers
     .map(
       ({ accountId }) =>
         `<li class="private"><svg viewBox="0 0 48 48" role="img" aria-label="Private notice icon"><rect x="9" y="21" width="30" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="4"/><path d="M15 21v-6a9 9 0 0 1 18 0v6" fill="none" stroke="currentColor" stroke-width="4"/></svg><strong>${accountId === "mom" ? "Mom" : "Dad"} Private Notice</strong></li>`
     )
     .join("");
   const notices = model.notices
-    .slice(0, 8)
+    .slice(0, 8 - selectedMarkers.length)
     .map((notice) => {
       const details = [
         notice.relevantDate,
@@ -75,12 +75,12 @@ export function noticesViewHtml(model: NoticesViewModel): string {
     header svg { width: 35px; height: 35px; }
     h1 { font-size: 32px; margin: 0; }
     main { height: 378px; padding-top: 10px; }
-    ul { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(66px, auto); gap: 7px 14px; list-style: none; margin: 0; padding: 0; }
-    li { display: flex; align-items: center; gap: 10px; min-width: 0; border-bottom: 2px solid #000; padding: 5px 0; }
+    ul { height: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; gap: 7px 14px; list-style: none; margin: 0; padding: 0; overflow: hidden; }
+    li { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 0; border-bottom: 2px solid #000; padding: 5px 0; overflow: hidden; }
     li svg { width: 42px; height: 42px; flex: none; }
-    li div { min-width: 0; }
-    li strong { display: block; font-size: 18px; line-height: 1.08; }
-    li span { display: block; margin-top: 4px; font-size: 14px; line-height: 1.1; overflow-wrap: anywhere; }
+    li div { min-width: 0; max-height: 100%; overflow: hidden; }
+    li strong { display: -webkit-box; font-size: 18px; line-height: 1.08; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    li span { display: -webkit-box; margin-top: 4px; font-size: 14px; line-height: 1.1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .private { border: 3px solid #000; padding: 7px; }
     .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; border: 3px solid #000; font-size: 25px; }
     .empty svg { width: 64px; height: 64px; }

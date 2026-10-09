@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { PNG } from "pngjs";
 
 const { launchBrowser } = vi.hoisted(() => ({ launchBrowser: vi.fn() }));
@@ -193,6 +193,65 @@ class TestBucket {
   }
 }
 
+class ScheduledTestDatabase {
+  readonly publishedViewTypes: string[] = [];
+
+  prepare(query: string) {
+    let parameters: unknown[] = [];
+    const statement = {
+      bind: (...values: unknown[]) => {
+        parameters = values;
+        return statement;
+      },
+      first: async <T>() => {
+        if (query.includes("FROM dashboard_configuration")) {
+          return {
+            latitude: 37.3382,
+            longitude: -121.8863,
+            timezone: "America/Los_Angeles",
+            slots_json: '["10:30"]'
+          } as T;
+        }
+        if (query.includes("FROM devices")) {
+          return {
+            provisioned_count: 0,
+            provisioned_at: null,
+            last_check_in_at: null
+          } as T;
+        }
+        return null;
+      },
+      all: async <T>() => {
+        if (query.includes("FROM source_status")) {
+          return {
+            results: [
+              { source: "weather", consecutive_failures: 0 },
+              { source: "calendar", consecutive_failures: 0 },
+              { source: "lunch", consecutive_failures: 0 },
+              { source: "gmail", consecutive_failures: 0 }
+            ]
+          } as { results: T[] };
+        }
+        return { results: [] as T[] };
+      },
+      run: async () => {
+        if (query.includes("INSERT OR IGNORE INTO scheduled_generation_slots")) {
+          return { success: true, meta: { changes: 1 } };
+        }
+        if (query.includes("INSERT INTO render_generations")) {
+          this.publishedViewTypes.push(String(parameters[4]));
+        }
+        return { success: true, meta: { changes: 1 } };
+      }
+    };
+    return statement;
+  }
+
+  async batch(statements: Array<{ run(): Promise<unknown> }>) {
+    return Promise.all(statements.map((statement) => statement.run()));
+  }
+}
+
 function testEnv(
   database = new TestDatabase(),
   bucket = new TestBucket()
@@ -207,7 +266,151 @@ function testEnv(
   };
 }
 
+function scheduledEnv(database = new ScheduledTestDatabase()): Env {
+  return {
+    ...testEnv(
+      database as unknown as TestDatabase,
+      new TestBucket()
+    ),
+    MEALVIEWER_MENU_URL: "https://menus.example.test/current"
+  };
+}
+
+function validRenderInspection() {
+  return {
+    viewport: { width: 800, height: 480 },
+    document: { width: 800, height: 480 },
+    overflowingElements: 0,
+    iconCount: 1,
+    textLength: 20,
+    minimumVisibleTextSize: 16,
+    nonMonochromeValues: [],
+    missingStates: []
+  };
+}
+
+function scheduledFetch(input: string | URL | Request): Promise<Response> {
+  const url =
+    input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+  if (url.startsWith("https://api.open-meteo.com/")) {
+    return Promise.resolve(
+      Response.json({
+        current: {
+          time: "2026-10-07T10:30",
+          temperature_2m: 68,
+          weather_code: 1
+        },
+        daily: {
+          time: ["2026-10-07", "2026-10-08"],
+          weather_code: [2, 61],
+          temperature_2m_max: [75, 64],
+          temperature_2m_min: [55, 51],
+          precipitation_probability_max: [10, 70]
+        }
+      })
+    );
+  }
+  return Promise.resolve(
+    Response.json({
+      menuSchedules: [
+        {
+          date: "2026-10-07",
+          isClosed: false,
+          menuBlocks: [
+            {
+              type: "Lunch",
+              menuItems: [
+                { category: "Entree", name: "Cheese Pizza" }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+  );
+}
+
+afterEach(() => {
+  launchBrowser.mockReset();
+  vi.unstubAllGlobals();
+});
+
 describe("TRMNL BYOS device service", () => {
+  test("a complete due scheduled generation uses one browser for all four views and closes it once", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase();
+    const close = vi.fn();
+    const renderedHtml: string[] = [];
+    const screenshot = new Uint8Array(24);
+    screenshot.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    new DataView(screenshot.buffer).setUint32(16, 800);
+    new DataView(screenshot.buffer).setUint32(20, 480);
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(async (html: string) => {
+          renderedHtml.push(html);
+        }),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => screenshot)
+      })),
+      close
+    });
+
+    await worker.scheduled(
+      { scheduledTime: Date.parse("2026-10-07T17:30:00Z") } as ScheduledController,
+      scheduledEnv(database)
+    );
+
+    expect(launchBrowser).toHaveBeenCalledOnce();
+    expect(renderedHtml).toHaveLength(4);
+    expect(new Set(renderedHtml)).toHaveLength(4);
+    expect(database.publishedViewTypes).toEqual([
+      "daily_brief",
+      "calendar",
+      "lunch",
+      "notices"
+    ]);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("a due scheduled generation closes its single browser when a view render fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const close = vi.fn();
+    let pageNumber = 0;
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => {
+        pageNumber += 1;
+        return {
+          setViewport: vi.fn(),
+          setContent: vi.fn(async () => {
+            if (pageNumber === 2) throw new Error("Calendar render failed");
+          }),
+          evaluate: vi.fn(async () => validRenderInspection()),
+          screenshot: vi.fn(async () => new Uint8Array())
+        };
+      }),
+      close
+    });
+
+    await worker.scheduled(
+      { scheduledTime: Date.parse("2026-10-07T17:30:00Z") } as ScheduledController,
+      scheduledEnv()
+    );
+
+    expect(launchBrowser).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("a non-due scheduled invocation does not launch a browser", async () => {
+    await worker.scheduled(
+      { scheduledTime: Date.parse("2026-10-07T17:31:00Z") } as ScheduledController,
+      scheduledEnv()
+    );
+
+    expect(launchBrowser).not.toHaveBeenCalled();
+  });
+
   test("setup exchanges a device MAC address for a high-entropy per-device token", async () => {
     const response = await worker.fetch(
       new Request("https://device.test/api/setup", {
