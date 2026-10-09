@@ -15,10 +15,6 @@ describe("pull request validation workflow", () => {
     expect(workflow).toContain("cache: npm");
     expect(workflow).toContain("cache-dependency-path: package-lock.json");
     expect(workflow).toContain("run: npm ci");
-    expect(workflow).toContain("run: npm run typecheck");
-    expect(workflow).toContain("run: npm run lint");
-    expect(workflow).toContain("run: npm test");
-    expect(workflow).toContain("run: npm run build:device");
-    expect(workflow).toContain("run: npm run build:gmail");
+    expect(workflow).toContain("run: npm run check");
   });
 });

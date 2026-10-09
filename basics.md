@@ -33,6 +33,6 @@ Validate` check installs dependencies from `package-lock.json`, then runs type
 checking, linting, the complete automated test suite, and dry-run builds for
 both Workers.
 
-Maintainers may merge after the required check passes and one approving review
-is recorded. Direct pushes, force pushes, branch deletion, and bypassing these
-requirements are disabled for `main`.
+Maintainers may merge after the required check passes. Direct pushes, force
+pushes, branch deletion, and bypassing this requirement are disabled for
+`main`.
