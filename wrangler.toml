@@ -35,7 +35,7 @@ OPERATIONAL_EMAIL_TO = "operator@example.com"
 MAX_IMAGE_BYTES = "1000000"
 GENERATION_RETRY_MINUTES = "15"
 NOTICE_GRACE_DAYS = "3"
-MEALVIEWER_MENU_URL = "https://api.mealviewer.com/api/v4/school/SJUSDElementarySchoolsSJUSD/menu"
+MEALVIEWER_MENU_URL = "https://api.mealviewer.com/api/v4/school/SJUSDElementarySchoolsSJUSD"
 LUNCH_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
 
 [ai]

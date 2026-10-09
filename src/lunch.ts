@@ -34,6 +34,12 @@ type Fetch = (
   init?: RequestInit
 ) => Promise<Response>;
 
+export interface MealViewerRequestOptions {
+  now?: Date;
+  timezone?: string;
+  timeoutMilliseconds?: number;
+}
+
 export type LunchAdapterErrorCode = Extract<
   OperationalCode,
   "LUNCH_UPSTREAM_HTTP" | "LUNCH_UPSTREAM_NETWORK" | "LUNCH_INVALID_RESPONSE"
@@ -112,9 +118,15 @@ function invalid(message: string): never {
 function normalizedDate(value: unknown): string {
   if (typeof value !== "string") invalid("MealViewer day is missing its date");
   const date = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    invalid("MealViewer day has an invalid date");
+  }
+  const [year, month, day] = date.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
   if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-    Number.isNaN(Date.parse(`${date}T00:00:00Z`))
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
   ) {
     invalid("MealViewer day has an invalid date");
   }
@@ -123,11 +135,11 @@ function normalizedDate(value: unknown): string {
 
 function normalizedName(value: unknown): string {
   if (typeof value !== "string") {
-    invalid("MealViewer entree is missing its name");
+    invalid("MealViewer menu item is missing its name");
   }
   const name = value.replaceAll(/\s+/g, " ").trim();
   if (!name || name.length > 160) {
-    invalid("MealViewer entree has an invalid name");
+    invalid("MealViewer menu item has an invalid name");
   }
   return name;
 }
@@ -172,8 +184,140 @@ function normalizeDay(value: unknown): LunchDay {
       if (typeof item.category !== "string") {
         return invalid("MealViewer menu item is missing its category");
       }
+      const name = normalizedName(item.name);
       if (item.category.toLowerCase() === "entree") {
-        entrees.push(normalizedName(item.name));
+        entrees.push(name);
+      }
+    }
+  }
+
+  return {
+    date,
+    status: "menu",
+    entrees: [...new Set(entrees)]
+  };
+}
+
+function localDate(value: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(value);
+}
+
+function addDays(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days))
+    .toISOString()
+    .slice(0, 10);
+}
+
+function mealViewerDate(value: string): string {
+  const [year, month, day] = value.split("-");
+  return `${month}-${day}-${year}`;
+}
+
+function datedMealViewerUrl(
+  url: string,
+  now: Date,
+  timezone: string
+): string {
+  const today = localDate(now, timezone);
+  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+  const monday = addDays(today, weekday === 0 ? -6 : 1 - weekday);
+  const nextFriday = addDays(monday, 11);
+  const schoolUrl = url.replace(/\/menu\/?$/, "").replace(/\/$/, "");
+  return `${schoolUrl}/${mealViewerDate(monday)}/${mealViewerDate(nextFriday)}/1`;
+}
+
+function normalizeCurrentDay(value: unknown): LunchDay {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalid("MealViewer menu day is invalid");
+  }
+  const day = value as Record<string, unknown>;
+  if (
+    !day.dateInformation ||
+    typeof day.dateInformation !== "object" ||
+    Array.isArray(day.dateInformation)
+  ) {
+    return invalid("MealViewer day is missing dateInformation");
+  }
+  const date = normalizedDate(
+    (day.dateInformation as Record<string, unknown>).dateFull
+  );
+  if (!Array.isArray(day.menuBlocks)) {
+    return invalid("MealViewer day is missing menuBlocks");
+  }
+
+  const lunchBlocks = day.menuBlocks.filter((blockValue) => {
+    if (
+      !blockValue ||
+      typeof blockValue !== "object" ||
+      Array.isArray(blockValue)
+    ) {
+      return invalid("MealViewer menu block is invalid");
+    }
+    const block = blockValue as Record<string, unknown>;
+    if (
+      typeof block.blockName !== "string" ||
+      typeof block.blackedOut !== "boolean"
+    ) {
+      return invalid("MealViewer menu block is missing required fields");
+    }
+    return block.blockName.toLowerCase() === "lunch";
+  }) as Array<Record<string, unknown>>;
+  if (lunchBlocks.some(({ blackedOut }) => blackedOut)) {
+    return { date, status: "closed", entrees: [] };
+  }
+
+  const entrees: string[] = [];
+  for (const block of lunchBlocks) {
+    const list = block.cafeteriaLineList;
+    if (!list || typeof list !== "object" || Array.isArray(list)) {
+      return invalid("MealViewer lunch block is missing cafeteriaLineList");
+    }
+    const lines = (list as Record<string, unknown>).data;
+    if (!Array.isArray(lines)) {
+      return invalid("MealViewer cafeteriaLineList is missing data");
+    }
+    for (const lineValue of lines) {
+      if (
+        !lineValue ||
+        typeof lineValue !== "object" ||
+        Array.isArray(lineValue)
+      ) {
+        return invalid("MealViewer cafeteria line is invalid");
+      }
+      const foodItemList = (lineValue as Record<string, unknown>).foodItemList;
+      if (
+        !foodItemList ||
+        typeof foodItemList !== "object" ||
+        Array.isArray(foodItemList)
+      ) {
+        return invalid("MealViewer cafeteria line is missing foodItemList");
+      }
+      const items = (foodItemList as Record<string, unknown>).data;
+      if (!Array.isArray(items)) {
+        return invalid("MealViewer foodItemList is missing data");
+      }
+      for (const itemValue of items) {
+        if (
+          !itemValue ||
+          typeof itemValue !== "object" ||
+          Array.isArray(itemValue)
+        ) {
+          return invalid("MealViewer menu item is invalid");
+        }
+        const item = itemValue as Record<string, unknown>;
+        if (typeof item.item_Type !== "string") {
+          return invalid("MealViewer menu item is missing its type");
+        }
+        const name = normalizedName(item.item_Name);
+        if (item.item_Type.toLowerCase() === "entrees") {
+          entrees.push(name);
+        }
       }
     }
   }
@@ -187,13 +331,22 @@ function normalizeDay(value: unknown): LunchDay {
 
 export async function fetchMealViewerMenu(
   url: string,
-  request: Fetch = fetch
+  request: Fetch = fetch,
+  options: MealViewerRequestOptions = {}
 ): Promise<LunchSnapshot> {
   let response: Response;
   try {
-    response = await request(url, {
-      headers: { accept: "application/json" }
-    });
+    response = await request(
+      datedMealViewerUrl(
+        url,
+        options.now ?? new Date(),
+        options.timezone ?? "UTC"
+      ),
+      {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(options.timeoutMilliseconds ?? 10_000)
+      }
+    );
   } catch (error) {
     throw new LunchAdapterError(
       "LUNCH_UPSTREAM_NETWORK",
@@ -214,7 +367,14 @@ export async function fetchMealViewerMenu(
     if (!data || !Array.isArray(data.menuSchedules)) {
       invalid("MealViewer response is missing menuSchedules");
     }
-    const days = data.menuSchedules.map(normalizeDay);
+    const days = data.menuSchedules.map((day) =>
+      day &&
+      typeof day === "object" &&
+      !Array.isArray(day) &&
+      "dateInformation" in day
+        ? normalizeCurrentDay(day)
+        : normalizeDay(day)
+    );
     if (new Set(days.map(({ date }) => date)).size !== days.length) {
       invalid("MealViewer response contains duplicate school dates");
     }

@@ -1222,7 +1222,10 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
             code: "LUNCH_UPSTREAM_NETWORK"
           });
         }
-        return fetchMealViewerMenu(env.MEALVIEWER_MENU_URL);
+        return fetchMealViewerMenu(env.MEALVIEWER_MENU_URL, fetch, {
+          now,
+          timezone: configuration.timezone
+        });
       },
       async loadLatestLunch() {
         const row = await env.DB.prepare(
