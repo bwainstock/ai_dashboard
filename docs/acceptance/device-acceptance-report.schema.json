@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://family-dashboard.invalid/device-acceptance-report.schema.json",
+  "title": "Family Dashboard physical device acceptance report",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "runId",
+    "recordedAt",
+    "target",
+    "limitsConfiguration",
+    "automated",
+    "hardware",
+    "battery",
+    "discoveredLimits"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "target": {
+      "type": "object",
+      "required": ["baseUrl", "panelModel", "firmwareVersion"],
+      "properties": {
+        "baseUrl": { "type": "string", "format": "uri" },
+        "panelModel": { "type": "string", "minLength": 1 },
+        "firmwareVersion": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "limitsConfiguration": {
+      "const": "config/device-limits.json"
+    },
+    "automated": {
+      "type": "object",
+      "required": ["status", "checks"],
+      "properties": {
+        "status": { "enum": ["pass", "fail"] },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "status"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "status": { "const": "pass" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "sequence": { "type": "object" },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "hardware": {
+      "type": "object",
+      "required": ["observations"],
+      "properties": {
+        "observations": {
+          "type": "object",
+          "required": [
+            "orientation",
+            "readability",
+            "icons",
+            "pngDecoding",
+            "namedImageCaching",
+            "buttonCycle",
+            "timerReset",
+            "wifiReconnection",
+            "scheduledWakes",
+            "authenticatedPrivacy"
+          ],
+          "additionalProperties": { "$ref": "#/$defs/observation" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "battery": { "$ref": "#/$defs/battery" },
+    "discoveredLimits": {
+      "type": "object",
+      "required": [
+        "maximumImageBytes",
+        "minimumReadableTextPixels",
+        "notes"
+      ],
+      "properties": {
+        "maximumImageBytes": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "minimumReadableTextPixels": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": [
+        "filename",
+        "byteSize",
+        "dimensions",
+        "monochrome",
+        "nonBlank"
+      ],
+      "properties": {
+        "filename": { "type": "string", "pattern": "\\.png$" },
+        "byteSize": { "type": "integer", "minimum": 1 },
+        "dimensions": { "const": "800x480" },
+        "monochrome": { "const": true },
+        "nonBlank": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": ["status", "observedAt", "notes"],
+      "properties": {
+        "status": { "enum": ["pending", "pass", "fail"] },
+        "observedAt": { "type": ["string", "null"], "format": "date-time" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "battery": {
+      "type": "object",
+      "required": [
+        "status",
+        "startedAt",
+        "endedAt",
+        "startChargePercent",
+        "endChargePercent",
+        "scheduledWakes",
+        "shortPresses",
+        "recharges",
+        "wifiConditions",
+        "notes"
+      ],
+      "properties": {
+        "status": { "enum": ["pending", "pass", "fail"] },
+        "startedAt": { "type": ["string", "null"], "format": "date-time" },
+        "endedAt": { "type": ["string", "null"], "format": "date-time" },
+        "startChargePercent": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "endChargePercent": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "scheduledWakes": { "type": ["integer", "null"], "minimum": 0 },
+        "shortPresses": { "type": ["integer", "null"], "minimum": 0 },
+        "recharges": { "type": ["integer", "null"], "minimum": 0 },
+        "wifiConditions": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

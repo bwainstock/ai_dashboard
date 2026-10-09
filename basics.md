@@ -12,3 +12,16 @@ Design documentation:
 - [Implementation plan](docs/implementation-plan.md)
 - [Domain glossary](GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
+- [Ticket #2 private BYOS acceptance](docs/acceptance/ticket-2-private-byos.md)
+- [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
+- [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
+
+## Development
+
+```sh
+npm install
+npm run check
+```
+
+The device Worker is configured in `wrangler.toml`. Its R2 binding is private;
+display images are served only by the authenticated `/images/:filename` route.

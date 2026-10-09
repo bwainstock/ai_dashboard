@@ -13,7 +13,7 @@ The system favors low maintenance, controlled handling of Gmail data, readable c
 - Today and tomorrow weather for San Jose, California.
 - Selected events from two consumer Google accounts for today and the next two local calendar days.
 - School lunch from the SJUSD Elementary Schools MealViewer feed.
-- A Daily Brief plus Calendar View and Lunch View.
+- A Daily Brief plus Calendar View, Lunch View, and Notices View.
 - Four scheduled updates every day at 06:30, 10:30, 15:00, and 19:00 in `America/Los_Angeles`.
 - Forward-only navigation using the stock firmware's wake button.
 - Protected configuration and operational status pages.
@@ -56,7 +56,8 @@ TRMNL device <─ device Worker <─ private R2 PNGs <─ generation pointer in 
 - **Workers AI**: constrained lunch-icon fallback and phase-2 Household Notice extraction.
 - **Cron Triggers**: local-time generation scheduling and one delayed retry.
 - **Cloudflare Access**: browser authentication and role enforcement.
-- **Cloudflare Email**: an operational alias for actionable failure alerts.
+- **Cloudflare Email**: a verified send-email binding for actionable failure
+  alerts.
 
 No KV or Queues are planned initially.
 
@@ -81,8 +82,7 @@ The current stock firmware exposes one reliable wake button for this board targe
 
 - Timer wake: return the latest Daily Brief and set the interval until the next configured local update.
 - Short press: advance the per-device view cursor.
-- V1 cycle: Daily Brief -> Calendar View -> Lunch View -> Daily Brief.
-- Phase-2 cycle: Daily Brief -> Calendar View -> Lunch View -> Notices View -> Daily Brief.
+- View cycle: Daily Brief -> Calendar View -> Lunch View -> Notices View -> Daily Brief.
 - The next timer wake always returns to the Daily Brief.
 - Manual data refresh is intentionally omitted.
 - Long firmware gestures retain their built-in Wi-Fi and credential-reset behavior.
@@ -107,9 +107,15 @@ For each slot:
 3. Render all active views using a self-contained HTML document.
 4. Validate each screenshot as an 800x480 PNG within the device model's tested size limit.
 5. Write immutable R2 objects.
-6. Atomically advance the D1 generation pointer only after every required image is stored.
+6. In one D1 batch, record the complete generation set and atomically advance
+   the singleton current-generation pointer only after every required image is
+   stored. Device view selection always resolves through this one pointer.
 
-If source fetching or rendering fails, retry once after 15 minutes. A render failure preserves the previous complete generation. A source failure may still publish a new generation using a visibly stale last-good section.
+If source fetching or rendering fails, retry once after 15 minutes. Retry
+objects receive a new immutable generation ID. A render, validation, storage,
+or pointer-publication failure preserves the previous complete generation. A
+source failure may still publish a new generation using a visibly stale
+last-good section with its snapshot age.
 
 ## Screen design
 
@@ -190,7 +196,24 @@ Deterministic exact/keyword mappings and cached decisions run first. Workers AI 
   - No device check-in for 24 hours.
 - Clear outage alerts automatically after recovery.
 
+The V1 incident state machine suppresses the first scheduled source failure,
+sends once when the second consecutive failure makes the condition actionable,
+and deduplicates every active condition. Successful source refresh, OAuth
+reconnection, successful publication, valid device authentication, or renewed
+device check-in resolves the corresponding active incident so a later
+recurrence can alert again. Email contains only a fixed incident code and a
+direction to the protected status page.
+
 The protected status page shows device check-in, last successful render, per-source freshness, OAuth health, Workers AI quota state, and fixed error codes. It never displays raw email content, tokens, or Gmail prompts.
+
+The administration hostname is enforced by the Worker as well as by routing.
+Cloudflare Access authenticates the browser identity, while D1 maps that
+identity to the administrator or reviewer role. Device credentials are never
+accepted at this boundary. Operational incidents retain fixed codes and
+timestamps only; exception text and upstream or household content are omitted.
+Status reads the atomic current-generation pointer rather than inferring
+success from individual image rows, and exposes retry attempts without
+displaying stored diagnostic text.
 
 ## Authentication and roles
 
@@ -206,6 +229,9 @@ Cloudflare Access roles:
 The display uses configured `Mom` and `Dad` labels rather than email addresses or legal names.
 
 OAuth refresh tokens are encrypted before D1 storage using an application key held as a Worker secret. Disconnect and delete controls must revoke access and remove retained data.
+The administrator-facing disconnect control revokes Google first, then purges
+account-scoped structured data and all private render generations so removed
+data cannot remain in D1, R2, or a previously rendered image.
 
 ## Phase-2 Household Notices
 
@@ -231,8 +257,15 @@ Use a dedicated Gmail-processing Worker:
 - Fail closed on model errors, malformed output, implausible dates, sensitive leakage, quota exhaustion, or low confidence.
 - Store the configured model ID and model version with accepted results.
 - Keep model IDs configurable and validate changes against synthetic fixtures.
+- Record the exact configured model ID and version on every accepted result;
+  promotion tooling must pass non-personal live and fail-closed regressions
+  before changing the deployment configuration.
 
 Raw email bodies are processed transiently and never persisted.
+
+The implemented boundary, retention fields, deployment configuration, and
+privacy inspection are documented in
+[Privacy-isolated Gmail processing](gmail-integration.md).
 
 ### Publication
 
@@ -265,7 +298,8 @@ It never contains the raw subject, body excerpt, sender address, or confidence s
 ### Lifecycle
 
 - Deduplicate updates from the same email thread.
-- Expire notices after the extracted event or deadline plus a short grace period.
+- Expire notices after the extracted event or deadline plus the configured
+  `NOTICE_GRACE_DAYS` period (three days by default).
 - Retain accepted structured notices until 30 days after expiry.
 - Retain uncertain or sensitive review records for 14 days.
 - Never retain raw bodies.

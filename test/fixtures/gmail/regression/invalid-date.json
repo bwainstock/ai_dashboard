@@ -1,0 +1,21 @@
+{
+  "name": "invalid-date",
+  "candidate": {
+    "labelIds": ["INBOX"],
+    "from": "office@synthetic-school.example",
+    "subject": "Schedule",
+    "body": "The assembly is on an uncertain date.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "modelOutput": {
+    "isNotice": true,
+    "category": "school",
+    "summary": "Assembly is scheduled.",
+    "relevantDate": "2026-02-30",
+    "action": null,
+    "senderOrganization": "Synthetic School",
+    "sensitive": false,
+    "confidence": 0.96
+  },
+  "expected": "rejected"
+}

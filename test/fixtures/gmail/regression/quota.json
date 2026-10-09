@@ -1,0 +1,12 @@
+{
+  "name": "quota",
+  "candidate": {
+    "labelIds": ["INBOX"],
+    "from": "office@synthetic-school.example",
+    "subject": "Schedule",
+    "body": "The assembly is Friday.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "modelOutput": null,
+  "expected": "quota"
+}

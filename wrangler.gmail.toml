@@ -1,0 +1,29 @@
+name = "family-dashboard-gmail"
+main = "src/gmail-worker.ts"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "family-dashboard"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[ai]
+binding = "AI"
+
+[vars]
+GMAIL_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+GMAIL_AI_MODEL_VERSION = "provider-current"
+NOTICE_GRACE_DAYS = "3"
+
+# Change GMAIL_AI_MODEL and GMAIL_AI_MODEL_VERSION only through
+# `npm run gmail:model:promote -- <model-id> <model-version>`.
+
+[observability]
+enabled = false
+
+# This Worker has no public route. The device Worker invokes it through a
+# service binding. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+# CALENDAR_TOKEN_ENCRYPTION_KEY, and GMAIL_PROCESSOR_KEY with
+# `wrangler secret put --config wrangler.gmail.toml`.

@@ -1,0 +1,605 @@
+import { validateProtectedReviewCorrection } from "./gmail";
+import { noticeLifecycle } from "./notice-lifecycle";
+import {
+  statusSafeOperationalCode,
+  type OperationalCode
+} from "./operational-codes";
+
+export type AdministrationRole = "administrator" | "reviewer";
+
+export interface AdministrationEnv {
+  DB: D1Database;
+  ADMIN_ORIGIN?: string;
+  NOTICE_GRACE_DAYS?: string;
+}
+
+interface AdministrationUser {
+  role: AdministrationRole;
+}
+
+interface WeatherConfigurationRow {
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  slots_json: string;
+}
+
+interface CalendarAccount {
+  account_id: "mom" | "dad";
+  display_label: string;
+  oauth_status: "connected" | "disconnected" | "revoked";
+  gmail_disconnect_state: "revocation_pending" | "cleanup_pending" | null;
+}
+
+interface SelectedCalendar {
+  account_id: "mom" | "dad";
+  calendar_id: string;
+  display_label: string;
+}
+
+interface ProtectedReviewRow {
+  id: number;
+  account_id: "mom" | "dad";
+  source_key: string;
+  review_kind: "uncertain" | "sensitive";
+  category: "school" | "childcare" | "activity" | "household";
+  summary: string;
+  relevant_date: string | null;
+  action: string | null;
+  sender_organization: string;
+  confidence: number;
+  created_at: string;
+  expires_at: string;
+}
+
+function json(body: unknown, status = 200): Response {
+  return Response.json(body, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'",
+      "x-content-type-options": "nosniff"
+    }
+  });
+}
+
+export function isAdministrationHost(
+  request: Request,
+  env: AdministrationEnv
+): boolean {
+  if (!env.ADMIN_ORIGIN) return false;
+  return new URL(request.url).host === new URL(env.ADMIN_ORIGIN).host;
+}
+
+export async function authorizeAdministration(
+  request: Request,
+  env: AdministrationEnv
+): Promise<AdministrationUser | Response> {
+  const email = request.headers
+    .get("Cf-Access-Authenticated-User-Email")
+    ?.trim()
+    .toLowerCase();
+  const assertion = request.headers.get("Cf-Access-Jwt-Assertion");
+  if (!email || !assertion) return json({ error: "Access authentication required" }, 401);
+
+  const user = await env.DB.prepare(
+    `SELECT role FROM administration_users
+     WHERE email = ? AND active = 1`
+  )
+    .bind(email)
+    .first<AdministrationUser>();
+  return user ?? json({ error: "Access identity is not authorized" }, 403);
+}
+
+function isResponse(value: AdministrationUser | Response): value is Response {
+  return value instanceof Response;
+}
+
+async function loadConfiguration(env: AdministrationEnv) {
+  const [weather, accounts, calendars] = await Promise.all([
+    env.DB.prepare(
+      `SELECT latitude, longitude, timezone, slots_json
+       FROM dashboard_configuration WHERE id = 1`
+    ).first<WeatherConfigurationRow>(),
+    env.DB.prepare(
+      `SELECT account_id, display_label, oauth_status, gmail_disconnect_state
+       FROM calendar_accounts ORDER BY account_id`
+    ).all<CalendarAccount>(),
+    env.DB.prepare(
+      `SELECT account_id, calendar_id, display_label
+       FROM selected_calendars ORDER BY account_id, display_label`
+    ).all<SelectedCalendar>()
+  ]);
+  if (!weather) throw new Error("Configuration unavailable");
+  return {
+    weather: {
+      latitude: weather.latitude,
+      longitude: weather.longitude,
+      timezone: weather.timezone,
+      slots: JSON.parse(weather.slots_json) as string[]
+    },
+    google: {
+      accounts: accounts.results.map((account) => ({
+        accountId: account.account_id,
+        displayLabel: account.display_label,
+        connected:
+          account.oauth_status === "connected" &&
+          account.gmail_disconnect_state == null,
+        ...(account.gmail_disconnect_state == null
+          ? {}
+          : { cleanupPending: true }),
+        calendars: calendars.results
+          .filter(({ account_id }) => account_id === account.account_id)
+          .map(({ calendar_id, display_label }) => ({
+            id: calendar_id,
+            label: display_label
+          }))
+      }))
+    }
+  };
+}
+
+function validSlots(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    new Set(value).size === value.length &&
+    value.every(
+      (slot) =>
+        typeof slot === "string" &&
+        /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(slot)
+    )
+  );
+}
+
+function validGoogleAccounts(
+  value: unknown
+): value is Array<{
+  accountId: "mom" | "dad";
+  displayLabel: string;
+  calendars: Array<{ id: string; label: string }>;
+}> {
+  if (!Array.isArray(value) || value.length !== 2) return false;
+  const ids = new Set(value.map((account: { accountId?: unknown }) => account.accountId));
+  return (
+    ids.size === 2 &&
+    ids.has("mom") &&
+    ids.has("dad") &&
+    value.every(
+      (account: {
+        accountId?: unknown;
+        displayLabel?: unknown;
+        calendars?: unknown;
+      }) =>
+        (account.accountId === "mom" || account.accountId === "dad") &&
+        typeof account.displayLabel === "string" &&
+        account.displayLabel.trim().length >= 1 &&
+        account.displayLabel.trim().length <= 20 &&
+        !account.displayLabel.includes("@") &&
+        Array.isArray(account.calendars) &&
+        account.calendars.every(
+          (calendar: { id?: unknown; label?: unknown }) =>
+            typeof calendar.id === "string" &&
+            calendar.id.length > 0 &&
+            typeof calendar.label === "string" &&
+            calendar.label.length > 0 &&
+            calendar.label.length <= 80
+        )
+    )
+  );
+}
+
+async function configuration(
+  request: Request,
+  env: AdministrationEnv,
+  role: AdministrationRole
+): Promise<Response> {
+  if (request.method === "PUT") {
+    if (role !== "administrator") {
+      return json({ error: "Administrator role required" }, 403);
+    }
+    let input: {
+      weather?: { latitude?: unknown; longitude?: unknown; slots?: unknown };
+      google?: { accounts?: unknown };
+    };
+    try {
+      input = await request.json();
+    } catch {
+      return json({ error: "Invalid configuration" }, 400);
+    }
+    const statements: D1PreparedStatement[] = [];
+    if (input.weather) {
+      const { latitude, longitude, slots } = input.weather;
+      if (
+        typeof latitude !== "number" ||
+        latitude < -90 ||
+        latitude > 90 ||
+        typeof longitude !== "number" ||
+        longitude < -180 ||
+        longitude > 180 ||
+        !validSlots(slots)
+      ) {
+        return json({ error: "Invalid weather configuration" }, 400);
+      }
+      statements.push(
+        env.DB.prepare(
+          `UPDATE dashboard_configuration
+           SET latitude = ?, longitude = ?, slots_json = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = 1`
+        ).bind(latitude, longitude, JSON.stringify([...slots].sort()))
+      );
+    }
+    if (input.google) {
+      if (!validGoogleAccounts(input.google.accounts)) {
+        return json({ error: "Invalid Google configuration" }, 400);
+      }
+      for (const account of input.google.accounts) {
+        statements.push(
+          env.DB.prepare(
+            `UPDATE calendar_accounts
+             SET display_label = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE account_id = ?`
+          ).bind(account.displayLabel.trim(), account.accountId),
+          env.DB.prepare(
+            "DELETE FROM selected_calendars WHERE account_id = ?"
+          ).bind(account.accountId),
+          ...account.calendars.map((calendar) =>
+            env.DB.prepare(
+              `INSERT INTO selected_calendars
+                 (account_id, calendar_id, display_label)
+               VALUES (?, ?, ?)`
+            ).bind(account.accountId, calendar.id, calendar.label)
+          )
+        );
+      }
+    }
+    if (statements.length === 0) {
+      return json({ error: "Invalid configuration" }, 400);
+    }
+    await env.DB.batch(statements);
+  }
+  try {
+    return json(await loadConfiguration(env));
+  } catch {
+    return json({ error: "Configuration unavailable" }, 503);
+  }
+}
+
+async function operationalStatus(env: AdministrationEnv): Promise<Response> {
+  const [device, render, attempt, sources, accounts, statuses, incidents] =
+    await Promise.all([
+      env.DB.prepare(
+        "SELECT MAX(last_check_in_at) AS last_check_in_at FROM devices"
+      ).first<{ last_check_in_at: string | null }>(),
+      env.DB.prepare(
+        `SELECT current.generation_id, generation.published_at
+         FROM current_render_generation AS current
+         JOIN render_generation_sets AS generation
+           ON generation.generation_id = current.generation_id
+         WHERE current.id = 1`
+      ).first<{ generation_id: string; published_at: string }>(),
+      env.DB.prepare(
+        `SELECT slot_key, status, attempt_count, retry_at, error_code
+         FROM scheduled_generation_slots
+         ORDER BY started_at DESC LIMIT 1`
+      ).first<{
+        slot_key: string;
+        status: "running" | "published" | "failed";
+        attempt_count: number;
+        retry_at: string | null;
+        error_code: string | null;
+      }>(),
+      env.DB.prepare(
+        `SELECT source, state, last_success_at, error_code
+         FROM source_status ORDER BY source`
+      ).all<{
+        source: string;
+        state: "fresh" | "stale" | "error";
+        last_success_at: string | null;
+        error_code: string | null;
+      }>(),
+      env.DB.prepare(
+        `SELECT account_id, display_label, oauth_status,
+                gmail_disconnect_state
+         FROM calendar_accounts ORDER BY account_id`
+      ).all<CalendarAccount>(),
+      env.DB.prepare(
+        `SELECT status_key, status_value FROM operational_status
+         WHERE status_key = 'ai_quota'`
+      ).all<{ status_key: string; status_value: string }>(),
+      env.DB.prepare(
+        `SELECT error_code, occurred_at, notified_at
+         FROM operational_incidents
+         WHERE resolved_at IS NULL ORDER BY occurred_at DESC LIMIT 20`
+      ).all<{
+        error_code: string;
+        occurred_at: string;
+        notified_at: string | null;
+      }>()
+    ]);
+  const aiQuota = statuses.results[0]?.status_value;
+  return json({
+    device: { lastCheckInAt: device?.last_check_in_at ?? null },
+    rendering: {
+      currentGenerationId: render?.generation_id ?? null,
+      lastSuccessfulAt: render?.published_at ?? null,
+      latestAttempt: attempt
+        ? {
+            slotKey: attempt.slot_key,
+            state: attempt.status,
+            attempt: attempt.attempt_count,
+            retryAt: attempt.retry_at,
+            errorCode: statusSafeOperationalCode(attempt.error_code)
+          }
+        : null
+    },
+    sources: sources.results.map((source) => ({
+      source: source.source,
+      state: source.state,
+      lastSuccessfulAt: source.last_success_at,
+      errorCode: statusSafeOperationalCode(source.error_code)
+    })),
+    oauth: accounts.results.map((account) => ({
+      accountId: account.account_id,
+      state:
+        account.gmail_disconnect_state == null
+          ? account.oauth_status
+          : account.gmail_disconnect_state
+    })),
+    aiQuota: ["available", "exhausted", "not_applicable"].includes(aiQuota)
+      ? aiQuota
+      : "not_applicable",
+    incidents: incidents.results
+      .map((incident) => ({
+        errorCode: statusSafeOperationalCode(incident.error_code),
+        occurredAt: incident.occurred_at,
+        notifiedAt: incident.notified_at
+      }))
+      .filter(
+        (
+          incident
+        ): incident is {
+          errorCode: OperationalCode;
+          occurredAt: string;
+          notifiedAt: string | null;
+        } =>
+          incident.errorCode !== null
+      )
+  });
+}
+
+async function protectedGmailReview(
+  request: Request,
+  env: AdministrationEnv,
+  role: AdministrationRole
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/admin/gmail-review") {
+    const rows = await env.DB.prepare(
+      `SELECT id, account_id, review_kind, category, summary, relevant_date,
+              action, sender_organization, confidence, created_at, expires_at
+       FROM gmail_protected_reviews
+       WHERE expires_at >= ?
+       ORDER BY created_at DESC, id DESC`
+    )
+      .bind(new Date().toISOString())
+      .all<Omit<ProtectedReviewRow, "source_key">>();
+    return json({
+      records: rows.results.map((row) => ({
+        id: row.id,
+        accountId: row.account_id,
+        kind: row.review_kind,
+        category: row.category,
+        summary: row.summary,
+        relevantDate: row.relevant_date,
+        action: row.action,
+        senderOrganization: row.sender_organization,
+        confidence: row.confidence,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at
+      }))
+    });
+  }
+  const match = url.pathname.match(/^\/admin\/gmail-review\/(\d+)$/);
+  if (request.method !== "POST" || !match) {
+    return json({ error: "Not found" }, 404);
+  }
+  if (role !== "administrator") {
+    return json({ error: "Administrator role required" }, 403);
+  }
+  let input: { action?: unknown; correction?: unknown };
+  try {
+    input = await request.json();
+  } catch {
+    return json({ error: "Invalid protected review action" }, 400);
+  }
+  if (
+    !input ||
+    typeof input !== "object" ||
+    Object.keys(input).some((key) => !["action", "correction"].includes(key)) ||
+    !["dismiss", "correct", "publish"].includes(String(input.action))
+  ) {
+    return json({ error: "Invalid protected review action" }, 400);
+  }
+  const id = Number(match[1]);
+  if (input.action === "dismiss") {
+    if ("correction" in input) {
+      return json({ error: "Invalid protected review action" }, 400);
+    }
+    await env.DB.prepare("DELETE FROM gmail_protected_reviews WHERE id = ?")
+      .bind(id)
+      .run();
+    return json({ status: "dismissed" });
+  }
+  if (input.action === "correct") {
+    const validation = validateProtectedReviewCorrection(
+      input.correction,
+      new Date()
+    );
+    if (!validation.valid) {
+      return json({ error: "Invalid protected review correction" }, 400);
+    }
+    const correction = validation.correction;
+    await env.DB.prepare(
+      `UPDATE gmail_protected_reviews
+       SET category = ?, summary = ?, relevant_date = ?, action = ?,
+           sender_organization = ?
+       WHERE id = ?`
+    )
+      .bind(
+        correction.category,
+        correction.summary,
+        correction.relevantDate,
+        correction.action,
+        correction.senderOrganization,
+        id
+      )
+      .run();
+    return json({ status: "corrected" });
+  }
+  if ("correction" in input) {
+    return json({ error: "Invalid protected review action" }, 400);
+  }
+  const row = await env.DB.prepare(
+    `SELECT id, account_id, source_key, review_kind, category, summary,
+            relevant_date, action, sender_organization, confidence,
+            created_at, expires_at
+     FROM gmail_protected_reviews WHERE id = ?`
+  )
+    .bind(id)
+    .first<ProtectedReviewRow>();
+  if (!row) return json({ error: "Protected review record not found" }, 404);
+  const now = new Date();
+  const lifecycle = noticeLifecycle(
+    row.relevant_date,
+    now,
+    env.NOTICE_GRACE_DAYS
+  );
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO household_notices
+         (account_id, source_key, category, summary, relevant_date, action,
+          sender_organization, model_id, model_version, accepted_at,
+          expires_at, retained_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(account_id, source_key) DO UPDATE SET
+         category = excluded.category,
+         summary = excluded.summary,
+         relevant_date = excluded.relevant_date,
+         action = excluded.action,
+         sender_organization = excluded.sender_organization,
+         model_id = excluded.model_id,
+         model_version = excluded.model_version,
+         accepted_at = excluded.accepted_at,
+         expires_at = excluded.expires_at,
+         retained_until = excluded.retained_until`
+    ).bind(
+      row.account_id,
+      row.source_key,
+      row.category,
+      row.summary,
+      row.relevant_date,
+      row.action,
+      row.sender_organization,
+      "protected-review",
+      "administrator-approved",
+      now.toISOString(),
+      lifecycle.expiresAt,
+      lifecycle.retainedUntil
+    ),
+    env.DB.prepare("DELETE FROM gmail_protected_reviews WHERE id = ?").bind(id)
+  ]);
+  return json({ status: "published" });
+}
+
+function administrationPage(role: AdministrationRole): Response {
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Family Dashboard administration</title>
+<style>body{font:16px system-ui;max-width:60rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.75rem 0}input,textarea,button{font:inherit}textarea{width:100%;min-height:10rem}pre{white-space:pre-wrap;background:#f3f3f3;padding:1rem}fieldset{margin:1rem 0}</style>
+</head><body data-role="${role}"><main><h1>Family Dashboard administration</h1>
+<p>Signed in with the <strong>${role}</strong> role.</p>
+<section><h2>Configuration</h2><form id="configuration">
+<fieldset><legend>Weather and refresh slots</legend>
+<label>Latitude <input name="latitude" type="number" step="any" required></label>
+<label>Longitude <input name="longitude" type="number" step="any" required></label>
+<label>Refresh times <input name="slots" required></label></fieldset>
+<label>Google accounts, labels, and selected calendars
+<textarea name="google" spellcheck="false" required></textarea></label>
+<p><button type="button" data-connect="mom">Connect Mom Google</button>
+<button type="button" data-connect="dad">Connect Dad Google</button>
+<button type="button" data-disconnect="mom">Disconnect Mom Google</button>
+<button type="button" data-disconnect="dad">Disconnect Dad Google</button></p>
+<button type="submit">Save configuration</button> <output id="save-result"></output>
+</form></section>
+<section><h2>Operational status</h2><pre id="status">Loading…</pre></section>
+<section><h2>Protected Gmail review</h2><pre id="gmail-review">Loading…</pre></section>
+</main><script src="/admin/app.js" defer></script></body></html>`;
+  return new Response(html, {
+    headers: {
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'self'; object-src 'none'; base-uri 'none'",
+      "content-type": "text/html; charset=utf-8",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff"
+    }
+  });
+}
+
+function administrationScript(): Response {
+  const script = `const form=document.querySelector("#configuration");
+const statusBox=document.querySelector("#status");
+const reviewBox=document.querySelector("#gmail-review");
+const result=document.querySelector("#save-result");
+const role=document.body.dataset.role;
+async function read(url){const response=await fetch(url,{headers:{accept:"application/json"}});if(!response.ok)throw new Error("Request failed");return response.json()}
+async function load(){const [configuration,status,review]=await Promise.all([read("/admin/configuration"),read("/admin/status"),read("/admin/gmail-review")]);form.latitude.value=configuration.weather.latitude;form.longitude.value=configuration.weather.longitude;form.slots.value=configuration.weather.slots.join(", ");form.google.value=JSON.stringify(configuration.google,null,2);statusBox.textContent=JSON.stringify(status,null,2);reviewBox.textContent=JSON.stringify(review,null,2);if(role!=="administrator")for(const control of form.elements)control.disabled=true}
+form.addEventListener("submit",async event=>{event.preventDefault();result.textContent="Saving…";try{const google=JSON.parse(form.google.value);const response=await fetch("/admin/configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({weather:{latitude:Number(form.latitude.value),longitude:Number(form.longitude.value),slots:form.slots.value.split(",").map(value=>value.trim()).filter(Boolean)},google})});if(!response.ok)throw new Error("Save failed");result.textContent="Saved";await load()}catch{result.textContent="Configuration was not saved"}});
+for(const button of document.querySelectorAll("[data-connect]"))button.addEventListener("click",async()=>{try{const value=await read("/admin/calendar/oauth/start?account="+button.dataset.connect);location.assign(value.authorizationUrl)}catch{result.textContent="Google connection could not be started"}});
+for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!confirm("Revoke Google access and permanently delete retained account data?"))return;result.textContent="Disconnecting…";try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error("Disconnect failed");const body=await response.json();result.textContent=body.cleanupPending?"Google access revoked; retained-data cleanup is pending":"Disconnected and deleted retained data";await load()}catch{result.textContent="Google account was not disconnected"}});
+load().catch(()=>{statusBox.textContent="Status unavailable"});`;
+  return new Response(script, {
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "text/javascript; charset=utf-8",
+      "x-content-type-options": "nosniff"
+    }
+  });
+}
+
+export async function handleAuthorizedAdministration(
+  request: Request,
+  env: AdministrationEnv,
+  identity: AdministrationUser
+): Promise<Response> {
+  const pathname = new URL(request.url).pathname;
+  if (request.method === "GET" && pathname === "/admin") {
+    return administrationPage(identity.role);
+  }
+  if (request.method === "GET" && pathname === "/admin/app.js") {
+    return administrationScript();
+  }
+  if (
+    (request.method === "GET" || request.method === "PUT") &&
+    pathname === "/admin/configuration"
+  ) {
+    return configuration(request, env, identity.role);
+  }
+  if (request.method === "GET" && pathname === "/admin/status") {
+    return operationalStatus(env);
+  }
+  if (pathname === "/admin/gmail-review" || pathname.startsWith("/admin/gmail-review/")) {
+    return protectedGmailReview(request, env, identity.role);
+  }
+  return json({ error: "Not found" }, 404);
+}
+
+export async function handleAdministration(
+  request: Request,
+  env: AdministrationEnv
+): Promise<Response> {
+  const identity = await authorizeAdministration(request, env);
+  if (isResponse(identity)) return identity;
+  return handleAuthorizedAdministration(request, env, identity);
+}

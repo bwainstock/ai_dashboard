@@ -1,0 +1,60 @@
+name = "family-dashboard-device"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[browser]
+binding = "BROWSER"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "family-dashboard"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "family-dashboard-private-images"
+
+[[send_email]]
+name = "INCIDENT_EMAIL"
+destination_address = "operator@example.com"
+
+[[services]]
+binding = "GMAIL_PROCESSOR"
+service = "family-dashboard-gmail"
+
+[vars]
+DEVICE_ORIGIN = "https://dashboard-device.example.com"
+ADMIN_ORIGIN = "https://dashboard-admin.example.com"
+OPERATIONAL_EMAIL_FROM = "dashboard@example.com"
+OPERATIONAL_EMAIL_TO = "operator@example.com"
+MAX_IMAGE_BYTES = "1000000"
+GENERATION_RETRY_MINUTES = "15"
+NOTICE_GRACE_DAYS = "3"
+MEALVIEWER_MENU_URL = "https://api.mealviewer.com/api/v4/school/SJUSDElementarySchoolsSJUSD/menu"
+LUNCH_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
+
+[ai]
+binding = "AI"
+
+# Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, CALENDAR_TOKEN_ENCRYPTION_KEY,
+# and GMAIL_PROCESSOR_KEY
+# with `wrangler secret put`; never place OAuth credentials in this file.
+# Replace the operational email placeholders with Email Routing-verified
+# addresses before deployment.
+# Route ADMIN_ORIGIN through a Cloudflare Access application. Route
+# DEVICE_ORIGIN separately without an interactive Access policy.
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+head_sampling_rate = 1
+persist = true

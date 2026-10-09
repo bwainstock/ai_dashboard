@@ -1,0 +1,21 @@
+{
+  "name": "low-confidence",
+  "candidate": {
+    "labelIds": ["INBOX"],
+    "from": "office@synthetic-school.example",
+    "subject": "Possible schedule change",
+    "body": "The assembly date may change.",
+    "receivedAt": "2026-10-07T17:00:00.000Z"
+  },
+  "modelOutput": {
+    "isNotice": true,
+    "category": "school",
+    "summary": "Assembly date may change.",
+    "relevantDate": "2026-10-12",
+    "action": null,
+    "senderOrganization": "Synthetic School",
+    "sensitive": false,
+    "confidence": 0.72
+  },
+  "expected": "protected"
+}
