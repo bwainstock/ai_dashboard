@@ -10,6 +10,7 @@ vi.mock("@cloudflare/puppeteer", () => ({
 import worker, { type Env } from "../src/index";
 
 class TestDatabase {
+  readonly preparedQueries: string[] = [];
   readonly devices = new Map<
     string,
     { tokenHash: string; friendlyId: string; viewCursor: number }
@@ -61,6 +62,7 @@ class TestDatabase {
   };
 
   prepare(query: string) {
+    this.preparedQueries.push(query);
     let parameters: unknown[] = [];
     return {
       bind: (...values: unknown[]) => {
@@ -69,6 +71,10 @@ class TestDatabase {
       },
       ...this.statement(query, () => parameters)
     };
+  }
+
+  async batch(statements: Array<{ run(): Promise<unknown> }>) {
+    return Promise.all(statements.map((statement) => statement.run()));
   }
 
   private statement(query: string, parameters: () => unknown[]) {
@@ -199,13 +205,6 @@ function testEnv(
     DEVICE_ORIGIN: "https://dashboard-device.example.com",
     ADMIN_ORIGIN: "https://dashboard-admin.example.com"
   };
-}
-
-function withAdministratorAccess(request: Request): Request {
-  const headers = new Headers(request.headers);
-  headers.set("Cf-Access-Authenticated-User-Email", "admin@example.com");
-  headers.set("Cf-Access-Jwt-Assertion", "validated-by-cloudflare-access");
-  return new Request(request, { headers });
 }
 
 describe("TRMNL BYOS device service", () => {
@@ -639,15 +638,20 @@ describe("TRMNL BYOS device service", () => {
     const env = testEnv(database, bucket);
 
     const generationResponse = await worker.fetch(
-      withAdministratorAccess(new Request("https://dashboard-admin.example.com/admin/fixture-generations", {
+      new Request("https://dashboard-device.example.com/admin/fixture-generations", {
         method: "POST",
         headers: { Authorization: "Bearer generation-secret" }
-      })),
+      }),
       env
     );
 
     expect(generationResponse.status).toBe(201);
     expect(close).toHaveBeenCalled();
+    expect(
+      database.preparedQueries.some((query) =>
+        query.includes("INSERT INTO current_render_generation")
+      )
+    ).toBe(true);
     const generation = database.publishedGeneration;
     expect(generation).toBeDefined();
     const stored = bucket.objects.get(generation!.objectKey);
