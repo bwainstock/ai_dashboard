@@ -462,6 +462,14 @@ export async function runScheduledWeatherGeneration(
     calendarImage = await ports.renderCalendarView({
       calendar,
       timezone: input.configuration.timezone,
+      weather: {
+        temperature: weather.current.temperature,
+        condition: weather.current.condition,
+        high: weather.today.high
+      },
+      lunch: {
+        entrees: renderedLunch.entrees.map(({ name }) => ({ name }))
+      },
       stale: calendarAge !== undefined,
       ...(calendarAge === undefined
         ? {}

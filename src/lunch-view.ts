@@ -4,6 +4,7 @@ import {
   type LunchIcon,
   type LunchSnapshot
 } from "./lunch";
+import { DISPLAY_BASE_CSS } from "./display-style";
 
 export interface LunchViewDay {
   date: string;
@@ -175,6 +176,19 @@ export function lunchViewHtml(model: LunchViewModel): string {
       : model.staleAgeMinutes < 60
         ? `${model.staleAgeMinutes}m old`
         : `${Math.floor(model.staleAgeMinutes / 60)}h ${model.staleAgeMinutes % 60}m old`;
+  const renderedAt = new Date(model.updatedAt);
+  const railWeekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    weekday: "short"
+  }).format(renderedAt);
+  const railMonth = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    month: "short"
+  }).format(renderedAt);
+  const railDay = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    day: "numeric"
+  }).format(renderedAt);
 
   return `<!doctype html>
 <html lang="en">
@@ -182,31 +196,45 @@ export function lunchViewHtml(model: LunchViewModel): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=800,height=480,initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
-    html, body { width: 800px; height: 480px; margin: 0; overflow: hidden; }
-    body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 17px 24px 12px; }
-    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #000; padding-bottom: 8px; }
-    .heading { display: flex; align-items: center; gap: 10px; }
-    header svg { width: 34px; height: 34px; }
-    h1 { font-size: 32px; margin: 0; }
-    header span { font-size: 17px; font-weight: 700; }
-    .missing { border: 3px solid #000; margin-top: 12px; padding: 12px; font-size: 24px; font-weight: 700; text-align: center; }
-    main { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; height: ${globalState ? "305" : "356"}px; padding-top: 11px; }
-    section { border-right: 2px solid #000; padding-right: 7px; min-width: 0; }
-    section:last-child { border-right: 0; padding-right: 0; }
-    h2 { font-size: 18px; margin: 0 0 7px; border-bottom: 2px solid #000; padding-bottom: 5px; }
-    .entree { display: flex; flex-direction: column; align-items: center; gap: 3px; border-bottom: 1px solid #000; padding: 5px 0; font-size: 15px; font-weight: 700; line-height: 1.05; text-align: center; overflow-wrap: anywhere; }
-    .entree svg { width: 43px; height: 43px; flex: none; }
-    .day-state { border: 2px solid #000; padding: 9px 5px; font-size: 16px; font-weight: 700; line-height: 1.15; }
-    footer { display: flex; justify-content: space-between; border-top: 3px solid #000; padding-top: 6px; font-size: 14px; font-weight: 700; }
-    .stale { border: 2px solid #000; padding: 1px 5px; }
+    ${DISPLAY_BASE_CSS}
+    body { display: grid; grid-template-columns: 128px 1fr; }
+    .rail { padding: 18px 13px; color: var(--paper); background: var(--ink); display: flex; flex-direction: column; }
+    .rail .day-number { font-size: 70px; line-height: 1.08; }
+    .rail .date { margin-top: 9px; font-size: 18px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+    .rail .meal-icon { width: 60px; height: 60px; margin-top: 26px; }
+    .rail .week { margin-top: 10px; font-size: 12px; font-weight: 900; line-height: 1.3; text-transform: uppercase; }
+    .rail .updated { margin-top: auto; font-size: 12px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
+    .content { min-width: 0; padding: 15px 18px 12px; }
+    header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 9px; border-bottom: 4px solid var(--ink); }
+    h1 { margin: 0; font-size: 35px; line-height: 1; }
+    header span { font-size: 12px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    .missing { border: 3px solid var(--ink); margin-top: 11px; padding: 8px 12px; font-size: 18px; font-weight: 900; text-align: center; }
+    main { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; height: ${globalState ? "306" : "348"}px; padding-top: 11px; }
+    main section { min-width: 0; padding-right: 7px; border-right: 2px solid var(--ink); overflow: hidden; }
+    main section:last-child { padding-right: 0; border-right: 0; }
+    h2 { margin: 0 0 7px; padding-bottom: 5px; border-bottom: 2px solid var(--ink); font-size: 17px; line-height: 1; }
+    .entree { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; margin-bottom: 7px; padding: 6px 3px; border: 2px solid var(--ink); border-radius: 10px; font-size: 14px; font-weight: 800; line-height: 1.02; text-align: center; overflow: hidden; overflow-wrap: anywhere; }
+    .entree:first-of-type { color: var(--paper); background: var(--ink); }
+    .entree svg { width: 42px; height: 42px; flex: none; }
+    .day-state { min-height: 64px; border: 2px solid var(--ink); border-radius: 10px; padding: 9px 5px; font-size: 15px; font-weight: 900; line-height: 1.15; }
+    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .stale { border: 2px solid var(--ink); padding: 1px 5px; }
   </style>
 </head>
 <body>
-  <header><div class="heading"><svg viewBox="0 0 48 48" role="img" aria-label="Lunch icon"><circle cx="24" cy="25" r="15" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 7v15m0-8h7M42 7v15" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg><h1>Lunch View</h1></div><span>${model.week === "upcoming" ? "Upcoming school week" : "Current school week"}</span></header>
-  ${globalState}
-  <main>${days}</main>
-  <footer><span>${model.stale ? `<span class="stale">⚠ Menu ${staleAge}</span>` : ""}</span><span>Updated ${updated}</span></footer>
+  <aside class="rail">
+    <span class="number day-number">${escapeHtml(railDay)}</span>
+    <span class="date">${escapeHtml(railWeekday)}<br>${escapeHtml(railMonth)}</span>
+    <svg class="meal-icon" viewBox="0 0 48 48" role="img" aria-label="Lunch icon"><circle cx="24" cy="25" r="15" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 7v15m0-8h7M42 7v15" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+    <span class="week">${model.week === "upcoming" ? "Upcoming school week" : "Current school week"}</span>
+    <div class="updated">Lunch View<br>Updated ${updated}</div>
+  </aside>
+  <div class="content">
+    <header><h1 class="serif">What’s for lunch</h1><span>Monday through Friday</span></header>
+    ${globalState}
+    <main>${days}</main>
+    <footer><span>${model.stale ? `<span class="stale">⚠ Menu ${staleAge}</span>` : "School menu"}</span><span>Five school days</span></footer>
+  </div>
 </body>
 </html>`;
 }

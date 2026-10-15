@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { runInNewContext } from "node:vm";
 import worker, { type Env } from "../src/index";
 import { noticesViewHtml } from "../src/notices-view";
@@ -6,6 +6,10 @@ import type { DailyBriefNotice } from "../src/generation";
 import { encryptRefreshToken } from "../src/calendar-oauth";
 
 type Role = "administrator" | "reviewer";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 class AdminDatabase {
   configuration = {
@@ -1049,6 +1053,8 @@ describe("Access-protected browser administration", () => {
   });
 
   test("administrator can correct and publish a protected record", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T12:00:00.000Z"));
     const database = new AdminDatabase();
     const environment = env(database);
     const headers = {

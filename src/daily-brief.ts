@@ -3,6 +3,7 @@ import type {
   DailyBriefWeatherModel
 } from "./generation";
 import type { LunchIcon } from "./lunch";
+import { DISPLAY_BASE_CSS } from "./display-style";
 
 function escapeHtml(value: string): string {
   return value
@@ -71,7 +72,7 @@ function lunchSection(lunch: DailyBriefLunchModel): string {
         `<div class="entree">${lunchIcon(icon)}<span>${escapeHtml(name)}</span></div>`
     )
     .join("");
-  return `<section class="lunch"><h2>Today's lunch</h2>${state}${previous}${entrees}</section>`;
+  return `<section class="side-card lunch"><span class="label">Today's lunch</span><h2 class="serif">School menu</h2>${state}${previous}<div class="entrees">${entrees}</div></section>`;
 }
 
 function staleAge(minutes?: number): string {
@@ -80,13 +81,37 @@ function staleAge(minutes?: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m old`;
 }
 
+function countdown(start: string, updatedAt: string, allDay: boolean): string {
+  if (allDay) return "ALL DAY";
+  const minutes = Math.max(
+    0,
+    Math.round(
+      (new Date(start).getTime() - new Date(updatedAt).getTime()) / 60_000
+    )
+  );
+  if (minutes === 0) return "NOW";
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
 export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   const { weather } = model;
-  const updated = new Intl.DateTimeFormat("en-US", {
+  const renderedAt = new Date(model.updatedAt);
+  const updatedParts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     hour: "numeric",
     minute: "2-digit"
-  }).format(new Date(model.updatedAt));
+  }).formatToParts(renderedAt);
+  const updatedPart = (type: Intl.DateTimeFormatPartTypes) =>
+    updatedParts.find((part) => part.type === type)?.value ?? "";
+  const updated = updatedParts.map((part) => part.value).join("");
+  const date = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "long",
+    day: "numeric"
+  }).formatToParts(renderedAt);
+  const datePart = (type: Intl.DateTimeFormatPartTypes) =>
+    date.find((part) => part.type === type)?.value ?? "";
   const stale = model.stale
     ? `<strong class="stale">⚠ Weather ${staleAge(model.staleAgeMinutes)}</strong>`
     : "";
@@ -99,22 +124,33 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
       minute: "2-digit"
     }).format(new Date(event.start));
   };
-  const events =
+  const eventMeta = (event: (typeof calendar)[number]) =>
+    `${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}`;
+  const nextEvent =
     model.calendarUnavailable
-      ? `<li class="empty" data-missing-state>Calendar unavailable</li>`
+      ? `<article class="next-event inverted" data-missing-state><span class="label">Next up</span><h1 class="serif">Calendar unavailable</h1></article>`
       : calendar.length === 0
-      ? `<li class="empty" data-missing-state>No upcoming calendar events</li>`
-      : calendar
-          .map(
-            (event) =>
-              `<li><span class="event-time">${eventTime(event)}</span><strong>${escapeHtml(event.title)}</strong><span class="event-meta">${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}</span></li>`
-          )
-          .join("");
+        ? `<article class="next-event inverted" data-missing-state><span class="label">Next up</span><h1 class="serif">No upcoming events</h1></article>`
+        : `<article class="next-event inverted">
+            <div>
+              <span class="label">Next up · ${eventTime(calendar[0])}</span>
+              <h1 class="serif">${escapeHtml(calendar[0].title)}</h1>
+              <p>${eventMeta(calendar[0])}</p>
+            </div>
+            <div class="next-time"><span class="number">${countdown(calendar[0].start, model.updatedAt, calendar[0].allDay)}</span><small>${calendar[0].allDay ? "today" : "until start"}</small></div>
+          </article>`;
+  const secondaryEvents = calendar
+    .slice(1)
+    .map(
+      (event) =>
+        `<article class="agenda-item"><time>${eventTime(event)}</time><strong class="serif">${escapeHtml(event.title)}</strong><span>${eventMeta(event)}</span></article>`
+    )
+    .join("");
   const notices = (model.notices ?? [])
-    .slice(0, 2)
+    .slice(0, 1)
     .map(
       (notice) =>
-        `<li class="notice"><strong>${escapeHtml(notice.summary)}</strong><span class="notice-meta">${escapeHtml(notice.senderOrganization)}${notice.relevantDate ? ` · ${escapeHtml(notice.relevantDate)}` : ""}${notice.action ? ` · ${escapeHtml(notice.action)}` : ""}</span></li>`
+        `<li class="notice"><strong>${escapeHtml(notice.summary)}</strong><span class="notice-meta">${escapeHtml(notice.senderOrganization)}${notice.relevantDate ? ` · ${escapeHtml(notice.relevantDate)}` : ""}</span>${notice.action ? `<span class="notice-action">${escapeHtml(notice.action)}</span>` : ""}</li>`
     )
     .join("");
   const privateMarkers = (model.privateNoticeMarkers ?? [])
@@ -125,9 +161,18 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     )
     .join("");
   const noticeItems = `${privateMarkers}${notices}`;
+  const noticeIcon = privateMarkers.length > 0
+    ? `<svg class="notice-icon" viewBox="0 0 64 64" role="img" aria-label="Private notice icon"><rect x="13" y="29" width="38" height="27" rx="3" fill="none" stroke="currentColor" stroke-width="5"/><path d="M20 29v-8a12 12 0 0 1 24 0v8" fill="none" stroke="currentColor" stroke-width="5"/></svg>`
+    : `<svg class="notice-icon" viewBox="0 0 64 64" role="img" aria-label="Household notice icon"><path d="M14 7h28l9 9v41H14zM42 7v11h9M22 29h21M22 39h21M22 49h14" fill="none" stroke="currentColor" stroke-width="5"/></svg>`;
   const noticeSection = noticeItems
-    ? `<aside class="notices" aria-label="Household Notices"><h2>Notices</h2><ul>${noticeItems}</ul></aside>`
-    : "";
+    ? `<section class="side-card notice-card inverted" aria-label="Household Notices"><span class="label">Household notice</span><div class="notice-content">${noticeIcon}<ul>${noticeItems}</ul></div></section>`
+    : `<section class="side-card tomorrow-card">
+        <span class="label">Tomorrow</span>
+        <div class="tomorrow-weather">
+          ${weatherIcon(weather.tomorrow.condition)}
+          <div><h2 class="serif">${escapeHtml(weather.tomorrow.condition)}</h2><p>High ${temperature(weather.tomorrow.high)} · Low ${temperature(weather.tomorrow.low)} · Rain ${Math.round(weather.tomorrow.precipitationProbability)}%</p></div>
+        </div>
+      </section>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -135,81 +180,81 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=800,height=480,initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
-    html, body { width: 800px; height: 480px; margin: 0; overflow: hidden; }
-    body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 18px 28px 14px; }
-    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 4px solid #000; padding-bottom: 10px; }
-    .current { display: flex; align-items: center; gap: 18px; }
-    svg { width: 60px; height: 60px; flex: none; }
-    h1 { font-size: 45px; line-height: .9; margin: 0; }
-    .condition { font-size: 20px; font-weight: 700; margin-top: 6px; }
-    .title { text-align: right; }
-    .title strong { display: block; font-size: 31px; }
-    .title span { font-size: 20px; }
-    .weather-band { display: flex; align-items: center; gap: 20px; }
-    .forecast-days { display: flex; gap: 18px; }
-    .mini-day { display: grid; grid-template-columns: 38px 1fr; align-items: center; min-width: 168px; }
-    .mini-day svg { width: 34px; height: 34px; grid-row: 1 / 3; }
-    .mini-day strong { font-size: 16px; }
-    .mini-day span { font-size: 14px; }
-    main { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; padding-top: 14px; }
-    section { border: 3px solid #000; border-radius: 10px; padding: 12px 15px; min-height: 292px; }
-    h2 { font-size: 25px; margin: 0 0 9px; }
-    ul { list-style: none; margin: 0; padding: 0; }
-    li { display: grid; grid-template-columns: 78px 1fr; gap: 3px 10px; border-top: 2px solid #000; padding: 9px 0; font-size: 20px; }
-    li:first-child { border-top: 0; }
-    .event-time { font-size: 16px; font-weight: 700; grid-row: 1 / 3; }
-    .event-meta { font-size: 15px; }
-    .empty { display: block; }
-    .lunch { padding: 12px 14px; }
-    .lunch h2 { margin-bottom: 7px; }
-    .entree { display: flex; align-items: center; gap: 9px; min-height: 70px; font-size: 19px; font-weight: 700; line-height: 1.05; }
-    .entree svg { width: 58px; height: 58px; }
-    .lunch-state { border: 3px solid #000; padding: 9px; font-size: 22px; font-weight: 700; margin-top: 20px; }
-    .last-menu { font-size: 16px; font-weight: 700; margin: 5px 0 0; text-transform: uppercase; }
-    .notices { grid-column: 1 / 3; min-height: 0; padding: 7px 12px; display: grid; grid-template-columns: 92px 1fr; align-items: center; }
-    .notices h2 { margin: 0; font-size: 20px; }
-    .notices ul { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .notices li { display: block; border: 0; padding: 0; font-size: 15px; }
-    .notice-meta { display: block; font-size: 12px; }
-    main:has(.notices) section { min-height: 224px; }
-    footer { display: flex; justify-content: space-between; align-items: center; font-size: 15px; padding-top: 8px; }
-    .stale { border: 2px solid #000; padding: 3px 7px; }
+    ${DISPLAY_BASE_CSS}
+    body { display: grid; grid-template-columns: 496px 1fr; grid-template-rows: 124px 286px 46px; gap: 0 16px; padding: 12px 18px 10px; }
+    header { grid-column: 1 / 3; display: grid; grid-template-columns: 210px 1fr 126px; align-items: center; border-bottom: 4px solid var(--ink); }
+    .clock-block { display: flex; align-items: end; gap: 7px; }
+    .clock-time { font-size: 63px; line-height: 1.04; }
+    .clock-copy strong { display: block; font-size: 16px; text-transform: uppercase; }
+    .clock-copy span { display: block; margin-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .weather { display: grid; grid-template-columns: 52px 91px 1fr; align-items: center; gap: 7px; }
+    .weather svg { width: 56px; height: 56px; }
+    .temperature { font-size: 48px; line-height: 1; white-space: nowrap; }
+    .weather-copy { font-size: 14px; line-height: 1.2; }
+    .weather-copy strong { display: block; font-size: 17px; }
+    .brand { text-align: right; }
+    .brand strong { display: block; font-size: 21px; }
+    .brand span { display: block; margin-top: 5px; font-size: 12px; font-weight: 800; }
+    .brief { padding-top: 14px; }
+    .next-event { height: 155px; padding: 14px 18px; border-radius: 15px; display: grid; grid-template-columns: minmax(0, 1fr) 132px; overflow: hidden; }
+    .next-event h1 { display: -webkit-box; margin: 7px 0 4px; font-size: 42px; line-height: .92; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .next-event p { margin: 0; font-size: 14px; font-weight: 700; }
+    .next-time { align-self: center; text-align: right; }
+    .next-time .number { display: block; font-size: 41px; line-height: .9; white-space: nowrap; }
+    .next-time small { font-size: 12px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+    .agenda { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-top: 12px; }
+    .agenda-item { min-width: 0; border-top: 3px solid var(--ink); padding-top: 7px; overflow: hidden; }
+    .agenda-item time { display: block; font-size: 13px; font-weight: 900; }
+    .agenda-item strong { display: -webkit-box; margin-top: 3px; font-size: 21px; line-height: 1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .agenda-item span { display: block; margin-top: 4px; font-size: 12px; font-weight: 700; }
+    .side { padding-top: 14px; display: grid; grid-template-rows: 134px 128px; gap: 10px; }
+    .side-card { border: 2px solid var(--ink); border-radius: 14px; padding: 11px 13px; overflow: hidden; }
+    .side-card h2 { margin: 8px 0 7px; font-size: 25px; line-height: 1; }
+    .entrees { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .entree { min-width: 0; display: grid; grid-template-columns: 30px 1fr; align-items: center; gap: 5px; border-top: 1px solid var(--ink); padding-top: 5px; font-size: 13px; font-weight: 800; line-height: 1.05; overflow: hidden; }
+    .entree svg { width: 29px; height: 29px; }
+    .lunch-state { border: 2px solid var(--ink); padding: 6px; font-size: 16px; font-weight: 900; margin-top: 8px; }
+    .last-menu { margin-top: 4px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .notice-card ul { list-style: none; margin: 8px 0 0; padding: 0; }
+    .notice-content { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 7px; }
+    .notice-icon { width: 50px; height: 50px; }
+    .notice-card ul { min-width: 0; margin: 0; }
+    .notice-card li { padding-top: 5px; border-top: 1px solid var(--paper); font-size: 16px; line-height: 1.05; }
+    .notice-card li:first-child { border-top: 0; padding-top: 0; }
+    .notice-card li strong { display: -webkit-box; font-family: Georgia, "Times New Roman", serif; font-size: 17px; font-style: italic; line-height: 1; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+    .notice-card .notice-meta, .notice-card .notice-action { display: block; margin-top: 3px; font-size: 12px; line-height: 1; }
+    .tomorrow-weather { display: grid; grid-template-columns: 58px 1fr; align-items: center; gap: 9px; margin-top: 13px; }
+    .tomorrow-weather svg { width: 56px; height: 56px; }
+    .tomorrow-weather h2 { margin: 0 0 5px; }
+    .tomorrow-weather p { margin: 0; font-size: 12px; font-weight: 800; line-height: 1.2; }
+    footer { grid-column: 1 / 3; display: flex; justify-content: space-between; align-items: end; border-top: 2px solid var(--ink); font-size: 12px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+    .stale { border: 2px solid var(--ink); padding: 2px 5px; }
   </style>
 </head>
 <body>
   <header>
-    <div class="weather-band">
-      <div class="current">
-        ${weatherIcon(weather.current.condition)}
-        <div>
-          <h1>${temperature(weather.current.temperature)}F</h1>
-          <div class="condition">${escapeHtml(weather.current.condition)}</div>
-        </div>
-      </div>
-      <div class="forecast-days">
-        <div class="mini-day">
-          ${weatherIcon(weather.today.condition)}
-          <strong>Today · ${escapeHtml(weather.today.condition)}</strong>
-          <span>High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%</span>
-        </div>
-        <div class="mini-day">
-          ${weatherIcon(weather.tomorrow.condition)}
-          <strong>Tomorrow · ${escapeHtml(weather.tomorrow.condition)}</strong>
-          <span>High ${temperature(weather.tomorrow.high)} · Low ${temperature(weather.tomorrow.low)} · Rain ${Math.round(weather.tomorrow.precipitationProbability)}%</span>
-        </div>
+    <div class="clock-block">
+      <span class="number clock-time">${escapeHtml(updatedPart("hour"))}:${escapeHtml(updatedPart("minute"))}</span>
+      <div class="clock-copy"><strong>${escapeHtml(updatedPart("dayPeriod"))}</strong><span>${escapeHtml(datePart("weekday"))} · ${escapeHtml(datePart("month"))} ${escapeHtml(datePart("day"))}</span></div>
+    </div>
+    <div class="weather">
+      ${weatherIcon(weather.current.condition)}
+      <strong class="number temperature">${temperature(weather.current.temperature)}F</strong>
+      <div class="weather-copy">
+        <strong>${escapeHtml(weather.current.condition)}</strong>
+        Today: ${escapeHtml(weather.today.condition)}<br>High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%
       </div>
     </div>
-    <div class="title"><strong>Daily Brief</strong></div>
+    <div class="brand"><strong>Family Brief</strong><span>Today at a glance</span></div>
   </header>
-  <main>
-    <section class="calendar">
-      <h2>Next up</h2>
-      <ul>${events}</ul>
-    </section>
+  <main class="brief">
+    ${nextEvent}
+    <div class="agenda">${secondaryEvents}</div>
+  </main>
+  <aside class="side">
     ${lunchSection(model.lunch)}
     ${noticeSection}
-  </main>
+  </aside>
   <footer><span>${[
     stale,
     model.calendarStaleAgeMinutes === undefined
@@ -217,7 +262,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
       : `<strong class="stale">⚠ Calendar ${staleAge(model.calendarStaleAgeMinutes)}</strong>`
   ]
     .filter(Boolean)
-    .join(" ")}</span><span>Updated ${updated}</span></footer>
+    .join(" ") || "Weather · Calendar · Lunch current"}</span><span>Updated ${updated}</span></footer>
 </body>
 </html>`;
 }

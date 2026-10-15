@@ -1,4 +1,5 @@
 import type { DailyBriefNotice } from "./generation";
+import { DISPLAY_BASE_CSS } from "./display-style";
 
 export interface NoticesViewModel {
   notices: DailyBriefNotice[];
@@ -52,15 +53,32 @@ export function noticesViewHtml(model: NoticesViewModel): string {
       return `<li>${categoryIcon(notice.category)}<div><strong>${escapeHtml(notice.summary)}</strong><span>${details}</span></div></li>`;
     })
     .join("");
+  const entryCount =
+    selectedMarkers.length +
+    Math.min(model.notices.length, 8 - selectedMarkers.length);
+  const rowCount = Math.max(1, Math.min(4, Math.ceil(entryCount / 2)));
   const content =
     markers || notices
-      ? `<ul>${markers}${notices}</ul>`
+      ? `<ul class="${entryCount % 2 === 1 ? "odd" : ""}" style="grid-template-rows: repeat(${rowCount}, minmax(0, 1fr))">${markers}${notices}</ul>`
       : '<div class="empty" data-missing-state><svg viewBox="0 0 48 48" role="img" aria-label="Notices icon"><path d="M9 10h30v28H9zM15 18h18M15 25h18M15 32h12" fill="none" stroke="currentColor" stroke-width="4"/></svg><strong>No active Household Notices</strong></div>';
   const updated = new Intl.DateTimeFormat("en-US", {
     timeZone: model.timezone,
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(model.updatedAt));
+  const renderedAt = new Date(model.updatedAt);
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    day: "numeric"
+  }).format(renderedAt);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    weekday: "short"
+  }).format(renderedAt);
+  const month = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    month: "short"
+  }).format(renderedAt);
 
   return `<!doctype html>
 <html lang="en">
@@ -68,29 +86,47 @@ export function noticesViewHtml(model: NoticesViewModel): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=800,height=480,initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
-    html, body { width: 800px; height: 480px; margin: 0; overflow: hidden; }
-    body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 17px 24px 12px; }
-    header { display: flex; align-items: center; gap: 12px; border-bottom: 4px solid #000; padding-bottom: 8px; }
-    header svg { width: 35px; height: 35px; }
-    h1 { font-size: 32px; margin: 0; }
-    main { height: 378px; padding-top: 10px; }
-    ul { height: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; gap: 7px 14px; list-style: none; margin: 0; padding: 0; overflow: hidden; }
-    li { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 0; border-bottom: 2px solid #000; padding: 5px 0; overflow: hidden; }
-    li svg { width: 42px; height: 42px; flex: none; }
+    ${DISPLAY_BASE_CSS}
+    body { display: grid; grid-template-columns: 128px 1fr; }
+    .rail { padding: 18px 13px; color: var(--paper); background: var(--ink); display: flex; flex-direction: column; }
+    .rail span, header span, footer span { overflow: hidden; }
+    .rail .day-number { font-size: 70px; line-height: .8; }
+    .rail .date { margin-top: 9px; font-size: 18px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+    .rail svg { width: 60px; height: 60px; margin-top: 28px; }
+    .rail .count { margin-top: 12px; font-size: 12px; font-weight: 900; line-height: 1.3; text-transform: uppercase; }
+    .rail .updated { margin-top: auto; font-size: 12px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
+    .content { min-width: 0; padding: 15px 18px 12px; }
+    header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 9px; border-bottom: 4px solid var(--ink); }
+    h1 { margin: 0; font-size: 35px; line-height: 1; }
+    header span { font-size: 12px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    main { height: 352px; padding-top: 11px; }
+    ul { height: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; gap: 8px 12px; list-style: none; margin: 0; padding: 0; overflow: hidden; }
+    ul.odd li:last-child { grid-column: 1 / 3; }
+    li { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 0; border: 2px solid var(--ink); border-radius: 11px; padding: 7px 9px; overflow: hidden; }
+    li:first-child { color: var(--paper); background: var(--ink); }
+    li svg { width: 40px; height: 40px; flex: none; }
     li div { min-width: 0; max-height: 100%; overflow: hidden; }
-    li strong { display: -webkit-box; font-size: 18px; line-height: 1.08; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    li span { display: -webkit-box; margin-top: 4px; font-size: 14px; line-height: 1.1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .private { border: 3px solid #000; padding: 7px; }
-    .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; border: 3px solid #000; font-size: 25px; }
+    li strong { display: -webkit-box; font-family: Georgia, "Times New Roman", serif; font-size: 17px; font-style: italic; line-height: 1.03; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    li span { display: -webkit-box; margin-top: 4px; font-size: 12px; font-weight: 700; line-height: 1.05; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .private { border-width: 3px; }
+    .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; border: 3px solid var(--ink); border-radius: 15px; font-family: Georgia, "Times New Roman", serif; font-size: 28px; font-style: italic; font-weight: 700; }
     .empty svg { width: 64px; height: 64px; }
-    footer { display: flex; justify-content: flex-end; border-top: 3px solid #000; padding-top: 6px; font-size: 14px; font-weight: 700; }
+    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
   </style>
 </head>
 <body>
-  <header><svg viewBox="0 0 48 48" role="img" aria-label="Notices icon"><path d="M9 10h30v28H9zM15 18h18M15 25h18M15 32h12" fill="none" stroke="currentColor" stroke-width="4"/></svg><h1>Notices View</h1></header>
-  <main>${content}</main>
-  <footer>Updated ${updated}</footer>
+  <aside class="rail">
+    <span class="number day-number">${escapeHtml(day)}</span>
+    <span class="date">${escapeHtml(weekday)}<br>${escapeHtml(month)}</span>
+    <svg viewBox="0 0 48 48" role="img" aria-label="Notices icon"><path d="M9 10h30v28H9zM15 18h18M15 25h18M15 32h12" fill="none" stroke="currentColor" stroke-width="4"/></svg>
+    <span class="count">${entryCount} active notices</span>
+    <div class="updated">Notices View<br>Updated ${updated}</div>
+  </aside>
+  <div class="content">
+    <header><h1 class="serif">Household notices</h1><span>Important family updates</span></header>
+    <main>${content}</main>
+    <footer><span>Approved display fields only</span><span>Updated ${updated}</span></footer>
+  </div>
 </body>
 </html>`;
 }
