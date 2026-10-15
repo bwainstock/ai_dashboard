@@ -119,16 +119,23 @@ last-good section with its snapshot age.
 
 ## Screen design
 
-Icons are visually primary but always accompanied by short text. Use bundled, open-licensed, monochrome SVG assets rendered inline; do not depend on remote assets or MealViewer images.
+All four views are fixed 800x480 monochrome compositions. They share condensed
+sans-serif labels and numbers, editorial serif headings, inversion, spacing,
+and rule styles. Use bundled, open-licensed SVG assets rendered inline and pair
+every icon with text; do not depend on remote assets or MealViewer images.
+Keep every element inside the viewport and all visible text at least 12px.
 
 ### Daily Brief
 
-- Compact weather band across the top.
-- Calendar uses roughly 60% of the body.
-- Lunch uses roughly 40% of the body, with larger food icons.
-- Phase 2 adds at most two Household Notices without shrinking text below the readability threshold.
-- Footer shows one global update time.
-- A stale section shows a warning marker and age.
+- The header combines local time and date, current weather, today's forecast,
+  and the Family Brief label.
+- The next event is the visual anchor: an inverted card with its start time,
+  title, owner label, and countdown. Up to two later events appear below it.
+- The side column shows today's lunch and either tomorrow's weather or the
+  available Household Notice content. The notice card may contain one approved
+  Household Notice and up to two account-only Private Notice Markers.
+- The footer shows one global update time and warning markers with ages for
+  stale weather or calendar data.
 
 ### Weather
 
@@ -142,7 +149,11 @@ Use Open-Meteo with administrator-configured coordinates. San Jose is the initia
 
 ### Calendar
 
-The Daily Brief shows the next three relevant events, prioritizing today. Calendar View shows up to twelve events grouped under Today and the following two local calendar days, then `+N more`.
+The Daily Brief shows the next three relevant events, prioritizing today.
+Calendar View uses a local-time, date, weather, and update rail beside three
+day lanes for Today and the following two local calendar days. It shows up to
+twelve events, features the first event of today, reports `+N more`, and may
+use spare space for today's lunch.
 
 Rules:
 
@@ -154,10 +165,14 @@ Rules:
 - Show shortened location only on Calendar View.
 - Never show descriptions, attendees, conferencing links, organizer addresses, or personal email addresses.
 - Use compact 12-hour local time; all-day events precede timed events.
+- Distinguish calendar ownership with deterministic monochrome edge patterns,
+  not color alone.
 
 ### Lunch
 
-The Daily Brief shows today's entree options. Lunch View shows entree options for the current school week; on Saturday and Sunday it shows the upcoming school week.
+The Daily Brief shows today's entree options. Lunch View uses the shared date
+and update rail beside five Monday-through-Friday lanes. It shows the current
+school week on weekdays and the upcoming school week on Saturday and Sunday.
 
 Rules:
 
@@ -179,6 +194,14 @@ Initial lunch icon enum:
 - `generic`
 
 Deterministic exact/keyword mappings and cached decisions run first. Workers AI may classify genuinely unknown names, but its output must be one exact enum value; every invalid or uncertain result becomes `generic`.
+
+### Notices
+
+Notices View uses the shared date and update rail with an adaptive two-column
+card grid. It shows at most eight entries total, including up to two Private
+Notice Markers. Approved cards pair a category icon with the neutral summary,
+relevant date, requested action, and sender organization. Private markers show
+only the account label, and the empty state says `No active Household Notices`.
 
 ## Data freshness and failure behavior
 
