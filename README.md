@@ -21,6 +21,7 @@ Documentation:
 - [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
 - [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
 - [Ticket #31 ESPHome BYOS manifest acceptance](docs/acceptance/ticket-31-esphome-byos-manifest.md)
+- [Ticket #32 ESPHome Daily Brief proof of concept](docs/acceptance/ticket-32-esphome-daily-brief.md)
 
 ## Development
 
