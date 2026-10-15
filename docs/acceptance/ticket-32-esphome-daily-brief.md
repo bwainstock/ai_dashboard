@@ -15,6 +15,8 @@ The configuration follows Seeed's kit-specific ESPHome cookbook:
 - Waveshare `7.50inv2`, CS GPIO44, DC GPIO10, reset GPIO38, and inverted busy
   GPIO4;
 - 800x480 binary image data and a single unrotated full-panel refresh.
+- Explicit monochrome color mapping so bright PNG pixels draw as white paper
+  and dark PNG pixels draw as black ink.
 
 Compile with the pinned stable ESPHome release through `uv`:
 

@@ -39,6 +39,15 @@ test("ESPHome Daily Brief updates only after a validated private image", async (
   assert.match(config, /on_error:/);
 });
 
+test("ESPHome maps bright PNG pixels to white e-paper pixels", async () => {
+  const config = await readFile(configUrl, "utf8");
+
+  assert.match(
+    config,
+    /it\.image\(0,\s*0,\s*id\(dashboard_image\),\s*COLOR_OFF,\s*COLOR_ON\)/,
+  );
+});
+
 test("Key 3 double-click requests one server-managed button navigation", async () => {
   const config = await readFile(configUrl, "utf8");
 

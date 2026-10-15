@@ -236,7 +236,7 @@ display:
     rotation: 0°
     update_interval: never
     lambda: |-
-      it.image(0, 0, id(dashboard_image));
+      it.image(0, 0, id(dashboard_image), COLOR_OFF, COLOR_ON);
 
 binary_sensor:
   - platform: gpio
