@@ -99,4 +99,22 @@ describe("Calendar View", () => {
     expect(html).not.toContain("Event 14");
     expect(html).not.toMatch(/@|description|attendee|organizer|https?:\/\//i);
   });
+
+  test("filters to the displayed three-day window before applying the event limit", () => {
+    const calendar = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        event(`Old event ${index + 1}`, "2026-10-01T16:00:00.000Z")
+      ),
+      event("Visible event", "2026-10-07T18:00:00.000Z")
+    ];
+
+    const html = calendarViewHtml({
+      calendar,
+      timezone: "America/Los_Angeles",
+      updatedAt: "2026-10-07T17:30:00.000Z"
+    });
+
+    expect(html).toContain("Visible event");
+    expect(html).not.toContain("Old event 1");
+  });
 });

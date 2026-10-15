@@ -184,7 +184,47 @@ test("stale sections show their own ages while retaining one global update time"
   expect(html.match(/Updated 10:30 AM/g)).toHaveLength(1);
 });
 
-test("Daily Brief publishes at most two notices using only approved fields", () => {
+test("Daily Brief derives the next-event countdown from the generation time", () => {
+  const html = dailyBriefHtml({
+    weather: {
+      observedAt: "2026-10-07T10:25",
+      current: { temperature: 68, condition: "Clear" },
+      today: {
+        date: "2026-10-07",
+        condition: "Clear",
+        high: 75,
+        low: 55,
+        precipitationProbability: 0
+      },
+      tomorrow: {
+        date: "2026-10-08",
+        condition: "Clear",
+        high: 76,
+        low: 56,
+        precipitationProbability: 0
+      }
+    },
+    calendar: [
+      {
+        occurrenceId: "practice|2026-10-07T19:00:00.000Z",
+        title: "Practice",
+        start: "2026-10-07T19:00:00.000Z",
+        end: "2026-10-07T20:00:00.000Z",
+        allDay: false,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Dad"]
+      }
+    ],
+    stale: false,
+    lunch: { status: "available", stale: false, entrees: [] },
+    updatedAt: "2026-10-07T17:30:00.000Z"
+  });
+
+  expect(html).toContain('class="number">1:30</span><small>until start');
+});
+
+test("Daily Brief publishes the highest-priority notice using only approved fields", () => {
   const html = dailyBriefHtml({
     weather: {
       observedAt: "2026-10-07T10:25",
@@ -233,7 +273,7 @@ test("Daily Brief publishes at most two notices using only approved fields", () 
   });
 
   expect(html).toContain("Field trip permission form is due.");
-  expect(html).toContain("Childcare closes early Friday.");
+  expect(html).not.toContain("Childcare closes early Friday.");
   expect(html).not.toContain("This third notice must not render.");
   for (const forbidden of [
     "teacher@school.example",

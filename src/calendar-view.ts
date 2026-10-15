@@ -1,9 +1,18 @@
 import type { CalendarEvent } from "./calendar";
+import { DISPLAY_BASE_CSS } from "./display-style";
 
 export interface CalendarViewModel {
   calendar: CalendarEvent[];
   timezone: string;
   updatedAt: string;
+  weather?: {
+    temperature: number;
+    condition: string;
+    high: number;
+  };
+  lunch?: {
+    entrees: Array<{ name: string }>;
+  };
   stale?: boolean;
   staleAgeMinutes?: number;
   unavailable?: boolean;
@@ -66,14 +75,33 @@ function dayHeading(date: string, offset: number, timezone: string): string {
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
-function eventItem(event: CalendarEvent, timezone: string): string {
+function compactDateLabel(date: string, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric"
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function eventPattern(event: CalendarEvent): string {
+  const owner = event.ownerLabels.join("|");
+  let total = 0;
+  for (const character of owner) total += character.charCodeAt(0);
+  return ["solid", "hatch", "dots"][total % 3];
+}
+
+function eventItem(
+  event: CalendarEvent,
+  timezone: string,
+  featured: boolean
+): string {
   const location =
     event.location && !event.private
       ? `<span class="location">${escapeHtml(event.location)}</span>`
       : "";
   const owner = escapeHtml(event.ownerLabels.join(" & "));
   const tentative = event.tentative ? "Tentative · " : "";
-  return `<li>
+  return `<li class="${eventPattern(event)}${featured ? " featured" : ""}">
     <span class="time">${compactTime(event, timezone)}</span>
     <strong>${escapeHtml(event.title)}</strong>
     <span class="meta">${tentative}${owner}</span>
@@ -83,8 +111,13 @@ function eventItem(event: CalendarEvent, timezone: string): string {
 
 export function calendarViewHtml(model: CalendarViewModel): string {
   const firstDay = localDate(new Date(model.updatedAt), model.timezone);
-  const visible = model.calendar.slice(0, 12);
-  const overflow = Math.max(0, model.calendar.length - visible.length);
+  const lastDay = addDays(firstDay, 2);
+  const inWindow = model.calendar.filter((event) => {
+    const date = eventDate(event, model.timezone);
+    return date >= firstDay && date <= lastDay;
+  });
+  const visible = inWindow.slice(0, 12);
+  const overflow = Math.max(0, inWindow.length - visible.length);
   const days = [0, 1, 2].map((offset) => {
     const date = addDays(firstDay, offset);
     const events = visible
@@ -93,21 +126,48 @@ export function calendarViewHtml(model: CalendarViewModel): string {
         if (left.allDay !== right.allDay) return left.allDay ? -1 : 1;
         return left.start.localeCompare(right.start);
       });
+    const lunch =
+      offset === 0 && events.length <= 3 && model.lunch
+        ? `<div class="lunch-summary"><strong>Lunch today</strong>${model.lunch.entrees
+            .slice(0, 2)
+            .map(({ name }) => `<span>${escapeHtml(name)}</span>`)
+            .join("")}</div>`
+        : "";
     return `<section>
-      <h2>${dayHeading(date, offset, model.timezone)}<small>${escapeHtml(date)}</small></h2>
+      <h2>${dayHeading(date, offset, model.timezone)}<small>${escapeHtml(compactDateLabel(date, model.timezone))}</small></h2>
       <ul>${
         model.unavailable
           ? '<li class="empty" data-missing-state>Calendar unavailable</li>'
-          : events.map((event) => eventItem(event, model.timezone)).join("") ||
+          : events
+              .map((event, index) =>
+                eventItem(event, model.timezone, offset === 0 && index === 0)
+              )
+              .join("") ||
             '<li class="empty" data-missing-state>No events</li>'
-      }</ul>
+      }</ul>${lunch}
     </section>`;
   });
-  const updated = new Intl.DateTimeFormat("en-US", {
+  const updatedParts = new Intl.DateTimeFormat("en-US", {
     timeZone: model.timezone,
     hour: "numeric",
     minute: "2-digit"
-  }).format(new Date(model.updatedAt));
+  }).formatToParts(new Date(model.updatedAt));
+  const updatedPart = (type: Intl.DateTimeFormatPartTypes) =>
+    updatedParts.find((part) => part.type === type)?.value ?? "";
+  const updated = `${updatedPart("hour")}:${updatedPart("minute")} ${updatedPart("dayPeriod")}`;
+  const renderedAt = new Date(model.updatedAt);
+  const railWeekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    weekday: "short"
+  }).format(renderedAt);
+  const railMonth = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    month: "short"
+  }).format(renderedAt);
+  const railDay = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    day: "numeric"
+  }).format(renderedAt);
 
   return `<!doctype html>
 <html lang="en">
@@ -115,44 +175,69 @@ export function calendarViewHtml(model: CalendarViewModel): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=800,height=480,initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
-    html, body { width: 800px; height: 480px; margin: 0; overflow: hidden; }
-    body { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; padding: 17px 24px 12px; }
-    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #000; padding-bottom: 8px; }
-    .heading { display: flex; align-items: center; gap: 10px; }
-    header svg { width: 34px; height: 34px; }
-    h1 { font-size: 32px; margin: 0; }
-    header span { font-size: 16px; font-weight: 700; }
-    main { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; height: 375px; padding-top: 11px; }
-    section { border-right: 2px solid #000; padding-right: 10px; }
-    section:last-child { border-right: 0; padding-right: 0; }
-    h2 { display: flex; justify-content: space-between; align-items: baseline; font-size: 23px; margin: 0 0 5px; }
-    h2 small { font-size: 12px; }
+    ${DISPLAY_BASE_CSS}
+    body { display: grid; grid-template-columns: 128px 1fr; }
+    .rail { padding: 18px 13px; color: var(--paper); background: var(--ink); display: flex; flex-direction: column; }
+    .rail .clock { font-size: 53px; line-height: 1; white-space: nowrap; }
+    .rail .date { margin-top: 10px; font-size: 16px; font-weight: 900; line-height: 1.15; text-transform: uppercase; }
+    .rail .weather { margin-top: 24px; padding-top: 14px; border-top: 2px solid var(--paper); }
+    .rail .weather svg { width: 38px; height: 38px; margin-bottom: 5px; }
+    .rail .weather strong { display: block; font-size: 34px; line-height: 1; }
+    .rail .weather span { display: block; margin-top: 5px; font-size: 12px; font-weight: 800; line-height: 1.25; }
+    .rail .updated { margin-top: auto; font-size: 12px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
+    .content { min-width: 0; padding: 15px 18px 12px; }
+    header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 9px; border-bottom: 4px solid var(--ink); }
+    h1 { margin: 0; font-size: 35px; line-height: 1; }
+    header span { font-size: 12px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; height: 352px; padding-top: 11px; }
+    main section { min-width: 0; padding-right: 9px; border-right: 2px solid var(--ink); overflow: hidden; }
+    main section:last-child { padding-right: 0; border-right: 0; }
+    h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; font-size: 20px; }
+    h2 small { font-size: 12px; text-transform: uppercase; }
     ul { list-style: none; padding: 0; margin: 0; }
-    li { display: grid; grid-template-columns: 63px 1fr; column-gap: 6px; border-top: 1px solid #000; padding: 5px 0; line-height: 1.05; }
-    li:first-child { border-top: 2px solid #000; }
-    .time { grid-row: 1 / 4; font-size: 13px; font-weight: 700; white-space: nowrap; }
-    li strong { font-size: 16px; }
-    .meta, .location { font-size: 12px; }
+    li { position: relative; min-width: 0; height: 70px; margin-bottom: 7px; padding: 4px 7px 4px 13px; border: 2px solid var(--ink); border-radius: 10px; line-height: 1; overflow: hidden; }
+    li::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 6px; background: var(--ink); }
+    li.hatch::before { background: repeating-linear-gradient(135deg, var(--ink) 0 2px, var(--paper) 2px 4px); border-right: 1px solid var(--ink); }
+    li.dots::before { background-color: var(--paper); background-image: radial-gradient(var(--ink) 1.4px, transparent 1.4px); background-size: 5px 5px; border-right: 1px solid var(--ink); }
+    li.featured { height: 88px; color: var(--paper); background: var(--ink); }
+    li.featured::before { background: var(--paper); }
+    .time { display: block; font-size: 12px; font-weight: 900; text-transform: uppercase; white-space: nowrap; }
+    li strong { display: -webkit-box; margin-top: 1px; font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-style: italic; line-height: 1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .meta, .location { display: block; margin-top: 1px; font-size: 12px; font-weight: 700; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .location::before { content: "⌖ "; }
-    .empty { display: block; border-top: 2px solid #000; font-size: 15px; }
-    footer { display: flex; justify-content: space-between; border-top: 3px solid #000; padding-top: 6px; font-size: 14px; font-weight: 700; }
-    .stale { border: 2px solid #000; padding: 1px 5px; }
+    .empty { display: block; min-height: 58px; padding: 12px; font-size: 15px; font-weight: 900; }
+    .lunch-summary { margin-top: 10px; padding-top: 8px; border-top: 3px solid var(--ink); font-size: 12px; line-height: 1.25; }
+    .lunch-summary strong { display: block; margin-bottom: 3px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+    .lunch-summary span { display: block; }
+    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .stale { border: 2px solid var(--ink); padding: 1px 5px; }
   </style>
 </head>
 <body>
-  <header><div class="heading"><svg viewBox="0 0 48 48" role="img" aria-label="Calendar icon"><rect x="6" y="9" width="36" height="33" rx="3" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 19h36M15 5v9m18-9v9" stroke="currentColor" stroke-width="4"/></svg><h1>Calendar View</h1></div><span>Today + next 2 days</span></header>
-  <main>${days.join("")}</main>
-  <footer>
-    <span>${
-      model.stale
-        ? `<span class="stale">⚠ Calendar ${ageLabel(model.staleAgeMinutes ?? 0)}</span>`
-        : model.unavailable
-          ? '<span class="stale">⚠ Calendar unavailable</span>'
-          : ""
-    }</span>
-    <span>${overflow > 0 ? `+${overflow} more · ` : ""}Updated ${updated}</span>
-  </footer>
+  <aside class="rail">
+    <span class="number clock">${escapeHtml(updatedPart("hour"))}:${escapeHtml(updatedPart("minute"))}</span>
+    <span class="date">${escapeHtml(updatedPart("dayPeriod"))} · ${escapeHtml(railWeekday)}<br>${escapeHtml(railMonth)} ${escapeHtml(railDay)}</span>
+    <div class="weather"><svg viewBox="0 0 48 48" role="img" aria-label="Calendar icon"><rect x="6" y="9" width="36" height="33" rx="3" fill="none" stroke="currentColor" stroke-width="4"/><path d="M6 19h36M15 5v9m18-9v9" stroke="currentColor" stroke-width="4"/></svg>${
+      model.weather
+        ? `<strong class="number">${Math.round(model.weather.temperature)}°</strong><span>${escapeHtml(model.weather.condition)}<br>High ${Math.round(model.weather.high)}°</span>`
+        : `<strong class="number">${visible.length}</strong><span>events across<br>three days</span>`
+    }</div>
+    <div class="updated">Family calendar<br>Updated ${updated}</div>
+  </aside>
+  <div class="content">
+    <header><h1 class="serif">What’s happening</h1><span>Today + next 2 days</span></header>
+    <main>${days.join("")}</main>
+    <footer>
+      <span>${
+        model.stale
+          ? `<span class="stale">⚠ Calendar ${ageLabel(model.staleAgeMinutes ?? 0)}</span>`
+          : model.unavailable
+            ? '<span class="stale">⚠ Calendar unavailable</span>'
+            : "Family schedule"
+      }</span>
+      <span>${overflow > 0 ? `+${overflow} more` : "All visible"}</span>
+    </footer>
+  </div>
 </body>
 </html>`;
 }

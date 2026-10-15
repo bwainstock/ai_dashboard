@@ -115,6 +115,17 @@ describe("scheduled weather generation", () => {
     expect(boundary.renderCalendarView).toHaveBeenCalledWith({
       calendar: [],
       timezone: "America/Los_Angeles",
+      weather: {
+        temperature: 68,
+        condition: "Mostly clear",
+        high: 75
+      },
+      lunch: {
+        entrees: [
+          { name: "Cheese Pizza" },
+          { name: "Vegetable Yakisoba" }
+        ]
+      },
       stale: false,
       updatedAt: "2026-10-07T17:30:00.000Z"
     });
