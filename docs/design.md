@@ -29,6 +29,11 @@ The system favors low maintenance, controlled handling of Gmail data, readable c
 
 The device keeps the open TRMNL firmware and talks to a custom BYOS-compatible Cloudflare Worker. TRMNL's paid hosted service, Home Assistant, and custom ESP32 firmware are not required.
 
+Stock TRMNL firmware remains the standard device path. An optional ESPHome
+proof of concept may reuse the same authenticated display manifest and private
+image routes, but it does not add device-specific endpoints or replace the
+supported BYOS architecture.
+
 ```text
 Google Calendar ─┐
 Open-Meteo ──────┴─> source adapters ─> normalized snapshots ─> HTML/CSS renderer

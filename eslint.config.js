@@ -27,5 +27,13 @@ export default tseslint.config(
         URL: "readonly"
       }
     }
+  },
+  {
+    files: ["test/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Response: "readonly"
+      }
+    }
   }
 );

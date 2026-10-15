@@ -20,6 +20,7 @@ Documentation:
 - [Ticket #2 private BYOS acceptance](docs/acceptance/ticket-2-private-byos.md)
 - [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
 - [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
+- [Ticket #31 ESPHome BYOS manifest acceptance](docs/acceptance/ticket-31-esphome-byos-manifest.md)
 
 ## Development
 

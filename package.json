@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "acceptance:byos-manifest": "node scripts/verify-byos-manifest.mjs",
     "acceptance:device": "node scripts/verify-device-image.mjs",
     "acceptance:run": "node scripts/run-device-acceptance.mjs",
     "acceptance:validate": "node scripts/validate-acceptance-report.mjs",

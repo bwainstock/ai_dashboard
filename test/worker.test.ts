@@ -622,6 +622,91 @@ describe("TRMNL BYOS device service", () => {
     expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(0);
   });
 
+  test.each(["timer", "scheduled", "powercycle", "unknown"])(
+    "%s wake selects Daily Brief without advancing the device cursor",
+    async (updateSource) => {
+      const database = new TestDatabase();
+      database.publishedGeneration = {
+        filename: "daily-brief-20261007T173000Z.png",
+        objectKey: "generations/20261007T173000Z/daily-brief.png",
+        byteSize: 12_345,
+        viewType: "daily_brief"
+      };
+      database.calendarGeneration = {
+        filename: "calendar-view-20261007T173000Z.png",
+        objectKey: "generations/20261007T173000Z/calendar-view.png",
+        byteSize: 12_346,
+        viewType: "calendar"
+      };
+      const env = testEnv(database);
+      const setupResponse = await worker.fetch(
+        new Request("https://device.test/api/setup", {
+          headers: { ID: "AA:BB:CC:DD:EE:FF" }
+        }),
+        env
+      );
+      const { api_key: token } = await setupResponse.json<{
+        api_key: string;
+      }>();
+
+      const response = await worker.fetch(
+        new Request("https://device.test/api/display", {
+          headers: {
+            ID: "AA:BB:CC:DD:EE:FF",
+            "Access-Token": token,
+            "Update-Source": updateSource
+          }
+        }),
+        env
+      );
+
+      expect((await response.json<{ filename: string }>()).filename).toBe(
+        "daily-brief-20261007T173000Z.png"
+      );
+      expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(0);
+    }
+  );
+
+  test("one manual button request advances the server-managed cursor exactly once", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/daily-brief.png",
+      byteSize: 12_345,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: "calendar-view-20261007T173000Z.png",
+      objectKey: "generations/20261007T173000Z/calendar-view.png",
+      byteSize: 12_346,
+      viewType: "calendar"
+    };
+    const env = testEnv(database);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: "AA:BB:CC:DD:EE:FF" }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/display", {
+        headers: {
+          ID: "AA:BB:CC:DD:EE:FF",
+          "Access-Token": token,
+          "Update-Source": "button"
+        }
+      }),
+      env
+    );
+
+    expect((await response.json<{ filename: string }>()).filename).toBe(
+      "calendar-view-20261007T173000Z.png"
+    );
+    expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(1);
+  });
+
   test("view cache filenames are distinct and remain stable until the next generation", async () => {
     const database = new TestDatabase();
     database.publishedGeneration = {
@@ -799,6 +884,23 @@ describe("TRMNL BYOS device service", () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(
       new Uint8Array([137, 80, 78, 71])
     );
+  });
+
+  test("private image delivery rejects an invalid device token", async () => {
+    const response = await worker.fetch(
+      new Request(
+        "https://device.test/images/daily-brief-20261007T170000Z.png",
+        {
+          headers: {
+            ID: "AA:BB:CC:DD:EE:FF",
+            "Access-Token": "not-the-issued-token"
+          }
+        }
+      ),
+      testEnv()
+    );
+
+    expect(response.status).toBe(401);
   });
 
   test("an R2 object is not available until its generation is published", async () => {
