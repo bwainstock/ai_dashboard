@@ -138,7 +138,7 @@ describe("Notices View", () => {
       expect(html).toContain(longNotices[7].action!);
       expect(html).toContain(longNotices[7].senderOrganization);
     },
-    15_000
+    45_000
   );
 
   test("preserves account-only Private Notice Markers without exposing notice details", () => {

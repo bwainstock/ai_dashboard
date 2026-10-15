@@ -267,13 +267,10 @@ function testEnv(
 }
 
 function scheduledEnv(database = new ScheduledTestDatabase()): Env {
-  return {
-    ...testEnv(
-      database as unknown as TestDatabase,
-      new TestBucket()
-    ),
-    MEALVIEWER_MENU_URL: "https://menus.example.test/current"
-  };
+  return testEnv(
+    database as unknown as TestDatabase,
+    new TestBucket()
+  );
 }
 
 function validRenderInspection() {
@@ -336,7 +333,7 @@ afterEach(() => {
 });
 
 describe("TRMNL BYOS device service", () => {
-  test("a complete due scheduled generation uses one browser for all four views and closes it once", async () => {
+  test("a complete due scheduled generation uses one browser for both views and closes it once", async () => {
     vi.stubGlobal("fetch", vi.fn(scheduledFetch));
     const database = new ScheduledTestDatabase();
     const close = vi.fn();
@@ -363,13 +360,11 @@ describe("TRMNL BYOS device service", () => {
     );
 
     expect(launchBrowser).toHaveBeenCalledOnce();
-    expect(renderedHtml).toHaveLength(4);
-    expect(new Set(renderedHtml)).toHaveLength(4);
+    expect(renderedHtml).toHaveLength(2);
+    expect(new Set(renderedHtml)).toHaveLength(2);
     expect(database.publishedViewTypes).toEqual([
       "daily_brief",
-      "calendar",
-      "lunch",
-      "notices"
+      "calendar"
     ]);
     expect(close).toHaveBeenCalledOnce();
   });
@@ -409,6 +404,38 @@ describe("TRMNL BYOS device service", () => {
     );
 
     expect(launchBrowser).not.toHaveBeenCalled();
+  });
+
+  test("an authenticated administrator can force a two-view generation", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase();
+    const screenshot = new Uint8Array(24);
+    screenshot.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    new DataView(screenshot.buffer).setUint32(16, 800);
+    new DataView(screenshot.buffer).setUint32(20, 480);
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => screenshot)
+      })),
+      close: vi.fn()
+    });
+
+    const response = await worker.fetch(
+      new Request("https://device.test/admin/generations", {
+        method: "POST",
+        headers: { Authorization: "generation-secret" }
+      }),
+      scheduledEnv(database)
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json<{ status: string }>()).toMatchObject({
+      status: "published"
+    });
+    expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
   });
 
   test("setup exchanges a device MAC address for a high-entropy per-device token", async () => {
@@ -688,7 +715,7 @@ describe("TRMNL BYOS device service", () => {
     );
   });
 
-  test("short presses complete the Daily Brief to Calendar View to Lunch View to Notices View cycle", async () => {
+  test("short presses alternate Calendar View and Daily Brief", async () => {
     const database = new TestDatabase();
     database.publishedGeneration = {
       filename: "daily-brief-20261007T173000Z.png",
@@ -701,18 +728,6 @@ describe("TRMNL BYOS device service", () => {
       objectKey: "generations/20261007T173000Z/calendar-view.png",
       byteSize: 12_346,
       viewType: "calendar"
-    };
-    database.lunchGeneration = {
-      filename: "lunch-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/lunch-view.png",
-      byteSize: 12_347,
-      viewType: "lunch"
-    };
-    database.noticesGeneration = {
-      filename: "notices-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/notices-view.png",
-      byteSize: 12_348,
-      viewType: "notices"
     };
     const env = testEnv(database);
     const setupResponse = await worker.fetch(
@@ -729,7 +744,7 @@ describe("TRMNL BYOS device service", () => {
     };
 
     const filenames = [];
-    for (let press = 0; press < 4; press += 1) {
+    for (let press = 0; press < 2; press += 1) {
       const response = await worker.fetch(
         new Request("https://device.test/api/display", { headers }),
         env
@@ -739,11 +754,9 @@ describe("TRMNL BYOS device service", () => {
 
     expect(filenames).toEqual([
       "calendar-view-20261007T173000Z.png",
-      "lunch-view-20261007T173000Z.png",
-      "notices-view-20261007T173000Z.png",
       "daily-brief-20261007T173000Z.png"
     ]);
-    expect(new Set(filenames).size).toBe(4);
+    expect(new Set(filenames).size).toBe(2);
   });
 
   test("authenticated image delivery serves the published private R2 object as PNG", async () => {

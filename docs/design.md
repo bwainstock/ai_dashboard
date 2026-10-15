@@ -12,18 +12,18 @@ The system favors low maintenance, controlled handling of Gmail data, readable c
 
 - Today and tomorrow weather for San Jose, California.
 - Selected events from two consumer Google accounts for today and the next two local calendar days.
-- School lunch from the SJUSD Elementary Schools MealViewer feed.
-- A Daily Brief plus Calendar View, Lunch View, and Notices View.
+- A weather-and-calendar Daily Brief plus Calendar View.
 - Four scheduled updates every day at 06:30, 10:30, 15:00, and 19:00 in `America/Los_Angeles`.
 - Forward-only navigation using the stock firmware's wake button.
 - Protected configuration and operational status pages.
 
-### Phase 2
+### Deferred sources
 
+- School lunch from the SJUSD Elementary Schools MealViewer feed.
 - Household Notices extracted from both Gmail accounts.
-- Up to two notices on the Daily Brief and up to eight on Notices View.
 - Protected review of uncertain or sensitive results.
-- Cloudflare Workers AI classification and extraction.
+- Lunch and Gmail processing remain outside the active generation and device
+  view cycle until explicitly resumed.
 
 ## Architecture
 
@@ -31,12 +31,10 @@ The device keeps the open TRMNL firmware and talks to a custom BYOS-compatible C
 
 ```text
 Google Calendar ─┐
-Open-Meteo ──────┼─> source adapters ─> normalized snapshots ─┐
-MealViewer ──────┘                                            │
-                                                              ├─> HTML/CSS renderer
-Gmail ─> private Gmail Worker ─> validated notices ────────────┘        │
+Open-Meteo ──────┴─> source adapters ─> normalized snapshots ─> HTML/CSS renderer
+                                                                       │
                                                                        v
-                                                            Browser Rendering
+                                                              Browser Rendering
                                                                        │
                                                                        v
 TRMNL device <─ device Worker <─ private R2 PNGs <─ generation pointer in D1
@@ -49,11 +47,11 @@ TRMNL device <─ device Worker <─ private R2 PNGs <─ generation pointer in 
 - **Workers**:
   - Device API and image delivery.
   - Access-protected administration and status UI.
-  - Phase-2 Gmail processing isolated from the main application.
-- **D1**: configuration, encrypted OAuth credentials, selected calendars, normalized source snapshots, notice records, device state, and immutable generation pointers.
+  - Deferred Gmail processing remains isolated from the main application.
+- **D1**: configuration, encrypted OAuth credentials, selected calendars, normalized source snapshots, device state, and immutable generation pointers.
 - **R2**: private immutable 800x480 PNG generations.
 - **Browser Rendering**: scheduled HTML/CSS screenshots.
-- **Workers AI**: constrained lunch-icon fallback and phase-2 Household Notice extraction.
+- **Workers AI**: reserved for deferred source processing.
 - **Cron Triggers**: local-time generation scheduling and one delayed retry.
 - **Cloudflare Access**: browser authentication and role enforcement.
 - **Cloudflare Email**: a verified send-email binding for actionable failure
@@ -82,7 +80,7 @@ The current stock firmware exposes one reliable wake button for this board targe
 
 - Timer wake: return the latest Daily Brief and set the interval until the next configured local update.
 - Short press: advance the per-device view cursor.
-- View cycle: Daily Brief -> Calendar View -> Lunch View -> Notices View -> Daily Brief.
+- View cycle: Daily Brief -> Calendar View -> Daily Brief.
 - The next timer wake always returns to the Daily Brief.
 - Manual data refresh is intentionally omitted.
 - Long firmware gestures retain their built-in Wi-Fi and credential-reset behavior.
@@ -119,23 +117,23 @@ last-good section with its snapshot age.
 
 ## Screen design
 
-All four views are fixed 800x480 monochrome compositions. They share condensed
+Both active views are fixed 800x480 monochrome compositions. They share condensed
 sans-serif labels and numbers, editorial serif headings, inversion, spacing,
 and rule styles. Use bundled, open-licensed SVG assets rendered inline and pair
-every icon with text; do not depend on remote assets or MealViewer images.
+every icon with text; do not depend on remote assets.
 Keep every element inside the viewport and all visible text at least 12px.
 
 ### Daily Brief
 
-- The header combines the local day and date, today's condition and forecast,
-  and the Family Brief label. It omits a clock and current temperature because
-  scheduled generations may remain displayed for hours.
-- The next three relevant events use equal visual weight and show their start
-  time, title, and owner label without a live-style countdown or `Next up`
-  treatment.
-- The side column shows today's lunch and either tomorrow's weather or the
-  available Household Notice content. The notice card may contain one approved
-  Household Notice and up to two account-only Private Notice Markers.
+- The header combines the local day and date with the Family Dashboard label.
+- Today and tomorrow forecasts show condition, high, low, and precipitation
+  probability.
+- Up to six calendar entries use equal visual weight and show their date,
+  start time, title, and owner label without a live-style countdown or
+  `Next up` treatment.
+- No view shows a clock, current temperature, or `current`, `live`, or
+  `right now` framing because scheduled generations may remain displayed for
+  hours.
 - The footer shows one global update time and warning markers with ages for
   stale weather or calendar data.
 
@@ -143,19 +141,17 @@ Keep every element inside the viewport and all visible text at least 12px.
 
 Show:
 
-- Current temperature and condition.
-- Today's high, low, and precipitation probability.
+- Today's condition, high, low, and precipitation probability.
 - Tomorrow's condition, high, low, and precipitation probability.
 
 Use Open-Meteo with administrator-configured coordinates. San Jose is the initial location.
 
 ### Calendar
 
-The Daily Brief shows the next three relevant events, prioritizing today.
-Calendar View uses a local-time, date, weather, and update rail beside three
+The Daily Brief shows up to six relevant events across today and tomorrow.
+Calendar View uses a date, forecast, and update rail beside three
 day lanes for Today and the following two local calendar days. It shows up to
-twelve events, features the first event of today, reports `+N more`, and may
-use spare space for today's lunch.
+twelve events and reports `+N more`.
 
 Rules:
 
@@ -170,9 +166,10 @@ Rules:
 - Distinguish calendar ownership with deterministic monochrome edge patterns,
   not color alone.
 
-### Lunch
+### Deferred: Lunch
 
-The Daily Brief shows today's entree options. Lunch View uses the shared date
+If lunch is resumed, the Daily Brief may show today's entree options and Lunch
+View may use the shared date
 and update rail beside five Monday-through-Friday lanes. It shows the current
 school week on weekdays and the upcoming school week on Saturday and Sunday.
 
@@ -197,9 +194,10 @@ Initial lunch icon enum:
 
 Deterministic exact/keyword mappings and cached decisions run first. Workers AI may classify genuinely unknown names, but its output must be one exact enum value; every invalid or uncertain result becomes `generic`.
 
-### Notices
+### Deferred: Notices
 
-Notices View uses the shared date and update rail with an adaptive two-column
+If notices are resumed, Notices View may use the shared date and update rail
+with an adaptive two-column
 card grid. It shows at most eight entries total, including up to two Private
 Notice Markers. Approved cards pair a category icon with the neutral summary,
 relevant date, requested action, and sender organization. Private markers show

@@ -33,11 +33,11 @@ npm run acceptance:validate -- \
 The run fails nonzero if any automated check fails. It:
 
 - rejects missing and invalid device credentials;
-- requests timer, timer, three button wakes, then timer and verifies stable
+- requests timer, timer, two button wakes, then timer and verifies stable
   cache names, the complete forward cycle, one generation ID, and timer reset;
 - independently calculates the next scheduled wake from
   `config/device-limits.json` and checks `refresh_rate`;
-- downloads all four authenticated images and rejects a public image route;
+- downloads both authenticated images and rejects a public image route;
 - fully decodes each PNG and checks its view-specific filename, 800x480
   dimensions, configured byte limit, opaque grayscale pixels, and nonblank
   content.
@@ -54,13 +54,12 @@ fixed on-screen error or symptom, firmware version, and filename; never include
 the token.
 
 1. Wake to **Daily Brief**. Confirm landscape orientation, left-to-right text,
-   readable weather/calendar/lunch typography at the agreed normal viewing
+   readable weather/calendar typography at the agreed normal viewing
    distance, recognizable labeled icons, and no failed-decode screen.
-2. Short press once for **Calendar View**, once for **Lunch View**, and once for
-   **Notices View**. Repeat the orientation, readability, icon, and decode
-   checks for all three secondary views.
-3. Short press once more. Confirm the cycle returns to **Daily Brief** and the
-   four filenames match the automated report's one generation.
+2. Short press once for **Calendar View** and repeat the orientation,
+   readability, icon, and decode checks.
+3. Short press once more. Confirm the cycle returns to **Daily Brief** and both
+   filenames match the automated report's one generation.
 4. Let the panel sleep, then short press through the cycle again. Confirm named
    cached images display without a failed download or Wi-Fi setup screen.
 5. Wait for a timer wake. Confirm it resets to **Daily Brief**, rather than the

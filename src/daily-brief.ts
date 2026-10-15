@@ -1,8 +1,5 @@
-import type {
-  DailyBriefLunchModel,
-  DailyBriefWeatherModel
-} from "./generation";
-import type { LunchIcon } from "./lunch";
+import type { CalendarEvent } from "./calendar";
+import type { DailyBriefWeatherModel } from "./generation";
 import { DISPLAY_BASE_CSS } from "./display-style";
 
 function escapeHtml(value: string): string {
@@ -18,61 +15,16 @@ function weatherIcon(condition: string): string {
   const label = escapeHtml(condition);
   const lowered = condition.toLowerCase();
   if (lowered.includes("rain") || lowered.includes("drizzle")) {
-    return `<svg viewBox="0 0 96 96" role="img" aria-label="${label} weather icon"><path d="M27 58h45a18 18 0 0 0 0-36 26 26 0 0 0-49 9 14 14 0 0 0 4 27Z" fill="none" stroke="currentColor" stroke-width="7"/><path d="m30 68-7 17m28-17-7 17m28-17-7 17" stroke="currentColor" stroke-width="7" stroke-linecap="round"/></svg>`;
+    return `<svg viewBox="0 0 96 96" role="img" aria-label="${label} forecast icon"><path d="M27 58h45a18 18 0 0 0 0-36 26 26 0 0 0-49 9 14 14 0 0 0 4 27Z" fill="none" stroke="currentColor" stroke-width="7"/><path d="m30 68-7 17m28-17-7 17m28-17-7 17" stroke="currentColor" stroke-width="7" stroke-linecap="round"/></svg>`;
   }
   if (lowered.includes("cloud")) {
-    return `<svg viewBox="0 0 96 96" role="img" aria-label="${label} weather icon"><circle cx="31" cy="30" r="17" fill="none" stroke="currentColor" stroke-width="7"/><path d="M25 69h50a17 17 0 0 0-3-34 25 25 0 0 0-45 9 13 13 0 0 0-2 25Z" fill="#fff" stroke="currentColor" stroke-width="7"/></svg>`;
+    return `<svg viewBox="0 0 96 96" role="img" aria-label="${label} forecast icon"><circle cx="31" cy="30" r="17" fill="none" stroke="currentColor" stroke-width="7"/><path d="M25 69h50a17 17 0 0 0-3-34 25 25 0 0 0-45 9 13 13 0 0 0-2 25Z" fill="#fff" stroke="currentColor" stroke-width="7"/></svg>`;
   }
-  return `<svg viewBox="0 0 96 96" role="img" aria-label="${label} weather icon"><circle cx="48" cy="48" r="22" fill="none" stroke="currentColor" stroke-width="7"/><path d="M48 6v13m0 58v13M6 48h13m58 0h13M18 18l10 10m40 40 10 10m0-60L68 28M28 68 18 78" stroke="currentColor" stroke-width="7" stroke-linecap="round"/></svg>`;
+  return `<svg viewBox="0 0 96 96" role="img" aria-label="${label} forecast icon"><circle cx="48" cy="48" r="22" fill="none" stroke="currentColor" stroke-width="7"/><path d="M48 6v13m0 58v13M6 48h13m58 0h13M18 18l10 10m40 40 10 10m0-60L68 28M28 68 18 78" stroke="currentColor" stroke-width="7" stroke-linecap="round"/></svg>`;
 }
 
 function temperature(value: number): string {
   return `${Math.round(value)}°`;
-}
-
-function lunchIcon(icon: LunchIcon): string {
-  const paths: Record<LunchIcon, string> = {
-    pizza:
-      '<path d="M48 12 18 78h60L48 12Z" fill="none" stroke="currentColor" stroke-width="7"/><circle cx="43" cy="44" r="5"/><circle cx="57" cy="61" r="5"/><path d="M25 67h46" stroke="currentColor" stroke-width="7"/>',
-    taco:
-      '<path d="M15 60a33 33 0 0 1 66 0v15H15V60Z" fill="none" stroke="currentColor" stroke-width="7"/><path d="M29 57c8-11 30-11 38 0M35 42l7 7m15-8-5 9" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>',
-    sandwich:
-      '<path d="m16 34 32-18 32 18-32 18-32-18Zm0 13 32 18 32-18v24L48 88 16 71V47Z" fill="none" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/>',
-    chicken:
-      '<path d="M63 21c17 10 20 31 8 45-11 13-34 12-45-3-10-14-5-34 10-43 8-5 19-4 27 1Z" fill="none" stroke="currentColor" stroke-width="7"/><path d="m27 65-12 12m6-6-8-8m8 8 8 8" stroke="currentColor" stroke-width="7" stroke-linecap="round"/>',
-    pasta:
-      '<path d="M17 57h62c-3 19-14 28-31 28S20 76 17 57Z" fill="none" stroke="currentColor" stroke-width="7"/><path d="M25 47c5-16 14-16 20 0 5-16 14-16 20 0" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>',
-    salad:
-      '<path d="M15 52h66c-2 22-13 33-33 33S17 74 15 52Z" fill="none" stroke="currentColor" stroke-width="7"/><path d="M28 49c-4-15 8-26 20-15 7-17 24-10 21 7" fill="none" stroke="currentColor" stroke-width="7"/>',
-    generic:
-      '<circle cx="48" cy="48" r="34" fill="none" stroke="currentColor" stroke-width="7"/><circle cx="48" cy="48" r="21" fill="none" stroke="currentColor" stroke-width="5"/><path d="M13 13v27m0-13h10M83 13v27" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>'
-  };
-  return `<svg viewBox="0 0 96 96" role="img" aria-label="${icon} lunch icon">${paths[icon]}</svg>`;
-}
-
-function lunchSection(lunch: DailyBriefLunchModel): string {
-  const states = {
-    no_menu: "No menu posted",
-    closed: "School closed",
-    schema_failure: "Lunch source changed",
-    adapter_failure: "Lunch unavailable"
-  } as const;
-  const state =
-    lunch.status === "available"
-      ? ""
-      : `<div class="lunch-state" data-missing-state>${states[lunch.status]}</div>`;
-  const previous =
-    lunch.stale && lunch.entrees.length > 0
-      ? `<div class="last-menu">Last menu · ${staleAge(lunch.staleAgeMinutes)}</div>`
-      : "";
-  const entrees = lunch.entrees
-    .slice(0, 3)
-    .map(
-      ({ name, icon }) =>
-        `<div class="entree">${lunchIcon(icon)}<span>${escapeHtml(name)}</span></div>`
-    )
-    .join("");
-  return `<section class="side-card lunch"><span class="label">Today's lunch</span><h2 class="serif">School menu</h2>${state}${previous}<div class="entrees">${entrees}</div></section>`;
 }
 
 function staleAge(minutes?: number): string {
@@ -81,77 +33,90 @@ function staleAge(minutes?: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m old`;
 }
 
-export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
-  const { weather } = model;
-  const renderedAt = new Date(model.updatedAt);
-  const updatedParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+function localDate(value: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(value);
+}
+
+function addDays(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days))
+    .toISOString()
+    .slice(0, 10);
+}
+
+function eventDate(event: CalendarEvent, timezone: string): string {
+  return event.allDay
+    ? event.start.slice(0, 10)
+    : localDate(new Date(event.start), timezone);
+}
+
+function eventDayLabel(
+  event: CalendarEvent,
+  firstDay: string,
+  timezone: string
+): string {
+  const date = eventDate(event, timezone);
+  if (date === firstDay) return "Today";
+  if (date === addDays(firstDay, 1)) return "Tomorrow";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short"
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function eventTime(event: CalendarEvent, timezone: string): string {
+  if (event.allDay) return "All day";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
     hour: "numeric",
     minute: "2-digit"
-  }).formatToParts(renderedAt);
-  const updatedPart = (type: Intl.DateTimeFormatPartTypes) =>
-    updatedParts.find((part) => part.type === type)?.value ?? "";
-  const updated = `${updatedPart("hour")}:${updatedPart("minute")} ${updatedPart("dayPeriod")}`;
-  const date = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+  })
+    .format(new Date(event.start))
+    .replace(":00", "");
+}
+
+export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
+  const renderedAt = new Date(model.updatedAt);
+  const dateParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
     weekday: "long",
     month: "long",
     day: "numeric"
   }).formatToParts(renderedAt);
   const datePart = (type: Intl.DateTimeFormatPartTypes) =>
-    date.find((part) => part.type === type)?.value ?? "";
-  const stale = model.stale
-    ? `<strong class="stale">⚠ Weather ${staleAge(model.staleAgeMinutes)}</strong>`
-    : "";
-  const calendar = (model.calendar ?? []).slice(0, 3);
-  const eventTime = (event: (typeof calendar)[number]) => {
-    if (event.allDay) return "All day";
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/Los_Angeles",
-      hour: "numeric",
-      minute: "2-digit"
-    }).format(new Date(event.start));
-  };
-  const eventMeta = (event: (typeof calendar)[number]) =>
-    `${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}`;
-  const agenda =
-    model.calendarUnavailable
-      ? `<div class="agenda-empty" data-missing-state><h1 class="serif">Calendar unavailable</h1></div>`
-      : calendar.length === 0
-        ? `<div class="agenda-empty" data-missing-state><h1 class="serif">No upcoming events</h1></div>`
-        : calendar
-            .map(
-              (event) =>
-                `<article class="agenda-item"><time>${eventTime(event)}</time><div><strong class="serif">${escapeHtml(event.title)}</strong><span>${eventMeta(event)}</span></div></article>`
-            )
-            .join("");
-  const notices = (model.notices ?? [])
-    .slice(0, 1)
-    .map(
-      (notice) =>
-        `<li class="notice"><strong>${escapeHtml(notice.summary)}</strong><span class="notice-meta">${escapeHtml(notice.senderOrganization)}${notice.relevantDate ? ` · ${escapeHtml(notice.relevantDate)}` : ""}</span>${notice.action ? `<span class="notice-action">${escapeHtml(notice.action)}</span>` : ""}</li>`
-    )
-    .join("");
-  const privateMarkers = (model.privateNoticeMarkers ?? [])
-    .slice(0, 2)
-    .map(
-      ({ accountId }) =>
-        `<li class="notice"><strong>${accountId === "mom" ? "Mom" : "Dad"} Private Notice</strong></li>`
-    )
-    .join("");
-  const noticeItems = `${privateMarkers}${notices}`;
-  const noticeIcon = privateMarkers.length > 0
-    ? `<svg class="notice-icon" viewBox="0 0 64 64" role="img" aria-label="Private notice icon"><rect x="13" y="29" width="38" height="27" rx="3" fill="none" stroke="currentColor" stroke-width="5"/><path d="M20 29v-8a12 12 0 0 1 24 0v8" fill="none" stroke="currentColor" stroke-width="5"/></svg>`
-    : `<svg class="notice-icon" viewBox="0 0 64 64" role="img" aria-label="Household notice icon"><path d="M14 7h28l9 9v41H14zM42 7v11h9M22 29h21M22 39h21M22 49h14" fill="none" stroke="currentColor" stroke-width="5"/></svg>`;
-  const noticeSection = noticeItems
-    ? `<section class="side-card notice-card inverted" aria-label="Household Notices"><span class="label">Household notice</span><div class="notice-content">${noticeIcon}<ul>${noticeItems}</ul></div></section>`
-    : `<section class="side-card tomorrow-card">
-        <span class="label">Tomorrow</span>
-        <div class="tomorrow-weather">
-          ${weatherIcon(weather.tomorrow.condition)}
-          <div><h2 class="serif">${escapeHtml(weather.tomorrow.condition)}</h2><p>High ${temperature(weather.tomorrow.high)} · Low ${temperature(weather.tomorrow.low)} · Rain ${Math.round(weather.tomorrow.precipitationProbability)}%</p></div>
-        </div>
-      </section>`;
+    dateParts.find((part) => part.type === type)?.value ?? "";
+  const updated = new Intl.DateTimeFormat("en-US", {
+    timeZone: model.timezone,
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(renderedAt);
+  const firstDay = localDate(renderedAt, model.timezone);
+  const events = (model.calendar ?? []).slice(0, 6);
+  const agenda = model.calendarUnavailable
+    ? `<div class="agenda-empty" data-missing-state>Calendar unavailable</div>`
+    : events.length === 0
+      ? `<div class="agenda-empty" data-missing-state>No events today or tomorrow</div>`
+      : events
+          .map(
+            (event) => `<article class="agenda-item">
+              <time><small>${eventDayLabel(event, firstDay, model.timezone)}</small>${eventTime(event, model.timezone)}</time>
+              <div><strong class="serif">${escapeHtml(event.title)}</strong><span>${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}</span></div>
+            </article>`
+          )
+          .join("");
+  const warnings = [
+    model.stale
+      ? `<strong class="stale">Weather ${staleAge(model.staleAgeMinutes)}</strong>`
+      : "",
+    model.calendarStaleAgeMinutes === undefined
+      ? ""
+      : `<strong class="stale">Calendar ${staleAge(model.calendarStaleAgeMinutes)}</strong>`
+  ].filter(Boolean);
 
   return `<!doctype html>
 <html lang="en">
@@ -160,80 +125,55 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   <meta name="viewport" content="width=800,height=480,initial-scale=1">
   <style>
     ${DISPLAY_BASE_CSS}
-    body { display: grid; grid-template-columns: 496px 1fr; grid-template-rows: 124px 286px 46px; gap: 0 16px; padding: 12px 18px 10px; }
-    header { grid-column: 1 / 3; display: grid; grid-template-columns: 210px 1fr 126px; align-items: center; border-bottom: 4px solid var(--ink); }
-    .date-block strong { display: block; font-size: 30px; line-height: 1; }
-    .date-block span { display: block; margin-top: 8px; font-size: 17px; font-weight: 900; text-transform: uppercase; }
-    .weather { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px; }
-    .weather svg { width: 60px; height: 60px; }
-    .weather-copy { font-size: 14px; font-weight: 800; line-height: 1.25; }
-    .weather-copy strong { display: block; margin-bottom: 5px; font-size: 23px; line-height: 1; }
+    body { display: grid; grid-template-rows: 72px 112px 256px 40px; }
+    header { display: grid; grid-template-columns: 235px 1fr 190px; align-items: center; margin: 0 18px; border-bottom: 4px solid var(--ink); }
+    .date strong { font-size: 28px; line-height: 1; }
+    .date span { margin-left: 8px; font-family: "Arial Narrow", Arial, sans-serif; font-size: 15px; font-style: normal; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: 25px; text-align: center; }
     .brand { text-align: right; }
-    .brand strong { display: block; font-size: 21px; }
-    .brand span { display: block; margin-top: 5px; font-size: 12px; font-weight: 800; }
-    .brief { padding-top: 13px; }
-    .agenda-list { display: grid; grid-template-rows: repeat(3, 1fr); gap: 8px; height: 252px; margin-top: 7px; }
-    .agenda-item { min-width: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px; border: 2px solid var(--ink); border-radius: 12px; padding: 8px 12px; overflow: hidden; }
-    .agenda-item time { font-size: 16px; font-weight: 900; }
-    .agenda-item strong { display: -webkit-box; font-size: 25px; line-height: .95; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .agenda-item span { display: block; margin-top: 4px; font-size: 12px; font-weight: 700; }
-    .agenda-empty { grid-row: 1 / -1; display: flex; align-items: center; border: 2px solid var(--ink); border-radius: 12px; padding: 18px; }
-    .agenda-empty h1 { margin: 0; font-size: 38px; }
-    .side { padding-top: 14px; display: grid; grid-template-rows: 134px 128px; gap: 10px; }
-    .side-card { border: 2px solid var(--ink); border-radius: 14px; padding: 11px 13px; overflow: hidden; }
-    .side-card h2 { margin: 8px 0 7px; font-size: 25px; line-height: 1; }
-    .entrees { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-    .entree { min-width: 0; display: grid; grid-template-columns: 30px 1fr; align-items: center; gap: 5px; border-top: 1px solid var(--ink); padding-top: 5px; font-size: 13px; font-weight: 800; line-height: 1.05; overflow: hidden; }
-    .entree svg { width: 29px; height: 29px; }
-    .lunch-state { border: 2px solid var(--ink); padding: 6px; font-size: 16px; font-weight: 900; margin-top: 8px; }
-    .last-menu { margin-top: 4px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
-    .notice-card ul { list-style: none; margin: 8px 0 0; padding: 0; }
-    .notice-content { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 7px; }
-    .notice-icon { width: 50px; height: 50px; }
-    .notice-card ul { min-width: 0; margin: 0; }
-    .notice-card li { padding-top: 5px; border-top: 1px solid var(--paper); font-size: 16px; line-height: 1.05; }
-    .notice-card li:first-child { border-top: 0; padding-top: 0; }
-    .notice-card li strong { display: -webkit-box; font-family: Georgia, "Times New Roman", serif; font-size: 17px; font-style: italic; line-height: 1; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-    .notice-card .notice-meta, .notice-card .notice-action { display: block; margin-top: 3px; font-size: 12px; line-height: 1; }
-    .tomorrow-weather { display: grid; grid-template-columns: 58px 1fr; align-items: center; gap: 9px; margin-top: 13px; }
-    .tomorrow-weather svg { width: 56px; height: 56px; }
-    .tomorrow-weather h2 { margin: 0 0 5px; }
-    .tomorrow-weather p { margin: 0; font-size: 12px; font-weight: 800; line-height: 1.2; }
-    footer { grid-column: 1 / 3; display: flex; justify-content: space-between; align-items: end; border-top: 2px solid var(--ink); font-size: 12px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+    .brand strong { display: block; font-size: 19px; }
+    .brand span { display: block; margin-top: 3px; font-size: 12px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+    .weather-band { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px 18px; }
+    .forecast { min-width: 0; display: grid; grid-template-columns: 54px 1fr; align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 13px; padding: 8px 10px; }
+    .forecast svg { width: 50px; height: 50px; }
+    .forecast .label { display: block; margin-bottom: 5px; }
+    .forecast strong { display: block; font-size: 25px; line-height: .95; }
+    .forecast p { margin: 6px 0 0; font-size: 12px; font-weight: 900; line-height: 1.15; }
+    main { padding: 2px 18px 8px; }
+    .agenda-head { display: flex; justify-content: space-between; align-items: baseline; height: 24px; }
+    .agenda-head span:last-child { font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); gap: 7px 10px; height: 222px; }
+    .agenda-item { min-width: 0; display: grid; grid-template-columns: 75px minmax(0, 1fr); align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 11px; padding: 6px 9px; overflow: hidden; }
+    .agenda-item time { font-size: 13px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+    .agenda-item time small { display: block; margin-bottom: 3px; font-size: 12px; letter-spacing: .05em; }
+    .agenda-item strong { display: block; font-size: 19px; line-height: .95; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agenda-item span { display: block; margin-top: 4px; font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agenda-empty { grid-column: 1 / -1; grid-row: 1 / -1; display: flex; align-items: center; border: 2px solid var(--ink); border-radius: 11px; padding: 18px; font-family: Georgia, "Times New Roman", serif; font-size: 30px; font-style: italic; font-weight: 700; }
+    footer { display: flex; justify-content: space-between; align-items: center; margin: 0 18px; border-top: 2px solid var(--ink); font-size: 12px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
     .stale { border: 2px solid var(--ink); padding: 2px 5px; }
   </style>
 </head>
 <body>
   <header>
-    <div class="date-block">
-      <strong class="serif">${escapeHtml(datePart("weekday"))}</strong>
-      <span>${escapeHtml(datePart("month"))} ${escapeHtml(datePart("day"))}</span>
-    </div>
-    <div class="weather">
-      ${weatherIcon(weather.today.condition)}
-      <div class="weather-copy">
-        <strong class="serif">${escapeHtml(weather.today.condition)}</strong>
-        High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%
-      </div>
-    </div>
-    <div class="brand"><strong>Family Brief</strong><span>Today at a glance</span></div>
+    <div class="date"><strong class="serif">${escapeHtml(datePart("weekday"))}<span>${escapeHtml(datePart("month"))} ${escapeHtml(datePart("day"))}</span></strong></div>
+    <h1 class="serif">Today at a glance</h1>
+    <div class="brand"><strong>Family Dashboard</strong><span>Calendar + weather</span></div>
   </header>
-  <main class="brief">
-    <span class="label">Upcoming events</span>
-    <div class="agenda-list">${agenda}</div>
+  <section class="weather-band" aria-label="Weather forecast">
+    <article class="forecast">
+      ${weatherIcon(model.weather.today.condition)}
+      <div><span class="label">Today</span><strong class="number">${temperature(model.weather.today.high)} / ${temperature(model.weather.today.low)}</strong><p>${escapeHtml(model.weather.today.condition)} · Rain ${Math.round(model.weather.today.precipitationProbability)}%</p></div>
+    </article>
+    <article class="forecast">
+      ${weatherIcon(model.weather.tomorrow.condition)}
+      <div><span class="label">Tomorrow</span><strong class="number">${temperature(model.weather.tomorrow.high)} / ${temperature(model.weather.tomorrow.low)}</strong><p>${escapeHtml(model.weather.tomorrow.condition)} · Rain ${Math.round(model.weather.tomorrow.precipitationProbability)}%</p></div>
+    </article>
+  </section>
+  <main>
+    <div class="agenda-head"><span class="label">Today + tomorrow schedule</span><span>Up to six calendar entries</span></div>
+    <div class="agenda-grid">${agenda}</div>
   </main>
-  <aside class="side">
-    ${lunchSection(model.lunch)}
-    ${noticeSection}
-  </aside>
-  <footer><span>${[
-    stale,
-    model.calendarStaleAgeMinutes === undefined
-      ? ""
-      : `<strong class="stale">⚠ Calendar ${staleAge(model.calendarStaleAgeMinutes)}</strong>`
-  ]
-    .filter(Boolean)
-    .join(" ") || "Weather · Calendar · Lunch current"}</span><span>Updated ${updated}</span></footer>
+  <footer><span>${warnings.join(" ") || "Forecast · Calendar"}</span><span>Updated ${updated}</span></footer>
 </body>
 </html>`;
 }

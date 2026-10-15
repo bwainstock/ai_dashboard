@@ -4,7 +4,8 @@ The V1 incident conditions are evaluated after every five-minute scheduled
 run. Device-authentication state changes are evaluated immediately as well:
 
 - Google Calendar OAuth is revoked or expired.
-- One source fails two consecutive scheduled refreshes.
+- An active weather or calendar source fails two consecutive scheduled
+  refreshes. Deferred lunch and Gmail sources do not create display incidents.
 - Rendering, image validation, storage, or pointer publication blocks a new
   generation, including a Notices View render failure.
 - Gmail processing repeatedly fails.

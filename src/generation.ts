@@ -1,14 +1,6 @@
 import type { WeatherLocation, WeatherSnapshot } from "./weather";
 import type { CalendarEvent } from "./calendar";
 import type { CalendarViewModel } from "./calendar-view";
-import { lunchViewModel, type LunchViewModel } from "./lunch-view";
-import type { NoticesViewModel } from "./notices-view";
-import {
-  classifyLunchEntree,
-  type LunchClassifierPorts,
-  type LunchIcon,
-  type LunchSnapshot
-} from "./lunch";
 import {
   isOperationalCode,
   type OperationalCode
@@ -31,9 +23,7 @@ export interface DailyBriefWeatherModel {
   calendarStaleAgeMinutes?: number;
   stale: boolean;
   staleAgeMinutes?: number;
-  lunch: DailyBriefLunchModel;
-  notices?: DailyBriefNotice[];
-  privateNoticeMarkers?: Array<{ accountId: "mom" | "dad" }>;
+  timezone: string;
   updatedAt: string;
 }
 
@@ -45,23 +35,11 @@ export interface DailyBriefNotice {
   senderOrganization: string;
 }
 
-export interface DailyBriefLunchModel {
-  status:
-    | "available"
-    | "no_menu"
-    | "closed"
-    | "schema_failure"
-    | "adapter_failure";
-  stale: boolean;
-  staleAgeMinutes?: number;
-  entrees: Array<{ name: string; icon: LunchIcon }>;
-}
-
 export interface Publication {
   generationId: string;
   slotKey: string;
   views: Array<{
-    viewType: "daily_brief" | "calendar" | "lunch" | "notices";
+    viewType: "daily_brief" | "calendar";
     filename: string;
     objectKey: string;
     image: Uint8Array;
@@ -69,36 +47,24 @@ export interface Publication {
   width: number;
   height: number;
   weather: WeatherSnapshot;
-  lunch: LunchSnapshot;
   generatedAt: string;
 }
 
 export interface ScheduledGenerationPorts {
   claimSlot(slotKey: string): Promise<boolean>;
   claimRetry(now: string): Promise<{ slotKey: string } | null>;
-  prepareGeneration?(): Promise<void>;
   fetchWeather(location: WeatherLocation): Promise<WeatherSnapshot>;
   loadLatestWeather(): Promise<Snapshot<WeatherSnapshot> | null>;
   saveWeather(snapshot: WeatherSnapshot, fetchedAt: string): Promise<void>;
-  fetchLunch(): Promise<LunchSnapshot>;
-  loadLatestLunch(): Promise<Snapshot<LunchSnapshot> | null>;
-  saveLunch(snapshot: LunchSnapshot, fetchedAt: string): Promise<void>;
-  loadCachedLunchIcon(entreeKey: string): Promise<string | null>;
-  saveCachedLunchIcon(entreeKey: string, icon: LunchIcon): Promise<void>;
-  classifyLunchWithAi?: NonNullable<LunchClassifierPorts["classifyWithAi"]>;
   fetchCalendar?(): Promise<CalendarEvent[]>;
   loadLatestCalendar?(): Promise<Snapshot<CalendarEvent[]> | null>;
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
-  loadNotices?(): Promise<DailyBriefNotice[]>;
-  loadPrivateNoticeMarkers?(): Promise<Array<{ accountId: "mom" | "dad" }>>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
-  renderLunchView(model: LunchViewModel): Promise<Uint8Array>;
-  renderNoticesView(model: NoticesViewModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
   recordSourceFailure(
     slotKey: string,
-    source: "weather" | "calendar" | "lunch",
+    source: "weather" | "calendar",
     code: OperationalCode,
     message: string
   ): Promise<void>;
@@ -115,6 +81,7 @@ export interface ScheduledGenerationInput {
   configuration: DashboardConfiguration;
   maximumImageBytes: number;
   retryDelayMinutes?: number;
+  forcedSlotKey?: string;
 }
 
 export type ScheduledGenerationResult =
@@ -225,15 +192,6 @@ function compactTimestamp(date: Date): string {
   return date.toISOString().replaceAll(/[-:]/g, "").replace(".000", "");
 }
 
-function localDate(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(date);
-}
-
 function staleAgeMinutes(now: Date, fetchedAt: string): number {
   return Math.max(
     0,
@@ -259,37 +217,6 @@ function errorDetails(
   };
 }
 
-async function lunchModel(
-  snapshot: LunchSnapshot | null,
-  date: string,
-  status: DailyBriefLunchModel["status"] | null,
-  classifier: LunchClassifierPorts,
-  age?: number
-): Promise<DailyBriefLunchModel> {
-  const day = snapshot?.days.find((candidate) => candidate.date === date);
-  const entrees = await Promise.all(
-    (day?.entrees ?? []).map(async (name) => ({
-      name,
-      icon: await classifyLunchEntree(name, classifier)
-    }))
-  );
-  if (status) {
-    return {
-      status,
-      stale: age !== undefined,
-      ...(age === undefined ? {} : { staleAgeMinutes: age }),
-      entrees
-    };
-  }
-  if (!day || (day.status === "menu" && day.entrees.length === 0)) {
-    return { status: "no_menu", stale: false, entrees: [] };
-  }
-  if (day.status === "closed") {
-    return { status: "closed", stale: false, entrees: [] };
-  }
-  return { status: "available", stale: false, entrees };
-}
-
 export async function runScheduledWeatherGeneration(
   input: ScheduledGenerationInput,
   ports: ScheduledGenerationPorts
@@ -299,7 +226,12 @@ export async function runScheduledWeatherGeneration(
   let slotKey: string;
   let retry = false;
 
-  if (scheduledSlotKey) {
+  if (input.forcedSlotKey) {
+    slotKey = input.forcedSlotKey;
+    if (!(await ports.claimSlot(slotKey))) {
+      return { status: "duplicate", slotKey, nextWakeSeconds };
+    }
+  } else if (scheduledSlotKey) {
     slotKey = scheduledSlotKey;
     if (!(await ports.claimSlot(slotKey))) {
       return { status: "duplicate", slotKey, nextWakeSeconds };
@@ -310,8 +242,6 @@ export async function runScheduledWeatherGeneration(
     slotKey = retryClaim.slotKey;
     retry = true;
   }
-
-  await ports.prepareGeneration?.();
 
   const configuredRetryDelay = input.retryDelayMinutes ?? 15;
   const retryDelayMinutes =
@@ -351,69 +281,6 @@ export async function runScheduledWeatherGeneration(
     weatherAge = staleAgeMinutes(input.now, previous.fetchedAt);
   }
 
-  const classifier: LunchClassifierPorts = {
-    loadCached: ports.loadCachedLunchIcon,
-    saveCached: ports.saveCachedLunchIcon,
-    classifyWithAi: ports.classifyLunchWithAi
-  };
-  let lunch: LunchSnapshot;
-  let renderedLunch: DailyBriefLunchModel;
-  let lunchFailure: "schema_failure" | "adapter_failure" | null = null;
-  let lunchAge: number | undefined;
-  try {
-    lunch = await ports.fetchLunch();
-    await ports.saveLunch(lunch, input.now.toISOString());
-    renderedLunch = await lunchModel(
-      lunch,
-      localDate(input.now, input.configuration.timezone),
-      null,
-      classifier
-    );
-  } catch (error) {
-    const details = errorDetails(
-      error,
-      "LUNCH_UPSTREAM_NETWORK",
-      "Lunch fetch failed"
-    );
-    await ports.recordSourceFailure(
-      slotKey,
-      "lunch",
-      details.code,
-      details.message
-    );
-    const previous = await ports.loadLatestLunch();
-    lunch = previous?.snapshot ?? { days: [] };
-    lunchAge = previous
-      ? staleAgeMinutes(input.now, previous.fetchedAt)
-      : undefined;
-    lunchFailure =
-      details.code === "LUNCH_INVALID_RESPONSE"
-        ? "schema_failure"
-        : "adapter_failure";
-    renderedLunch = await lunchModel(
-      lunch,
-      localDate(input.now, input.configuration.timezone),
-      lunchFailure,
-      classifier,
-      lunchAge
-    );
-  }
-
-  const model: DailyBriefWeatherModel = {
-    weather,
-    stale: weatherAge !== undefined,
-    ...(weatherAge === undefined ? {} : { staleAgeMinutes: weatherAge }),
-    lunch: renderedLunch,
-    updatedAt: input.now.toISOString()
-  };
-  const notices = ports.loadNotices ? await ports.loadNotices() : [];
-  const privateNoticeMarkers = ports.loadPrivateNoticeMarkers
-    ? await ports.loadPrivateNoticeMarkers()
-    : [];
-  if (ports.loadNotices) model.notices = notices.slice(0, 2);
-  if (ports.loadPrivateNoticeMarkers) {
-    model.privateNoticeMarkers = privateNoticeMarkers;
-  }
   let calendar: CalendarEvent[] = [];
   let calendarAge: number | undefined;
   let calendarUnavailable = false;
@@ -421,7 +288,6 @@ export async function runScheduledWeatherGeneration(
     try {
       calendar = await ports.fetchCalendar();
       await ports.saveCalendar(calendar, input.now.toISOString());
-      model.calendar = calendar;
     } catch (error) {
       const details = errorDetails(
         error,
@@ -434,11 +300,6 @@ export async function runScheduledWeatherGeneration(
       calendarAge = previous
         ? staleAgeMinutes(input.now, previous.fetchedAt)
         : undefined;
-      model.calendar = calendar;
-      model.calendarUnavailable = calendarUnavailable;
-      if (calendarAge !== undefined) {
-        model.calendarStaleAgeMinutes = calendarAge;
-      }
       await ports.recordSourceFailure(
         slotKey,
         "calendar",
@@ -447,6 +308,19 @@ export async function runScheduledWeatherGeneration(
       );
     }
   }
+
+  const model: DailyBriefWeatherModel = {
+    weather,
+    calendar,
+    ...(calendarUnavailable ? { calendarUnavailable: true } : {}),
+    ...(calendarAge === undefined
+      ? {}
+      : { calendarStaleAgeMinutes: calendarAge }),
+    stale: weatherAge !== undefined,
+    ...(weatherAge === undefined ? {} : { staleAgeMinutes: weatherAge }),
+    timezone: input.configuration.timezone,
+    updatedAt: input.now.toISOString()
+  };
 
   let image: Uint8Array;
   try {
@@ -463,12 +337,8 @@ export async function runScheduledWeatherGeneration(
       calendar,
       timezone: input.configuration.timezone,
       weather: {
-        temperature: weather.current.temperature,
-        condition: weather.current.condition,
-        high: weather.today.high
-      },
-      lunch: {
-        entrees: renderedLunch.entrees.map(({ name }) => ({ name }))
+        today: weather.today,
+        tomorrow: weather.tomorrow
       },
       stale: calendarAge !== undefined,
       ...(calendarAge === undefined
@@ -483,40 +353,8 @@ export async function runScheduledWeatherGeneration(
       error instanceof Error ? error.message : "Calendar View rendering failed"
     );
   }
-  let lunchImage: Uint8Array;
-  try {
-    lunchImage = await ports.renderLunchView(
-      await lunchViewModel(
-        lunch,
-        input.now,
-        input.configuration.timezone,
-        lunchFailure,
-        classifier,
-        lunchAge
-      )
-    );
-  } catch (error) {
-    return fail(
-      "LUNCH_VIEW_RENDER_FAILED",
-      error instanceof Error ? error.message : "Lunch View rendering failed"
-    );
-  }
-  let noticesImage: Uint8Array;
-  try {
-    noticesImage = await ports.renderNoticesView({
-      notices: notices.slice(0, 8),
-      privateNoticeMarkers,
-      timezone: input.configuration.timezone,
-      updatedAt: input.now.toISOString()
-    });
-  } catch (error) {
-    return fail(
-      "NOTICES_VIEW_RENDER_FAILED",
-      error instanceof Error ? error.message : "Notices View rendering failed"
-    );
-  }
 
-  const images = [image, calendarImage, lunchImage, noticesImage];
+  const images = [image, calendarImage];
   if (
     images.some((candidate) => {
       const dimensions = pngDimensions(candidate);
@@ -551,24 +389,11 @@ export async function runScheduledWeatherGeneration(
           filename: `calendar-view-${generationId}.png`,
           objectKey: `generations/${generationId}/calendar-view.png`,
           image: calendarImage
-        },
-        {
-          viewType: "lunch",
-          filename: `lunch-view-${generationId}.png`,
-          objectKey: `generations/${generationId}/lunch-view.png`,
-          image: lunchImage
-        },
-        {
-          viewType: "notices",
-          filename: `notices-view-${generationId}.png`,
-          objectKey: `generations/${generationId}/notices-view.png`,
-          image: noticesImage
         }
       ],
       width: 800,
       height: 480,
       weather,
-      lunch,
       generatedAt: input.now.toISOString()
     });
   } catch (error) {

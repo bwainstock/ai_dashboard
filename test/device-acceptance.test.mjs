@@ -12,9 +12,7 @@ const AUTOMATED_PASS = {
   checks: [{ name: "privacy", status: "pass" }],
   artifacts: [
     { filename: "daily-brief-generation.png" },
-    { filename: "calendar-view-generation.png" },
-    { filename: "lunch-view-generation.png" },
-    { filename: "notices-view-generation.png" }
+    { filename: "calendar-view-generation.png" }
   ]
 };
 
@@ -58,14 +56,13 @@ describe("device acceptance artifacts", () => {
     ).toThrow();
   });
 
-  test("validates stable cache names, the four-view button cycle, and timer reset", () => {
+  test("validates stable cache names, the two-view button cycle, and timer reset", () => {
     expect(
       validateDisplaySequence([
         "daily-brief-generation.png",
         "daily-brief-generation.png",
         "calendar-view-generation.png",
-        "lunch-view-generation.png",
-        "notices-view-generation.png",
+        "daily-brief-generation.png",
         "daily-brief-generation.png"
       ])
     ).toEqual({
@@ -82,8 +79,7 @@ describe("device acceptance artifacts", () => {
         "daily-brief-a.png",
         "daily-brief-a.png",
         "calendar-view-b.png",
-        "lunch-view-a.png",
-        "notices-view-a.png",
+        "daily-brief-a.png",
         "daily-brief-a.png"
       ])
     ).toThrow();
@@ -150,7 +146,7 @@ describe("persistent acceptance report", () => {
     );
   });
 
-  test("an automated pass requires all four validated image artifacts", () => {
+  test("an automated pass requires both validated image artifacts", () => {
     const report = createPendingReport({
       runId: "missing-artifact",
       baseUrl: "https://device.example.com",
@@ -160,7 +156,7 @@ describe("persistent acceptance report", () => {
     });
 
     expect(validateReport(report)).toContain(
-      "automated pass requires validated Daily Brief, Calendar View, Lunch View, and Notices View artifacts"
+      "automated pass requires validated Daily Brief and Calendar View artifacts"
     );
   });
 

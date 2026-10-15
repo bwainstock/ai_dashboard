@@ -23,7 +23,5 @@ NOTICE_GRACE_DAYS = "3"
 [observability]
 enabled = false
 
-# This Worker has no public route. The device Worker invokes it through a
-# service binding. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-# CALENDAR_TOKEN_ENCRYPTION_KEY, and GMAIL_PROCESSOR_KEY with
-# `wrangler secret put --config wrangler.gmail.toml`.
+# This deferred Worker has no public route or active caller. Its bindings and
+# secrets are retained only for a future decision to resume Gmail processing.

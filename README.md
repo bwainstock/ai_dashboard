@@ -1,7 +1,7 @@
 # Family Dashboard
 
-A shared e-ink dashboard for household schedules, important email, school
-lunch information, weather, and future household tasks.
+A shared e-ink dashboard focused on household calendars and dated weather
+forecasts. Lunch and Gmail-derived display sources are currently deferred.
 
 Target hardware:
 
@@ -66,8 +66,8 @@ open dashboard-preview.png
 
 The preview is the current deployed Daily Brief PNG. Send
 `Update-Source: button` on subsequent `/api/display` requests to advance
-through Calendar View, Lunch View, and Notices View. Run the deployed image
-check with the same preview credentials:
+to Calendar View and then back to Daily Brief. Run the deployed image check
+with the same preview credentials:
 
 ```sh
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
