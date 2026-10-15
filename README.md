@@ -22,6 +22,7 @@ Documentation:
 - [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
 - [Ticket #31 ESPHome BYOS manifest acceptance](docs/acceptance/ticket-31-esphome-byos-manifest.md)
 - [Ticket #32 ESPHome Daily Brief proof of concept](docs/acceptance/ticket-32-esphome-daily-brief.md)
+- [Ticket #33 ESPHome Key 3 navigation](docs/acceptance/ticket-33-esphome-key3-navigation.md)
 
 ## Development
 
