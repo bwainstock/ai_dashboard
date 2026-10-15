@@ -81,18 +81,6 @@ function staleAge(minutes?: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m old`;
 }
 
-function countdown(start: string, updatedAt: string, allDay: boolean): string {
-  if (allDay) return "ALL DAY";
-  const minutes = Math.max(
-    0,
-    Math.round(
-      (new Date(start).getTime() - new Date(updatedAt).getTime()) / 60_000
-    )
-  );
-  if (minutes === 0) return "NOW";
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
-}
-
 export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   const { weather } = model;
   const renderedAt = new Date(model.updatedAt);
@@ -106,7 +94,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   const updated = `${updatedPart("hour")}:${updatedPart("minute")} ${updatedPart("dayPeriod")}`;
   const date = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
-    weekday: "short",
+    weekday: "long",
     month: "long",
     day: "numeric"
   }).formatToParts(renderedAt);
@@ -126,26 +114,17 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   };
   const eventMeta = (event: (typeof calendar)[number]) =>
     `${event.tentative ? "Tentative · " : ""}${escapeHtml(event.ownerLabels.join(" & "))}`;
-  const nextEvent =
+  const agenda =
     model.calendarUnavailable
-      ? `<article class="next-event inverted" data-missing-state><span class="label">Next up</span><h1 class="serif">Calendar unavailable</h1></article>`
+      ? `<div class="agenda-empty" data-missing-state><h1 class="serif">Calendar unavailable</h1></div>`
       : calendar.length === 0
-        ? `<article class="next-event inverted" data-missing-state><span class="label">Next up</span><h1 class="serif">No upcoming events</h1></article>`
-        : `<article class="next-event inverted">
-            <div>
-              <span class="label">Next up · ${eventTime(calendar[0])}</span>
-              <h1 class="serif">${escapeHtml(calendar[0].title)}</h1>
-              <p>${eventMeta(calendar[0])}</p>
-            </div>
-            <div class="next-time"><span class="number">${countdown(calendar[0].start, model.updatedAt, calendar[0].allDay)}</span><small>${calendar[0].allDay ? "today" : "until start"}</small></div>
-          </article>`;
-  const secondaryEvents = calendar
-    .slice(1)
-    .map(
-      (event) =>
-        `<article class="agenda-item"><time>${eventTime(event)}</time><strong class="serif">${escapeHtml(event.title)}</strong><span>${eventMeta(event)}</span></article>`
-    )
-    .join("");
+        ? `<div class="agenda-empty" data-missing-state><h1 class="serif">No upcoming events</h1></div>`
+        : calendar
+            .map(
+              (event) =>
+                `<article class="agenda-item"><time>${eventTime(event)}</time><div><strong class="serif">${escapeHtml(event.title)}</strong><span>${eventMeta(event)}</span></div></article>`
+            )
+            .join("");
   const notices = (model.notices ?? [])
     .slice(0, 1)
     .map(
@@ -183,30 +162,23 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     ${DISPLAY_BASE_CSS}
     body { display: grid; grid-template-columns: 496px 1fr; grid-template-rows: 124px 286px 46px; gap: 0 16px; padding: 12px 18px 10px; }
     header { grid-column: 1 / 3; display: grid; grid-template-columns: 210px 1fr 126px; align-items: center; border-bottom: 4px solid var(--ink); }
-    .clock-block { display: flex; align-items: end; gap: 7px; }
-    .clock-time { font-size: 63px; line-height: 1.04; }
-    .clock-copy strong { display: block; font-size: 16px; text-transform: uppercase; }
-    .clock-copy span { display: block; margin-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
-    .weather { display: grid; grid-template-columns: 52px 91px 1fr; align-items: center; gap: 7px; }
-    .weather svg { width: 56px; height: 56px; }
-    .temperature { font-size: 48px; line-height: 1; white-space: nowrap; }
-    .weather-copy { font-size: 14px; line-height: 1.2; }
-    .weather-copy strong { display: block; font-size: 17px; }
+    .date-block strong { display: block; font-size: 30px; line-height: 1; }
+    .date-block span { display: block; margin-top: 8px; font-size: 17px; font-weight: 900; text-transform: uppercase; }
+    .weather { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px; }
+    .weather svg { width: 60px; height: 60px; }
+    .weather-copy { font-size: 14px; font-weight: 800; line-height: 1.25; }
+    .weather-copy strong { display: block; margin-bottom: 5px; font-size: 23px; line-height: 1; }
     .brand { text-align: right; }
     .brand strong { display: block; font-size: 21px; }
     .brand span { display: block; margin-top: 5px; font-size: 12px; font-weight: 800; }
-    .brief { padding-top: 14px; }
-    .next-event { height: 155px; padding: 14px 18px; border-radius: 15px; display: grid; grid-template-columns: minmax(0, 1fr) 132px; overflow: hidden; }
-    .next-event h1 { display: -webkit-box; margin: 7px 0 4px; font-size: 42px; line-height: .92; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .next-event p { margin: 0; font-size: 14px; font-weight: 700; }
-    .next-time { align-self: center; text-align: right; }
-    .next-time .number { display: block; font-size: 41px; line-height: .9; white-space: nowrap; }
-    .next-time small { font-size: 12px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
-    .agenda { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-top: 12px; }
-    .agenda-item { min-width: 0; border-top: 3px solid var(--ink); padding-top: 7px; overflow: hidden; }
-    .agenda-item time { display: block; font-size: 13px; font-weight: 900; }
-    .agenda-item strong { display: -webkit-box; margin-top: 3px; font-size: 21px; line-height: 1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .brief { padding-top: 13px; }
+    .agenda-list { display: grid; grid-template-rows: repeat(3, 1fr); gap: 8px; height: 252px; margin-top: 7px; }
+    .agenda-item { min-width: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px; border: 2px solid var(--ink); border-radius: 12px; padding: 8px 12px; overflow: hidden; }
+    .agenda-item time { font-size: 16px; font-weight: 900; }
+    .agenda-item strong { display: -webkit-box; font-size: 25px; line-height: .95; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .agenda-item span { display: block; margin-top: 4px; font-size: 12px; font-weight: 700; }
+    .agenda-empty { grid-row: 1 / -1; display: flex; align-items: center; border: 2px solid var(--ink); border-radius: 12px; padding: 18px; }
+    .agenda-empty h1 { margin: 0; font-size: 38px; }
     .side { padding-top: 14px; display: grid; grid-template-rows: 134px 128px; gap: 10px; }
     .side-card { border: 2px solid var(--ink); border-radius: 14px; padding: 11px 13px; overflow: hidden; }
     .side-card h2 { margin: 8px 0 7px; font-size: 25px; line-height: 1; }
@@ -233,23 +205,22 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
 </head>
 <body>
   <header>
-    <div class="clock-block">
-      <span class="number clock-time">${escapeHtml(updatedPart("hour"))}:${escapeHtml(updatedPart("minute"))}</span>
-      <div class="clock-copy"><strong>${escapeHtml(updatedPart("dayPeriod"))}</strong><span>${escapeHtml(datePart("weekday"))} · ${escapeHtml(datePart("month"))} ${escapeHtml(datePart("day"))}</span></div>
+    <div class="date-block">
+      <strong class="serif">${escapeHtml(datePart("weekday"))}</strong>
+      <span>${escapeHtml(datePart("month"))} ${escapeHtml(datePart("day"))}</span>
     </div>
     <div class="weather">
-      ${weatherIcon(weather.current.condition)}
-      <strong class="number temperature">${temperature(weather.current.temperature)}F</strong>
+      ${weatherIcon(weather.today.condition)}
       <div class="weather-copy">
-        <strong>${escapeHtml(weather.current.condition)}</strong>
-        Today: ${escapeHtml(weather.today.condition)}<br>High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%
+        <strong class="serif">${escapeHtml(weather.today.condition)}</strong>
+        High ${temperature(weather.today.high)} · Low ${temperature(weather.today.low)} · Rain ${Math.round(weather.today.precipitationProbability)}%
       </div>
     </div>
     <div class="brand"><strong>Family Brief</strong><span>Today at a glance</span></div>
   </header>
   <main class="brief">
-    ${nextEvent}
-    <div class="agenda">${secondaryEvents}</div>
+    <span class="label">Upcoming events</span>
+    <div class="agenda-list">${agenda}</div>
   </main>
   <aside class="side">
     ${lunchSection(model.lunch)}
