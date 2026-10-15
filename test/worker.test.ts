@@ -273,6 +273,61 @@ function scheduledEnv(database = new ScheduledTestDatabase()): Env {
   );
 }
 
+const NAVIGATION_GENERATION = "20261007T173000Z";
+const DAILY_BRIEF_FILENAME = `daily-brief-${NAVIGATION_GENERATION}.png`;
+const CALENDAR_FILENAME = `calendar-view-${NAVIGATION_GENERATION}.png`;
+const DEVICE_ID = "AA:BB:CC:DD:EE:FF";
+
+async function navigationFixture({
+  incompleteDailyFilename
+}: { incompleteDailyFilename?: string } = {}) {
+  const database = new TestDatabase();
+  database.publishedGeneration = {
+    filename: DAILY_BRIEF_FILENAME,
+    objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+    byteSize: 12_345,
+    viewType: "daily_brief"
+  };
+  database.calendarGeneration = {
+    filename: CALENDAR_FILENAME,
+    objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+    byteSize: 12_346,
+    viewType: "calendar"
+  };
+  if (incompleteDailyFilename) {
+    database.incompleteDailyGeneration = {
+      filename: incompleteDailyFilename,
+      objectKey: "generations/incomplete/daily-brief.png",
+      byteSize: 12_999
+    };
+  }
+  const env = testEnv(database);
+  const setupResponse = await worker.fetch(
+    new Request("https://device.test/api/setup", {
+      headers: { ID: DEVICE_ID }
+    }),
+    env
+  );
+  const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+  return {
+    database,
+    async request(updateSource: string) {
+      const response = await worker.fetch(
+        new Request("https://device.test/api/display", {
+          headers: {
+            ID: DEVICE_ID,
+            "Access-Token": token,
+            "Update-Source": updateSource
+          }
+        }),
+        env
+      );
+      return response.json<{ filename: string }>();
+    }
+  };
+}
+
 function validRenderInspection() {
   return {
     viewport: { width: 800, height: 480 },
@@ -574,273 +629,62 @@ describe("TRMNL BYOS device service", () => {
   });
 
   test("a short-button wake advances to Calendar View and a timer wake resets to Daily Brief", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
-    const headers = {
-      ID: "AA:BB:CC:DD:EE:FF",
-      "Access-Token": token
-    };
+    const fixture = await navigationFixture();
+    const button = await fixture.request("button");
+    const timer = await fixture.request("timer");
 
-    const button = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...headers, "Update-Source": "button" }
-      }),
-      env
-    );
-    const timer = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...headers, "Update-Source": "timer" }
-      }),
-      env
-    );
-
-    expect((await button.json<{ filename: string }>()).filename).toBe(
-      "calendar-view-20261007T173000Z.png"
-    );
-    expect((await timer.json<{ filename: string }>()).filename).toBe(
-      "daily-brief-20261007T173000Z.png"
-    );
-    expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(0);
+    expect(button.filename).toBe(CALENDAR_FILENAME);
+    expect(timer.filename).toBe(DAILY_BRIEF_FILENAME);
+    expect(fixture.database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
   });
 
   test.each(["timer", "scheduled", "powercycle", "unknown"])(
     "%s wake selects Daily Brief without advancing the device cursor",
     async (updateSource) => {
-      const database = new TestDatabase();
-      database.publishedGeneration = {
-        filename: "daily-brief-20261007T173000Z.png",
-        objectKey: "generations/20261007T173000Z/daily-brief.png",
-        byteSize: 12_345,
-        viewType: "daily_brief"
-      };
-      database.calendarGeneration = {
-        filename: "calendar-view-20261007T173000Z.png",
-        objectKey: "generations/20261007T173000Z/calendar-view.png",
-        byteSize: 12_346,
-        viewType: "calendar"
-      };
-      const env = testEnv(database);
-      const setupResponse = await worker.fetch(
-        new Request("https://device.test/api/setup", {
-          headers: { ID: "AA:BB:CC:DD:EE:FF" }
-        }),
-        env
-      );
-      const { api_key: token } = await setupResponse.json<{
-        api_key: string;
-      }>();
+      const fixture = await navigationFixture();
+      const response = await fixture.request(updateSource);
 
-      const response = await worker.fetch(
-        new Request("https://device.test/api/display", {
-          headers: {
-            ID: "AA:BB:CC:DD:EE:FF",
-            "Access-Token": token,
-            "Update-Source": updateSource
-          }
-        }),
-        env
-      );
-
-      expect((await response.json<{ filename: string }>()).filename).toBe(
-        "daily-brief-20261007T173000Z.png"
-      );
-      expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(0);
+      expect(response.filename).toBe(DAILY_BRIEF_FILENAME);
+      expect(fixture.database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
     }
   );
 
   test("one manual button request advances the server-managed cursor exactly once", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const fixture = await navigationFixture();
+    const response = await fixture.request("button");
 
-    const response = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: {
-          ID: "AA:BB:CC:DD:EE:FF",
-          "Access-Token": token,
-          "Update-Source": "button"
-        }
-      }),
-      env
-    );
-
-    expect((await response.json<{ filename: string }>()).filename).toBe(
-      "calendar-view-20261007T173000Z.png"
-    );
-    expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(1);
+    expect(response.filename).toBe(CALENDAR_FILENAME);
+    expect(fixture.database.devices.get(DEVICE_ID)?.viewCursor).toBe(1);
   });
 
   test("view cache filenames are distinct and remain stable until the next generation", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
-    const credentials = {
-      ID: "AA:BB:CC:DD:EE:FF",
-      "Access-Token": token
-    };
+    const fixture = await navigationFixture();
+    const first = await fixture.request("timer");
+    const second = await fixture.request("timer");
+    const button = await fixture.request("button");
 
-    const first = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...credentials, "Update-Source": "timer" }
-      }),
-      env
-    );
-    const second = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...credentials, "Update-Source": "timer" }
-      }),
-      env
-    );
-    const button = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...credentials, "Update-Source": "button" }
-      }),
-      env
-    );
-
-    const firstFilename = (await first.json<{ filename: string }>()).filename;
-    expect((await second.json<{ filename: string }>()).filename).toBe(
-      firstFilename
-    );
-    expect((await button.json<{ filename: string }>()).filename).not.toBe(
-      firstFilename
-    );
+    expect(second.filename).toBe(first.filename);
+    expect(button.filename).not.toBe(first.filename);
   });
 
   test("display ignores a newer incomplete view set until the all-view pointer advances", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.incompleteDailyGeneration = {
-      filename: "daily-brief-20261007T220000Z.png",
-      objectKey: "generations/20261007T220000Z/daily-brief.png",
-      byteSize: 12_999
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const fixture = await navigationFixture({
+      incompleteDailyFilename: "daily-brief-20261007T220000Z.png"
+    });
+    const response = await fixture.request("timer");
 
-    const response = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: {
-          ID: "AA:BB:CC:DD:EE:FF",
-          "Access-Token": token,
-          "Update-Source": "timer"
-        }
-      }),
-      env
-    );
-
-    expect((await response.json<{ filename: string }>()).filename).toBe(
-      "daily-brief-20261007T173000Z.png"
-    );
+    expect(response.filename).toBe(DAILY_BRIEF_FILENAME);
   });
 
   test("short presses alternate Calendar View and Daily Brief", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
-    const headers = {
-      ID: "AA:BB:CC:DD:EE:FF",
-      "Access-Token": token,
-      "Update-Source": "button"
-    };
+    const fixture = await navigationFixture();
 
     const filenames = [];
     for (let press = 0; press < 2; press += 1) {
-      const response = await worker.fetch(
-        new Request("https://device.test/api/display", { headers }),
-        env
-      );
-      filenames.push((await response.json<{ filename: string }>()).filename);
+      filenames.push((await fixture.request("button")).filename);
     }
 
-    expect(filenames).toEqual([
-      "calendar-view-20261007T173000Z.png",
-      "daily-brief-20261007T173000Z.png"
-    ]);
+    expect(filenames).toEqual([CALENDAR_FILENAME, DAILY_BRIEF_FILENAME]);
     expect(new Set(filenames).size).toBe(2);
   });
 

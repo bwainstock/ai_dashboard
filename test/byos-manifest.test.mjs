@@ -26,6 +26,25 @@ describe("ESPHome BYOS manifest contract", () => {
     });
   });
 
+  test("accepts the exact private image route with an encoded filename", () => {
+    expect(
+      parseByosManifest(
+        {
+          status: 0,
+          image_url:
+            "https://dashboard-device.example.com/images/daily%20brief.png",
+          filename: "daily brief.png",
+          refresh_rate: 60
+        },
+        "https://dashboard-device.example.com"
+      )
+    ).toMatchObject({
+      imageUrl:
+        "https://dashboard-device.example.com/images/daily%20brief.png",
+      filename: "daily brief.png"
+    });
+  });
+
   test.each([
     ["non-object JSON", null],
     ["non-success status", { status: 401 }],
@@ -73,6 +92,36 @@ describe("ESPHome BYOS manifest contract", () => {
       {
         status: 0,
         image_url: "https://dashboard-device.example.com/images/other.png",
+        filename: "daily.png",
+        refresh_rate: 60
+      }
+    ],
+    [
+      "image URL query string",
+      {
+        status: 0,
+        image_url:
+          "https://dashboard-device.example.com/images/daily.png?token=leaked",
+        filename: "daily.png",
+        refresh_rate: 60
+      }
+    ],
+    [
+      "image URL fragment",
+      {
+        status: 0,
+        image_url:
+          "https://dashboard-device.example.com/images/daily.png#unexpected",
+        filename: "daily.png",
+        refresh_rate: 60
+      }
+    ],
+    [
+      "image URL outside the exact images path",
+      {
+        status: 0,
+        image_url:
+          "https://dashboard-device.example.com/archive/images/daily.png",
         filename: "daily.png",
         refresh_rate: 60
       }

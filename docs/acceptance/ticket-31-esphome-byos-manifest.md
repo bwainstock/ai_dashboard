@@ -13,8 +13,9 @@ The ESPHome proof of concept must send `ID`, `Access-Token`, and
 - the HTTP response succeeds and contains valid JSON with `status: 0`;
 - `image_url` and `filename` are nonempty strings;
 - `refresh_rate` is an integer from 1 through 86,400 seconds;
-- `image_url` has the configured device origin, contains no URL credentials,
-  and ends with the returned filename.
+- `image_url` is exactly
+  `<configured-origin>/images/<encoded filename>`, with no URL credentials,
+  query string, or fragment.
 
 The filename is the generation/view cache identity. The refresh rate is the
 server-directed timer wake interval. The image request sends `ID` and
@@ -99,11 +100,11 @@ IMAGE_URL="$(printf '%s' "$TIMER_JSON" | jq -er .image_url)"
 FILENAME="$(printf '%s' "$TIMER_JSON" | jq -er .filename)"
 node -e '
   const [origin, imageUrl, filename] = process.argv.slice(1);
-  const configured = new URL(origin);
   const image = new URL(imageUrl);
-  const pathFilename = decodeURIComponent(image.pathname.split("/").at(-1));
-  if (image.origin !== configured.origin || image.username || image.password ||
-      pathFilename !== filename) process.exit(1);
+  const expected = new URL(`/images/${encodeURIComponent(filename)}`,
+    new URL(origin).origin);
+  if (image.username || image.password || image.href !== expected.href)
+    process.exit(1);
 ' "$DEVICE_ORIGIN" "$IMAGE_URL" "$FILENAME"
 
 curl --fail-with-body \

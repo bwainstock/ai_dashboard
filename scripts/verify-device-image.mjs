@@ -1,4 +1,8 @@
 import { PNG } from "pngjs";
+import {
+  requestByosManifest,
+  requestPrivatePng
+} from "./byos-manifest-lib.mjs";
 
 const [baseUrl] = process.argv.slice(2);
 const deviceId = process.env.DEVICE_ID;
@@ -12,35 +16,16 @@ if (!baseUrl || !deviceId || !token) {
   process.exit(2);
 }
 
-const headers = { ID: deviceId, "Access-Token": token };
-const displayResponse = await fetch(new URL("/api/display", baseUrl), {
-  headers
+const display = await requestByosManifest({
+  deviceOrigin: baseUrl,
+  deviceId,
+  accessToken: token
 });
-if (!displayResponse.ok) {
-  throw new Error(
-    `Display request failed (${displayResponse.status}): ${await displayResponse.text()}`
-  );
-}
-
-const display = await displayResponse.json();
-if (
-  display.status !== 0 ||
-  typeof display.image_url !== "string" ||
-  typeof display.filename !== "string"
-) {
-  throw new Error("Display response does not contain a published image");
-}
-if (new URL(display.image_url).origin !== new URL(baseUrl).origin) {
-  throw new Error("Display response points outside the private device origin");
-}
-
-const imageResponse = await fetch(display.image_url, { headers });
-if (!imageResponse.ok) {
-  throw new Error(`Image request failed (${imageResponse.status})`);
-}
-if (imageResponse.headers.get("content-type") !== "image/png") {
-  throw new Error("Image response is not image/png");
-}
+const imageResponse = await requestPrivatePng({
+  imageUrl: display.imageUrl,
+  deviceId,
+  accessToken: token
+});
 
 const bytes = Buffer.from(await imageResponse.arrayBuffer());
 if (bytes.byteLength > maximumBytes) {

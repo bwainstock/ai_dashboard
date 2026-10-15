@@ -6,6 +6,10 @@ import {
   validateDisplaySequence,
   validatePngArtifact
 } from "./device-acceptance-lib.mjs";
+import {
+  requestByosManifest,
+  requestPrivatePng
+} from "./byos-manifest-lib.mjs";
 
 const [baseUrl, reportPath] = process.argv.slice(2);
 const deviceId = process.env.DEVICE_ID;
@@ -21,29 +25,16 @@ const limits = JSON.parse(
   await readFile(new URL("../config/device-limits.json", import.meta.url), "utf8")
 );
 const origin = new URL(baseUrl).origin;
-const credentials = { ID: deviceId, "Access-Token": token };
 const checks = [];
 const artifacts = [];
 
 async function display(updateSource) {
-  const response = await fetch(new URL("/api/display", origin), {
-    headers: { ...credentials, "Update-Source": updateSource }
+  return requestByosManifest({
+    deviceOrigin: origin,
+    deviceId,
+    accessToken: token,
+    wakeSource: updateSource
   });
-  if (!response.ok) {
-    throw new Error(`display ${updateSource} failed with ${response.status}`);
-  }
-  const body = await response.json();
-  if (
-    body.status !== 0 ||
-    typeof body.filename !== "string" ||
-    typeof body.image_url !== "string"
-  ) {
-    throw new Error("display response does not contain a published image");
-  }
-  if (new URL(body.image_url).origin !== origin) {
-    throw new Error("display response points outside the private origin");
-  }
-  return body;
 }
 
 async function expectUnauthorized(url, headers, label) {
@@ -90,11 +81,11 @@ try {
     limits.schedule.slots
   );
   if (
-    responses[0].refresh_rate !== expectedWake &&
-    Math.abs(responses[0].refresh_rate - expectedWake) > 2
+    responses[0].refreshRateSeconds !== expectedWake &&
+    Math.abs(responses[0].refreshRateSeconds - expectedWake) > 2
   ) {
     throw new Error(
-      `refresh_rate ${responses[0].refresh_rate} differs from expected ${expectedWake}`
+      `refresh_rate ${responses[0].refreshRateSeconds} differs from expected ${expectedWake}`
     );
   }
   checks.push({ name: "scheduled wake interval matches configured slots", status: "pass" });
@@ -104,19 +95,15 @@ try {
     ["calendar-view", responses[2]]
   ]) {
     await expectUnauthorized(
-      response.image_url,
+      response.imageUrl,
       { ID: deviceId },
       `${prefix} image rejects a missing token`
     );
-    const imageResponse = await fetch(response.image_url, {
-      headers: credentials
+    const imageResponse = await requestPrivatePng({
+      imageUrl: response.imageUrl,
+      deviceId,
+      accessToken: token
     });
-    if (!imageResponse.ok) {
-      throw new Error(`${prefix} image failed with ${imageResponse.status}`);
-    }
-    if (imageResponse.headers.get("content-type") !== "image/png") {
-      throw new Error(`${prefix} image is not image/png`);
-    }
     artifacts.push(
       validatePngArtifact(
         Buffer.from(await imageResponse.arrayBuffer()),

@@ -31,18 +31,19 @@ export function parseByosManifest(value, deviceOrigin) {
 
   const configuredOrigin = new URL(deviceOrigin).origin;
   const imageUrl = new URL(value.image_url);
+  const expectedImageUrl = new URL(
+    `/images/${encodeURIComponent(value.filename)}`,
+    configuredOrigin
+  );
   if (
     imageUrl.origin !== configuredOrigin ||
     imageUrl.username ||
-    imageUrl.password
+    imageUrl.password ||
+    imageUrl.href !== expectedImageUrl.href
   ) {
-    throw new Error("Display manifest image URL is outside the device origin");
-  }
-  const pathFilename = decodeURIComponent(
-    imageUrl.pathname.slice(imageUrl.pathname.lastIndexOf("/") + 1)
-  );
-  if (pathFilename !== value.filename) {
-    throw new Error("Display manifest filename does not match its image URL");
+    throw new Error(
+      "Display manifest image URL does not match the private image route"
+    );
   }
 
   return {
@@ -52,32 +53,47 @@ export function parseByosManifest(value, deviceOrigin) {
   };
 }
 
-export async function downloadByosDisplay({
+function deviceCredentials(deviceId, accessToken) {
+  if (!deviceId || !accessToken) {
+    throw new Error("Device credentials are required");
+  }
+  return { ID: deviceId, "Access-Token": accessToken };
+}
+
+export async function requestByosManifest({
   deviceOrigin,
   deviceId,
   accessToken,
   wakeSource,
   fetchImpl = fetch
 }) {
-  if (!deviceId || !accessToken) {
-    throw new Error("Device credentials are required");
-  }
-  if (!WAKE_SOURCES.has(wakeSource)) {
+  if (wakeSource !== undefined && !WAKE_SOURCES.has(wakeSource)) {
     throw new Error("Unsupported wake source");
   }
 
   const origin = new URL(deviceOrigin).origin;
-  const credentials = { ID: deviceId, "Access-Token": accessToken };
+  const credentials = deviceCredentials(deviceId, accessToken);
   const manifestResponse = await fetchImpl(new URL("/api/display", origin), {
-    headers: { ...credentials, "Update-Source": wakeSource },
+    headers:
+      wakeSource === undefined
+        ? credentials
+        : { ...credentials, "Update-Source": wakeSource },
     redirect: "manual"
   });
   if (!manifestResponse.ok) {
     throw new Error(`Display request failed with ${manifestResponse.status}`);
   }
-  const manifest = parseByosManifest(await manifestResponse.json(), origin);
-  const imageResponse = await fetchImpl(manifest.imageUrl, {
-    headers: credentials,
+  return parseByosManifest(await manifestResponse.json(), origin);
+}
+
+export async function requestPrivatePng({
+  imageUrl,
+  deviceId,
+  accessToken,
+  fetchImpl = fetch
+}) {
+  const imageResponse = await fetchImpl(imageUrl, {
+    headers: deviceCredentials(deviceId, accessToken),
     redirect: "manual"
   });
   if (!imageResponse.ok) {
@@ -87,10 +103,20 @@ export async function downloadByosDisplay({
   if (contentType !== "image/png") {
     throw new Error("Image response is not image/png");
   }
+  return imageResponse;
+}
 
+export async function downloadByosDisplay(options) {
+  const manifest = await requestByosManifest(options);
+  const imageResponse = await requestPrivatePng({
+    imageUrl: manifest.imageUrl,
+    deviceId: options.deviceId,
+    accessToken: options.accessToken,
+    fetchImpl: options.fetchImpl
+  });
   return {
     ...manifest,
-    contentType,
+    contentType: imageResponse.headers.get("content-type"),
     imageBytes: new Uint8Array(await imageResponse.arrayBuffer())
   };
 }
