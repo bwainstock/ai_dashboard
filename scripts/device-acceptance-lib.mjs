@@ -79,7 +79,7 @@ export function validateDisplaySequence(filenames) {
     `daily-brief-${generation}.png`,
     `calendar-view-${generation}.png`,
     `lunch-view-${generation}.png`,
-    `daily-brief-${generation}.png`,
+    `notices-view-${generation}.png`,
     `daily-brief-${generation}.png`
   ];
   if (filenames.some((filename, index) => filename !== expected[index])) {
@@ -175,12 +175,17 @@ export function validateReport(report, configuredLimits) {
       ({ filename }) => filename
     );
     if (
-      !["daily-brief-", "calendar-view-", "lunch-view-"].every((prefix) =>
+      ![
+        "daily-brief-",
+        "calendar-view-",
+        "lunch-view-",
+        "notices-view-"
+      ].every((prefix) =>
         filenames.some((filename) => filename.startsWith(prefix))
       )
     ) {
       errors.push(
-        "automated pass requires validated Daily Brief, Calendar View, and Lunch View artifacts"
+        "automated pass requires validated Daily Brief, Calendar View, Lunch View, and Notices View artifacts"
       );
     }
     if (

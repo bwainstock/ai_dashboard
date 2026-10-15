@@ -77,7 +77,10 @@ try {
   );
   checks.push(
     { name: "named image cache remains stable", status: "pass" },
-    { name: "button cycles Daily Brief, Calendar View, Lunch View", status: "pass" },
+    {
+      name: "button cycles Daily Brief, Calendar View, Lunch View, Notices View",
+      status: "pass"
+    },
     { name: "timer resets to Daily Brief", status: "pass" }
   );
 
@@ -99,7 +102,8 @@ try {
   for (const [prefix, response] of [
     ["daily-brief", responses[0]],
     ["calendar-view", responses[2]],
-    ["lunch-view", responses[3]]
+    ["lunch-view", responses[3]],
+    ["notices-view", responses[4]]
   ]) {
     await expectUnauthorized(
       response.image_url,
@@ -127,7 +131,7 @@ try {
     );
   }
   checks.push(
-    { name: "all three images decode and satisfy configured limits", status: "pass" },
+    { name: "all four images decode and satisfy configured limits", status: "pass" },
     { name: "all image routes remain device-token authenticated", status: "pass" }
   );
   automated = { status: "pass", checks, sequence, artifacts };
