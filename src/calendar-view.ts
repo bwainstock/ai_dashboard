@@ -154,7 +154,7 @@ export function calendarViewHtml(model: CalendarViewModel): string {
   }).formatToParts(new Date(model.updatedAt));
   const updatedPart = (type: Intl.DateTimeFormatPartTypes) =>
     updatedParts.find((part) => part.type === type)?.value ?? "";
-  const updated = updatedParts.map((part) => part.value).join("");
+  const updated = `${updatedPart("hour")}:${updatedPart("minute")} ${updatedPart("dayPeriod")}`;
   const renderedAt = new Date(model.updatedAt);
   const railWeekday = new Intl.DateTimeFormat("en-US", {
     timeZone: model.timezone,

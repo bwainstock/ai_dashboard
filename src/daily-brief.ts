@@ -103,7 +103,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
   }).formatToParts(renderedAt);
   const updatedPart = (type: Intl.DateTimeFormatPartTypes) =>
     updatedParts.find((part) => part.type === type)?.value ?? "";
-  const updated = updatedParts.map((part) => part.value).join("");
+  const updated = `${updatedPart("hour")}:${updatedPart("minute")} ${updatedPart("dayPeriod")}`;
   const date = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     weekday: "short",
