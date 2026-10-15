@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { dailyBriefHtml } from "../src/daily-brief";
 
-test("Daily Brief presents current, today, and tomorrow weather with icons and text", () => {
+test("Daily Brief presents the date, daily forecast, and upcoming events without live-style data", () => {
   const html = dailyBriefHtml({
     weather: {
       observedAt: "2026-10-07T10:25",
@@ -56,9 +56,11 @@ test("Daily Brief presents current, today, and tomorrow weather with icons and t
     updatedAt: "2026-10-07T17:30:00.000Z"
   });
 
-  expect(html).toContain('aria-label="Mostly clear weather icon"');
-  expect(html).toContain("68°F");
-  expect(html).toContain("Mostly clear");
+  expect(html).toContain("Wednesday");
+  expect(html).toContain("October 7");
+  expect(html).toContain('aria-label="Partly cloudy weather icon"');
+  expect(html).not.toContain("68°F");
+  expect(html).not.toContain("Mostly clear");
   expect(html).toContain("Partly cloudy");
   expect(html).toContain("High 75° · Low 55° · Rain 10%");
   expect(html).toContain("Rain");
@@ -73,6 +75,8 @@ test("Daily Brief presents current, today, and tomorrow weather with icons and t
   expect(html).toContain("Tentative");
   expect(html).toContain("Mom");
   expect(html).not.toContain("123 Main Street");
+  expect(html).not.toContain("Next up");
+  expect(html).not.toContain("until start");
   expect(html).toContain("Updated 10:30 AM");
 });
 
@@ -184,7 +188,7 @@ test("stale sections show their own ages while retaining one global update time"
   expect(html.match(/Updated 10:30 AM/g)).toHaveLength(1);
 });
 
-test("Daily Brief derives the next-event countdown from the generation time", () => {
+test("Daily Brief shows only the next three events with equal presentation", () => {
   const html = dailyBriefHtml({
     weather: {
       observedAt: "2026-10-07T10:25",
@@ -214,6 +218,36 @@ test("Daily Brief derives the next-event countdown from the generation time", ()
         tentative: false,
         private: false,
         ownerLabels: ["Dad"]
+      },
+      {
+        occurrenceId: "dentist|2026-10-07T20:00:00.000Z",
+        title: "Dentist",
+        start: "2026-10-07T20:00:00.000Z",
+        end: "2026-10-07T21:00:00.000Z",
+        allDay: false,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Mom"]
+      },
+      {
+        occurrenceId: "dinner|2026-10-07T22:00:00.000Z",
+        title: "Family dinner",
+        start: "2026-10-07T22:00:00.000Z",
+        end: "2026-10-07T23:00:00.000Z",
+        allDay: false,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Mom", "Dad"]
+      },
+      {
+        occurrenceId: "later|2026-10-08T01:00:00.000Z",
+        title: "Fourth event",
+        start: "2026-10-08T01:00:00.000Z",
+        end: "2026-10-08T02:00:00.000Z",
+        allDay: false,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Dad"]
       }
     ],
     stale: false,
@@ -221,7 +255,13 @@ test("Daily Brief derives the next-event countdown from the generation time", ()
     updatedAt: "2026-10-07T17:30:00.000Z"
   });
 
-  expect(html).toContain('class="number">1:30</span><small>until start');
+  expect(html).toContain("Upcoming events");
+  expect(html).toContain("Practice");
+  expect(html).toContain("Dentist");
+  expect(html).toContain("Family dinner");
+  expect(html).not.toContain("Fourth event");
+  expect(html).not.toContain("Next up");
+  expect(html).not.toContain("until start");
 });
 
 test("Daily Brief publishes the highest-priority notice using only approved fields", () => {

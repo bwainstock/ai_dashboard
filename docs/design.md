@@ -127,10 +127,12 @@ Keep every element inside the viewport and all visible text at least 12px.
 
 ### Daily Brief
 
-- The header combines local time and date, current weather, today's forecast,
-  and the Family Brief label.
-- The next event is the visual anchor: an inverted card with its start time,
-  title, owner label, and countdown. Up to two later events appear below it.
+- The header combines the local day and date, today's condition and forecast,
+  and the Family Brief label. It omits a clock and current temperature because
+  scheduled generations may remain displayed for hours.
+- The next three relevant events use equal visual weight and show their start
+  time, title, and owner label without a live-style countdown or `Next up`
+  treatment.
 - The side column shows today's lunch and either tomorrow's weather or the
   available Household Notice content. The notice card may contain one approved
   Household Notice and up to two account-only Private Notice Markers.
