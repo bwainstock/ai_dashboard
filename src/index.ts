@@ -6,8 +6,6 @@ import {
 } from "./admin";
 import { dailyBriefHtml } from "./daily-brief";
 import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
-import { lunchViewHtml, type LunchViewModel } from "./lunch-view";
-import { noticesViewHtml, type NoticesViewModel } from "./notices-view";
 import { validateRenderedPage } from "./render-validation";
 import { effectiveMaximumImageBytes } from "./device-limits";
 import {
@@ -27,16 +25,11 @@ import {
   runScheduledWeatherGeneration,
   secondsUntilNextSlot,
   type DashboardConfiguration,
-  type DailyBriefNotice,
   type DailyBriefWeatherModel,
-  type Publication
+  type Publication,
+  type ScheduledGenerationResult
 } from "./generation";
 import { fetchWeather, type WeatherSnapshot } from "./weather";
-import {
-  fetchMealViewerMenu,
-  type LunchIcon,
-  type LunchSnapshot
-} from "./lunch";
 import { runOperationalIncidentCheck } from "./incidents";
 import {
   disconnectGoogleAccount,
@@ -50,7 +43,6 @@ import {
   refreshCalendarAccessToken,
   revokeGoogleAccess
 } from "./google-calendar";
-import type { OperationalCode } from "./operational-codes";
 import {
   type CalendarConfigurationAccount,
   type CalendarSelectionValidationFailure,
@@ -73,16 +65,9 @@ export interface Env {
   CALENDAR_TOKEN_ENCRYPTION_KEY?: string;
   MAX_IMAGE_BYTES?: string;
   GENERATION_RETRY_MINUTES?: string;
-  MEALVIEWER_MENU_URL?: string;
-  AI?: {
-    run(model: string, input: unknown): Promise<unknown>;
-  };
-  LUNCH_AI_MODEL?: string;
   INCIDENT_EMAIL?: SendEmail;
   OPERATIONAL_EMAIL_FROM?: string;
   OPERATIONAL_EMAIL_TO?: string;
-  GMAIL_PROCESSOR?: Fetcher;
-  GMAIL_PROCESSOR_KEY?: string;
   NOTICE_GRACE_DAYS?: string;
 }
 
@@ -220,8 +205,8 @@ async function display(request: Request, env: Env): Promise<Response> {
   const manualWake =
     updateSource !== undefined &&
     !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
-  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 4 : 0;
-  const viewType = ["daily_brief", "calendar", "lunch", "notices"][viewCursor];
+  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
+  const viewType = ["daily_brief", "calendar"][viewCursor];
   await env.DB.prepare(
     `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
      WHERE device_id = ?`
@@ -1010,24 +995,10 @@ async function renderCalendarView(
   );
 }
 
-async function renderLunchView(
-  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
-  model: LunchViewModel
-): Promise<Uint8Array> {
-  return renderDashboardView(browser, lunchViewHtml(model), "Lunch View");
-}
-
-async function renderNoticesView(
-  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
-  model: NoticesViewModel
-): Promise<Uint8Array> {
-  return renderDashboardView(browser, noticesViewHtml(model), "Notices View");
-}
-
 async function renderDashboardView(
   browser: Awaited<ReturnType<typeof puppeteer.launch>>,
   html: string,
-  view: "Daily Brief" | "Calendar View" | "Lunch View" | "Notices View"
+  view: "Daily Brief" | "Calendar View"
 ): Promise<Uint8Array> {
   const page = await browser.newPage();
   await page.setViewport({
@@ -1101,7 +1072,11 @@ async function publishGeneration(
   ]);
 }
 
-async function runScheduled(env: Env, now: Date): Promise<void> {
+async function runScheduled(
+  env: Env,
+  now: Date,
+  forcedSlotKey?: string
+): Promise<ScheduledGenerationResult> {
   const configuration = await loadConfiguration(env);
   const configuredRetryDelay = Number(env.GENERATION_RETRY_MINUTES);
   const session: {
@@ -1112,7 +1087,7 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
     return session.browser;
   };
   try {
-    await runScheduledWeatherGeneration(
+    return await runScheduledWeatherGeneration(
       {
         now,
         configuration,
@@ -1120,7 +1095,8 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
         retryDelayMinutes:
           Number.isInteger(configuredRetryDelay) && configuredRetryDelay > 0
             ? configuredRetryDelay
-            : 15
+            : 15,
+        ...(forcedSlotKey ? { forcedSlotKey } : {})
       },
       {
       async claimSlot(slotKey) {
@@ -1158,33 +1134,6 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           ? { slotKey: candidate.slot_key }
           : null;
       },
-      async prepareGeneration() {
-        if (!env.GMAIL_PROCESSOR || !env.GMAIL_PROCESSOR_KEY) return;
-        try {
-          const response = await env.GMAIL_PROCESSOR.fetch(
-            "https://gmail-processor/process",
-            {
-              method: "POST",
-              headers: { "X-Gmail-Processor-Key": env.GMAIL_PROCESSOR_KEY }
-            }
-          );
-          if (!response.ok) {
-            throw new Error("Gmail processor unavailable");
-          }
-        } catch {
-          const code =
-            "GMAIL_PROCESSOR_UNREACHABLE" satisfies OperationalCode;
-          await env.DB.prepare(
-            `UPDATE source_status
-             SET state = 'error', error_code = ?,
-                 consecutive_failures = consecutive_failures + 1,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE source = 'gmail'`
-          )
-            .bind(code)
-            .run();
-        }
-      },
       fetchWeather: (location) => fetchWeather(location),
       async loadLatestWeather() {
         const row = await env.DB.prepare(
@@ -1216,117 +1165,6 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .bind(fetchedAt)
           .run();
       },
-      async fetchLunch() {
-        if (!env.MEALVIEWER_MENU_URL) {
-          throw Object.assign(new Error("MealViewer URL is not configured"), {
-            code: "LUNCH_UPSTREAM_NETWORK"
-          });
-        }
-        return fetchMealViewerMenu(env.MEALVIEWER_MENU_URL, fetch, {
-          now,
-          timezone: configuration.timezone
-        });
-      },
-      async loadLatestLunch() {
-        const row = await env.DB.prepare(
-          `SELECT snapshot_json, fetched_at FROM lunch_snapshots
-           ORDER BY fetched_at DESC, id DESC LIMIT 1`
-        ).first<{ snapshot_json: string; fetched_at: string }>();
-        return row
-          ? {
-              snapshot: JSON.parse(row.snapshot_json) as LunchSnapshot,
-              fetchedAt: row.fetched_at
-            }
-          : null;
-      },
-      async saveLunch(snapshot, fetchedAt) {
-        await env.DB.prepare(
-          `INSERT INTO lunch_snapshots (fetched_at, snapshot_json)
-           VALUES (?, ?)`
-        )
-          .bind(fetchedAt, JSON.stringify(snapshot))
-          .run();
-        await env.DB.prepare(
-          `UPDATE source_status SET state = 'fresh', last_success_at = ?,
-             error_code = NULL, consecutive_failures = 0,
-             last_failure_slot_key = NULL,
-             updated_at = CURRENT_TIMESTAMP
-           WHERE source = 'lunch'`
-        )
-          .bind(fetchedAt)
-          .run();
-      },
-      async loadCachedLunchIcon(entreeKey) {
-        const row = await env.DB.prepare(
-          "SELECT icon FROM lunch_icon_mappings WHERE entree_key = ?"
-        )
-          .bind(entreeKey)
-          .first<{ icon: string }>();
-        return row?.icon ?? null;
-      },
-      async saveCachedLunchIcon(entreeKey, icon: LunchIcon) {
-        await env.DB.prepare(
-          `INSERT INTO lunch_icon_mappings
-             (entree_key, icon, source, updated_at)
-           VALUES (?, ?, 'ai', CURRENT_TIMESTAMP)
-           ON CONFLICT(entree_key) DO UPDATE SET
-             icon = excluded.icon,
-             source = excluded.source,
-             updated_at = excluded.updated_at`
-        )
-          .bind(entreeKey, icon)
-          .run();
-      },
-      classifyLunchWithAi:
-        env.AI && env.LUNCH_AI_MODEL
-          ? async ({ entree, allowedIcons }) => {
-              let result: unknown;
-              try {
-                result = await env.AI!.run(env.LUNCH_AI_MODEL!, {
-                  messages: [
-                    {
-                      role: "system",
-                      content:
-                        "Return exactly one allowed lunch icon token and nothing else. If uncertain, return generic."
-                    },
-                    {
-                      role: "user",
-                      content: `Allowed: ${allowedIcons.join(",")}\nEntree: ${entree}`
-                    }
-                  ],
-                  max_tokens: 5,
-                  temperature: 0
-                });
-                await env.DB.prepare(
-                  `UPDATE operational_status SET status_value = 'available',
-                     updated_at = CURRENT_TIMESTAMP
-                   WHERE status_key = 'ai_quota'`
-                ).run();
-              } catch (error) {
-                const quotaExhausted =
-                  error !== null &&
-                  typeof error === "object" &&
-                  (("status" in error && error.status === 429) ||
-                    ("code" in error &&
-                      typeof error.code === "string" &&
-                      error.code.toLowerCase().includes("quota")));
-                if (quotaExhausted) {
-                  await env.DB.prepare(
-                    `UPDATE operational_status
-                     SET status_value = 'exhausted',
-                         updated_at = CURRENT_TIMESTAMP
-                     WHERE status_key = 'ai_quota'`
-                  ).run();
-                }
-                throw error;
-              }
-              return result &&
-                typeof result === "object" &&
-                "response" in result
-                ? (result as { response: unknown }).response
-                : null;
-            }
-          : undefined,
       fetchCalendar: () =>
         fetchCalendarSnapshot(env, now, configuration.timezone),
       async loadLatestCalendar() {
@@ -1358,49 +1196,10 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
           .bind(fetchedAt)
           .run();
       },
-      async loadNotices() {
-        const rows = await env.DB.prepare(
-          `SELECT category, summary, relevant_date, action, sender_organization
-           FROM household_notices
-           WHERE expires_at >= ?
-           ORDER BY accepted_at DESC, id DESC
-           LIMIT 8`
-        )
-          .bind(now.toISOString())
-          .all<{
-            category: DailyBriefNotice["category"];
-            summary: string;
-            relevant_date: string | null;
-            action: string | null;
-            sender_organization: string;
-          }>();
-        return rows.results.map((row) => ({
-          category: row.category,
-          summary: row.summary,
-          relevantDate: row.relevant_date,
-          action: row.action,
-          senderOrganization: row.sender_organization
-        }));
-      },
-      async loadPrivateNoticeMarkers() {
-        const rows = await env.DB.prepare(
-          `SELECT DISTINCT account_id
-           FROM gmail_protected_reviews
-           WHERE review_kind = 'sensitive' AND expires_at >= ?
-           ORDER BY account_id`
-        )
-          .bind(now.toISOString())
-          .all<{ account_id: "mom" | "dad" }>();
-        return rows.results.map(({ account_id }) => ({ accountId: account_id }));
-      },
       renderDailyBrief: async (model) =>
         renderDailyBrief(await scheduledBrowser(), model),
       renderCalendarView: async (model) =>
         renderCalendarView(await scheduledBrowser(), model),
-      renderLunchView: async (model) =>
-        renderLunchView(await scheduledBrowser(), model),
-      renderNoticesView: async (model) =>
-        renderNoticesView(await scheduledBrowser(), model),
       publish: (publication) => publishGeneration(env, publication),
       async recordSourceFailure(slotKey, source, code, message) {
         void message;
@@ -1439,9 +1238,30 @@ async function runScheduled(env: Env, now: Date): Promise<void> {
   }
 }
 
+async function forceGeneration(request: Request, env: Env): Promise<Response> {
+  if (!isAdministrator(request, env)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  const now = new Date();
+  const slotKey = `manual-${now.toISOString()}-${randomToken(5)}`;
+  let result: ScheduledGenerationResult;
+  try {
+    result = await runScheduled(env, now, slotKey);
+  } finally {
+    await runOperationalIncidentCheck(env, now);
+  }
+  return json(result, result.status === "published" ? 201 : 422);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (
+      request.method === "POST" &&
+      url.pathname === "/admin/generations"
+    ) {
+      return forceGeneration(request, env);
+    }
     if (
       request.method === "POST" &&
       url.pathname === "/admin/fixture-generations"

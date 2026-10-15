@@ -16,6 +16,9 @@ Automated coverage verifies:
 - Calendar View groups today and the next two local days, limits output to
   twelve events, reports `+N more`, orders all-day events before timed events,
   and uses compact 12-hour times.
+- The rail shows the date, today and tomorrow forecasts, and the generation
+  update timestamp. It never presents a clock, current temperature, or other
+  live-looking value.
 - Shortened locations appear only on Calendar View. Private events render as
   `Busy`, and normalized/rendered data excludes descriptions, attendees,
   meeting links, organizer addresses, and personal email addresses.

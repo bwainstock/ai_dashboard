@@ -46,9 +46,9 @@ Do not build source integrations until this path is proven.
 ### Rendering
 
 1. Define a renderer input model independent of source payloads.
-2. Build Daily Brief, Calendar View, and Lunch View.
+2. Build the active weather-and-calendar Daily Brief and Calendar View.
 3. Bundle open-licensed monochrome SVGs.
-4. Implement deterministic lunch mappings and an optional constrained Workers AI fallback.
+4. Keep lunch mappings and Workers AI fallback isolated for deferred use.
 5. Add overflow rules, stale markers, and global update time.
 6. Render all views for one immutable generation and atomically publish its pointer.
 
@@ -63,17 +63,17 @@ Do not build source integrations until this path is proven.
 
 ### V1 acceptance
 
-- Physical device displays all three views.
+- Physical device displays both active views.
 - Short press cycles forward; scheduled wake returns to Daily Brief.
 - Four local-time generations and delayed retry are verified across a daylight-saving boundary in tests.
 - Calendar privacy, deduplication, and overflow rules are covered by tests.
-- MealViewer schema and missing-menu cases fail visibly.
+- Deferred MealViewer processing cannot block active publication.
 - Section-level stale fallback works without blank success states.
 - Images remain private and device-token authenticated.
 - Admin and status routes enforce Access roles.
 - Battery measurement reaches at least four weeks under the agreed usage profile.
 
-## Phase 2: Gmail Household Notices
+## Deferred: Gmail Household Notices
 
 ### Privacy boundary
 

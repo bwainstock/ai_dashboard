@@ -184,7 +184,9 @@ class D1IncidentRepository implements IncidentRepository {
         this.database
           .prepare(
             `SELECT source, consecutive_failures
-             FROM source_status ORDER BY source`
+             FROM source_status
+             WHERE source IN ('weather', 'calendar')
+             ORDER BY source`
           )
           .all<{
             source: "weather" | "calendar" | "lunch" | "gmail";

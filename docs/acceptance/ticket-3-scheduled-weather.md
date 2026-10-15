@@ -30,6 +30,8 @@ invocation to `America/Los_Angeles`, claims a due local slot idempotently,
 fetches and normalizes Open-Meteo weather, and renders an 800x480 Daily Brief.
 The image is written under an immutable generation key before D1 publishes the
 generation. An invalid or failed render never advances the published image.
+The generated views show dated today/tomorrow forecasts only; they never show a
+clock, current temperature, or live-looking weather value.
 
 Open-Meteo HTTP, network, and response-schema failures have fixed error codes.
 When a last valid weather snapshot exists, the Worker renders it with an
@@ -38,6 +40,10 @@ the existing published generation remains active.
 
 `/api/display` calculates `refresh_rate` from the next configured local slot,
 including daylight-saving transitions.
+
+An operator can force the same production generation path outside a scheduled
+slot with `POST /admin/generations` and the generation secret. The endpoint
+publishes a new immutable two-view generation and returns its slot and filename.
 
 ## Verification
 

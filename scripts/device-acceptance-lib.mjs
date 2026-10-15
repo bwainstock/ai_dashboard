@@ -70,16 +70,15 @@ export function validatePngArtifact(
 }
 
 export function validateDisplaySequence(filenames) {
-  if (filenames.length !== 6) {
-    throw new Error("Display sequence must contain six requests");
+  if (filenames.length !== 5) {
+    throw new Error("Display sequence must contain five requests");
   }
   const generation = generationFrom(filenames[0], "daily-brief");
   const expected = [
     `daily-brief-${generation}.png`,
     `daily-brief-${generation}.png`,
     `calendar-view-${generation}.png`,
-    `lunch-view-${generation}.png`,
-    `notices-view-${generation}.png`,
+    `daily-brief-${generation}.png`,
     `daily-brief-${generation}.png`
   ];
   if (filenames.some((filename, index) => filename !== expected[index])) {
@@ -175,17 +174,12 @@ export function validateReport(report, configuredLimits) {
       ({ filename }) => filename
     );
     if (
-      ![
-        "daily-brief-",
-        "calendar-view-",
-        "lunch-view-",
-        "notices-view-"
-      ].every((prefix) =>
+      !["daily-brief-", "calendar-view-"].every((prefix) =>
         filenames.some((filename) => filename.startsWith(prefix))
       )
     ) {
       errors.push(
-        "automated pass requires validated Daily Brief, Calendar View, Lunch View, and Notices View artifacts"
+        "automated pass requires validated Daily Brief and Calendar View artifacts"
       );
     }
     if (

@@ -36,7 +36,7 @@ describe("Calendar View", () => {
     });
 
     expect(html).toContain("Today");
-    expect(html).toContain('aria-label="Calendar icon"');
+    expect(html).toContain('aria-label="Forecast icon"');
     expect(html).toContain("Tomorrow");
     expect(html).toContain("Friday");
     expect(html.indexOf("School holiday")).toBeLessThan(
@@ -116,5 +116,35 @@ describe("Calendar View", () => {
 
     expect(html).toContain("Visible event");
     expect(html).not.toContain("Old event 1");
+  });
+
+  test("shows dated forecasts without a clock or live temperature", () => {
+    const html = calendarViewHtml({
+      calendar: [],
+      timezone: "America/Los_Angeles",
+      updatedAt: "2026-10-07T17:30:00.000Z",
+      weather: {
+        today: {
+          date: "2026-10-07",
+          condition: "Clear",
+          high: 75,
+          low: 55,
+          precipitationProbability: 10
+        },
+        tomorrow: {
+          date: "2026-10-08",
+          condition: "Rain",
+          high: 64,
+          low: 51,
+          precipitationProbability: 70
+        }
+      }
+    });
+
+    expect(html).toContain("75° / 55°");
+    expect(html).toContain("64° / 51°");
+    expect(html).toContain("Updated 10:30 AM");
+    expect(html).not.toMatch(/\b(current|live|right now|now)\b/i);
+    expect(html).not.toContain('class="number clock"');
   });
 });

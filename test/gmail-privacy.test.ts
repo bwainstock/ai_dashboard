@@ -46,7 +46,7 @@ describe("Gmail privacy inspection", () => {
     expect(migration).not.toMatch(/\braw_(?:subject|body|content)\b/i);
   });
 
-  test("delivery HTML contains approved fields, not fixture raw Gmail data", () => {
+  test("Daily Brief contains no Gmail-derived content", () => {
     const html = dailyBriefHtml({
       weather: {
         observedAt: "2026-10-07T10:25",
@@ -66,22 +66,14 @@ describe("Gmail privacy inspection", () => {
           precipitationProbability: 0
         }
       },
+      calendar: [],
       stale: false,
-      lunch: { status: "available", stale: false, entrees: [] },
-      notices: [
-        {
-          category: fixture.extraction.category as "school",
-          summary: fixture.extraction.summary,
-          relevantDate: fixture.extraction.relevantDate,
-          action: fixture.extraction.action,
-          senderOrganization: fixture.extraction.senderOrganization
-        }
-      ],
+      timezone: "America/Los_Angeles",
       updatedAt: "2026-10-07T17:30:00.000Z"
     });
     const raw = fixture.candidate;
 
-    expect(html).toContain(fixture.extraction.summary);
+    expect(html).not.toContain(fixture.extraction.summary);
     for (const forbidden of [
       raw.messageId,
       raw.threadId,
