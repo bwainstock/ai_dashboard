@@ -21,22 +21,21 @@ test("ESPHome Daily Brief targets the Seeed TRMNL OG kit", async () => {
   assert.match(config, /inverted:\s*true/);
 });
 
-test("ESPHome Daily Brief updates only after a validated private image", async () => {
+test("ESPHome Daily Brief downloads one authenticated private image", async () => {
   const config = await readFile(configUrl, "utf8");
 
   assert.match(config, /Update-Source:\s*!lambda/);
   assert.match(config, /ID:\s*!secret device_id/);
   assert.match(config, /Access-Token:\s*!secret device_token/);
   assert.match(config, /follow_redirects:\s*false/);
-  assert.match(config, /json::parse_json/);
-  assert.match(config, /image_url != expected_image_url/);
-  assert.match(config, /refresh_rate < 1 \|\| refresh_rate > 86400/);
+  assert.match(config, /url:\s*"\$\{device_origin\}\/api\/image"/);
   assert.match(config, /type:\s*BINARY/);
   assert.match(config, /resize:\s*800x480/);
   assert.match(config, /on_download_finished:/);
   assert.match(config, /component\.update:\s*main_display/);
-  assert.match(config, /deep_sleep\.enter:/);
   assert.match(config, /on_error:/);
+  assert.doesNotMatch(config, /\/api\/display|json::parse_json|image_url/);
+  assert.doesNotMatch(config, /deep_sleep:/);
 });
 
 test("ESPHome maps bright PNG pixels to white e-paper pixels", async () => {
@@ -48,23 +47,32 @@ test("ESPHome maps bright PNG pixels to white e-paper pixels", async () => {
   );
 });
 
+test("XIAO user LED reports download, refresh, error, and idle states", async () => {
+  const config = await readFile(configUrl, "utf8");
+
+  assert.match(config, /id:\s*status_led/);
+  assert.match(config, /number:\s*GPIO21/);
+  assert.match(config, /id:\s*status_led_fast_blink[\s\S]*delay:\s*100ms/);
+  assert.match(config, /id:\s*status_led_error[\s\S]*count:\s*3/);
+  assert.match(
+    config,
+    /script\.execute:\s*status_led_refreshing[\s\S]*component\.update:\s*main_display/,
+  );
+  assert.match(config, /script\.execute:\s*status_led_awake/);
+});
+
 test("Key 3 double-click requests one server-managed button navigation", async () => {
   const config = await readFile(configUrl, "utf8");
 
   assert.match(config, /id:\s*key3/);
   assert.match(config, /number:\s*GPIO5/);
-  assert.match(config, /wakeup_pin_mode:\s*KEEP_AWAKE/);
-  assert.match(config, /esp_sleep_get_wakeup_cause\(\)/);
-  assert.match(
-    config,
-    /id\(update_source\)\s*=\s*id\(button_wake\)\s*\?\s*"button"\s*:\s*"timer"/,
-  );
   assert.match(config, /Update-Source:\s*!lambda/);
   assert.match(config, /return id\(update_source\)\.c_str\(\);/);
   assert.match(config, /delayed_on:\s*30ms/);
   assert.match(config, /delayed_off:\s*30ms/);
   assert.match(config, /delay:\s*750ms/);
   assert.match(config, /id\(button_gesture_complete\)\s*=\s*true/);
+  assert.match(config, /id\(update_source\)\s*=\s*"button"/);
   assert.match(config, /!id\(request_started\)/);
 });
 
@@ -74,4 +82,27 @@ test("timer wakes reset navigation without a client-side view cursor", async () 
   assert.match(config, /initial_value:\s*'"timer"'/);
   assert.doesNotMatch(config, /page_index|view_cursor|current_view/);
   assert.doesNotMatch(config, /weather|calendar.*refresh|generate/i);
+});
+
+test("local scheduling refreshes after each server generation", async () => {
+  const config = await readFile(configUrl, "utf8");
+
+  assert.match(config, /platform:\s*sntp/);
+  assert.match(config, /timezone:\s*America\/Los_Angeles/);
+  assert.match(config, /minutes:\s*32[\s\S]*hours:\s*6,10/);
+  assert.match(config, /minutes:\s*2[\s\S]*hours:\s*15,19/);
+  assert.match(config, /id:\s*scheduled_image_refresh/);
+});
+
+test("Key 1 maintenance mode keeps the device available for serial logs and OTA", async () => {
+  const config = await readFile(configUrl, "utf8");
+
+  assert.match(config, /id:\s*key1/);
+  assert.match(config, /number:\s*GPIO2/);
+  assert.match(config, /pinMode\(2,\s*INPUT_PULLUP\)/);
+  assert.match(config, /id\(maintenance_mode\)\s*=\s*digitalRead\(2\)\s*==\s*LOW/);
+  assert.match(config, /Maintenance mode active; deep sleep is disabled/);
+  assert.match(config, /Maintenance mode activated; reset to resume image updates/);
+  assert.match(config, /platform:\s*esphome/);
+  assert.match(config, /password:\s*!secret ota_password/);
 });

@@ -14,7 +14,7 @@ The system favors low maintenance, controlled handling of Gmail data, readable c
 - Selected events from two consumer Google accounts for today and the next two local calendar days.
 - A weather-and-calendar Daily Brief plus Calendar View.
 - Four scheduled updates every day at 06:30, 10:30, 15:00, and 19:00 in `America/Los_Angeles`.
-- Forward-only navigation using the stock firmware's wake button.
+- Forward navigation using the ESPHome Key 3 gesture.
 - Protected configuration and operational status pages.
 
 ### Deferred sources
@@ -27,12 +27,10 @@ The system favors low maintenance, controlled handling of Gmail data, readable c
 
 ## Architecture
 
-The device keeps the open TRMNL firmware and talks to a custom BYOS-compatible Cloudflare Worker. TRMNL's paid hosted service, Home Assistant, and custom ESP32 firmware are not required.
-
-Stock TRMNL firmware remains the standard device path. An optional ESPHome
-proof of concept may reuse the same authenticated display manifest and private
-image routes, but it does not add device-specific endpoints or replace the
-supported BYOS architecture.
+The device runs the repository's ESPHome firmware and talks directly to a
+custom Cloudflare Worker. Home Assistant and TRMNL's paid hosted service are
+not required. Legacy TRMNL BYOS routes remain deployed only as rollback
+compatibility.
 
 ```text
 Google Calendar ─┐
@@ -42,9 +40,11 @@ Open-Meteo ──────┴─> source adapters ─> normalized snapshots �
                                                               Browser Rendering
                                                                        │
                                                                        v
-TRMNL device <─ device Worker <─ private R2 PNGs <─ generation pointer in D1
-                       │
-                       └─ D1 configuration, OAuth tokens, status, snapshots
+ESPHome device <─ one authenticated PNG request ─ device Worker
+                                                    │
+                                      private R2 PNGs + D1 generation pointer
+                                                    │
+                               D1 configuration, OAuth tokens, status, snapshots
 ```
 
 ### Cloudflare components
@@ -69,28 +69,34 @@ No KV or Queues are planned initially.
 Use separate hostnames on the existing Cloudflare-managed domain:
 
 - `dashboard-admin.<domain>`: Cloudflare Access-protected administration, review, and status.
-- `dashboard-device.<domain>`: TRMNL setup, display, and authenticated image routes.
+- `dashboard-device.<domain>`: ESPHome direct-image and rollback BYOS routes.
 
-The device hostname must not require an interactive Access login. `/api/setup` issues a high-entropy device token, and every display or image request validates it. The device MAC address and image filename are identifiers, not credentials.
+The device hostname must not require an interactive Access login. `/api/setup`
+issues a high-entropy device token, and every image request validates it. The
+device identifier and generation metadata are not credentials.
 
 ## Device protocol and navigation
 
-The Worker implements the minimum TRMNL BYOS contract:
+The production device interface is one authenticated `GET /api/image` request.
+`ID`, `Access-Token`, and `Update-Source` remain headers. The Worker selects the
+current atomically published view and returns the opaque 800x480 PNG directly
+with private cache validators and non-sensitive generation headers.
 
-- `/api/setup`
-- `/api/display`
-- `/api/log`, if useful for fixed non-sensitive device error codes
+- Scheduled refresh: ESPHome sends `Update-Source: timer`, which selects Daily
+  Brief and resets the server-managed cursor.
+- Key 3 double-click: ESPHome sends `Update-Source: button`, which advances the
+  cursor through Daily Brief and Calendar View.
+- ESPHome uses `ETag` revalidation and skips the physical panel refresh for an
+  unchanged image.
+- The device remains awake in the initial production cutover. It refreshes at
+  06:32, 10:32, 15:02, and 19:02 local time, two minutes after Cloudflare's
+  generation slots. Deep sleep is deferred to #36.
+- Pressing Key 1 while awake, or holding it during reset, latches maintenance
+  mode until the next reset and suppresses scheduled image requests so serial
+  diagnostics and password-protected OTA remain available.
 
-The current stock firmware exposes one reliable wake button for this board target.
-
-- Timer wake: return the latest Daily Brief and set the interval until the next configured local update.
-- Short press: advance the per-device view cursor.
-- View cycle: Daily Brief -> Calendar View -> Daily Brief.
-- The next timer wake always returns to the Daily Brief.
-- Manual data refresh is intentionally omitted.
-- Long firmware gestures retain their built-in Wi-Fi and credential-reset behavior.
-
-Use PNG filenames with distinct view prefixes and generation timestamps so stock firmware can cache multiple views correctly. Every scheduled generation refreshes the view set before firmware cache entries age out.
+`/api/setup`, `/api/display`, and `/images/:filename` remain rollback-only
+TRMNL BYOS compatibility routes.
 
 ## Scheduling
 
@@ -107,8 +113,14 @@ For each slot:
 
 1. Refresh due sources in parallel.
 2. Preserve the newest valid normalized snapshot for any failed source.
-3. Render all active views using a self-contained HTML document.
-4. Validate each screenshot as an 800x480 PNG within the device model's tested size limit.
+3. Render all active views using a self-contained HTML document at 2x device
+   scale, downsample once with high-quality filtering, and apply restrained
+   4x4 ordered dithering to an exact 1-bit black-and-white palette. This keeps
+   typography and line art crisp while representing any remaining edge
+   antialiasing with stable e-paper-safe patterns; photo-oriented error
+   diffusion is not used for these UI-heavy views.
+4. Validate each screenshot as an 800x480 1-bit-palette PNG within the device
+   model's tested size limit.
 5. Write immutable R2 objects.
 6. In one D1 batch, record the complete generation set and atomically advance
    the singleton current-generation pointer only after every required image is

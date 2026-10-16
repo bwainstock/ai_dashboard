@@ -7,6 +7,10 @@ import {
 import { dailyBriefHtml } from "./daily-brief";
 import { calendarViewHtml, type CalendarViewModel } from "./calendar-view";
 import { validateRenderedPage } from "./render-validation";
+import {
+  captureEpaperPng,
+  configureEpaperViewport
+} from "./epaper-rendering";
 import { effectiveMaximumImageBytes } from "./device-limits";
 import {
   normalizeCalendarEvents,
@@ -58,7 +62,6 @@ export interface Env {
   IMAGES: R2Bucket;
   BROWSER: Fetcher;
   GENERATION_SECRET: string;
-  DEVICE_ORIGIN: string;
   ADMIN_ORIGIN?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
@@ -177,16 +180,21 @@ async function recordDeviceAuthentication(
   }
 }
 
-async function display(request: Request, env: Env): Promise<Response> {
+interface SelectedDeviceGeneration {
+  filename: string;
+  objectKey: string;
+  byteSize: number;
+  generationId: string;
+  publishedAt: string;
+  viewType: "daily_brief" | "calendar";
+}
+
+async function selectDeviceGeneration(
+  request: Request,
+  env: Env
+): Promise<SelectedDeviceGeneration | Response> {
   if (!(await isAuthenticated(request, env))) {
-    return json(
-      {
-        status: 401,
-        error: "Invalid device credentials",
-        reset_firmware: false
-      },
-      401
-    );
+    return json({ error: "Invalid device credentials" }, 401);
   }
 
   const deviceId = request.headers.get("ID")!.trim().toUpperCase();
@@ -206,7 +214,9 @@ async function display(request: Request, env: Env): Promise<Response> {
     updateSource !== undefined &&
     !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
   const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
-  const viewType = ["daily_brief", "calendar"][viewCursor];
+  const viewType = ["daily_brief", "calendar"][viewCursor] as
+    | "daily_brief"
+    | "calendar";
   await env.DB.prepare(
     `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
      WHERE device_id = ?`
@@ -215,7 +225,8 @@ async function display(request: Request, env: Env): Promise<Response> {
     .run();
 
   const generation = await env.DB.prepare(
-    `SELECT filename, object_key, byte_size
+    `SELECT generation.filename, generation.object_key, generation.byte_size,
+            generation.generation_id, generation.published_at
      FROM current_render_generation AS current_pointer
      JOIN render_generations AS generation
        ON generation.generation_id = current_pointer.generation_id
@@ -223,15 +234,45 @@ async function display(request: Request, env: Env): Promise<Response> {
      LIMIT 1`
   )
     .bind(viewType)
-    .first<{ filename: string; object_key: string; byte_size: number }>();
+     .first<{
+       filename: string;
+       object_key: string;
+       byte_size: number;
+       generation_id: string;
+       published_at: string;
+     }>();
   if (!generation) {
-    return json({ status: 503, error: "No published generation" }, 503);
+     return json({ status: 503, error: "No published generation" }, 503);
+  }
+
+  return {
+     filename: generation.filename,
+     objectKey: generation.object_key,
+     byteSize: generation.byte_size,
+     generationId: generation.generation_id,
+     publishedAt: generation.published_at,
+     viewType
+  };
+}
+
+async function display(request: Request, env: Env): Promise<Response> {
+  const generation = await selectDeviceGeneration(request, env);
+  if (generation instanceof Response) {
+     if (generation.status !== 401) return generation;
+     return json(
+       {
+         status: 401,
+         error: "Invalid device credentials",
+         reset_firmware: false
+       },
+       401
+     );
   }
   const configuration = await loadConfiguration(env);
 
   return json({
     status: 0,
-    image_url: `${env.DEVICE_ORIGIN.replace(/\/$/, "")}/images/${encodeURIComponent(generation.filename)}`,
+    image_url: `${new URL(request.url).origin}/images/${encodeURIComponent(generation.filename)}`,
     filename: generation.filename,
     refresh_rate: secondsUntilNextSlot(new Date(), configuration),
     reset_firmware: false,
@@ -239,6 +280,42 @@ async function display(request: Request, env: Env): Promise<Response> {
     firmware_url: "",
     special_function: "sleep"
   });
+}
+
+function generationImageHeaders(
+  generation: SelectedDeviceGeneration,
+  object: R2ObjectBody
+): Headers {
+  return new Headers({
+    "cache-control": "private, no-cache",
+    "content-length": String(object.size),
+    "content-type": "image/png",
+    etag: object.httpEtag,
+    "last-modified": new Date(generation.publishedAt).toUTCString(),
+    vary: "ID, Update-Source",
+    "x-content-type-options": "nosniff",
+    "x-dashboard-filename": generation.filename,
+    "x-dashboard-generation": generation.generationId,
+    "x-dashboard-view": generation.viewType
+  });
+}
+
+async function directImage(request: Request, env: Env): Promise<Response> {
+  const generation = await selectDeviceGeneration(request, env);
+  if (generation instanceof Response) return generation;
+
+  const object = await env.IMAGES.get(generation.objectKey);
+  if (!object || object.size !== generation.byteSize) {
+    return json({ error: "Image unavailable" }, 503);
+  }
+
+  const headers = generationImageHeaders(generation, object);
+  if (request.headers.get("If-None-Match") === object.httpEtag) {
+    headers.delete("content-length");
+    headers.delete("content-type");
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(object.body, { headers });
 }
 
 async function image(
@@ -911,17 +988,9 @@ async function generateFixture(request: Request, env: Env): Promise<Response> {
   let screenshot: Uint8Array;
   try {
     const page = await browser.newPage();
-    await page.setViewport({
-      width: 800,
-      height: 480,
-      deviceScaleFactor: 1
-    });
+    await configureEpaperViewport(page);
     await page.setContent(fixtureHtml(), { waitUntil: "networkidle0" });
-    screenshot = await page.screenshot({
-      type: "png",
-      fullPage: false,
-      captureBeyondViewport: false
-    });
+    screenshot = await captureEpaperPng(page);
   } finally {
     await browser.close();
   }
@@ -1000,19 +1069,26 @@ async function renderDashboardView(
   html: string,
   view: "Daily Brief" | "Calendar View"
 ): Promise<Uint8Array> {
-  const page = await browser.newPage();
-  await page.setViewport({
-    width: 800,
-    height: 480,
-    deviceScaleFactor: 1
-  });
-  await page.setContent(html, { waitUntil: "networkidle0" });
-  await validateRenderedPage(page, view);
-  return page.screenshot({
-    type: "png",
-    fullPage: false,
-    captureBeyondViewport: false
-  });
+  let stage = "opening page";
+  try {
+    const page = await browser.newPage();
+    stage = "configuring viewport";
+    await configureEpaperViewport(page);
+    stage = "loading HTML";
+    await page.setContent(html, { waitUntil: "networkidle0" });
+    stage = "validating layout";
+    await validateRenderedPage(page, view);
+    stage = "capturing e-paper PNG";
+    return await captureEpaperPng(page);
+  } catch (error) {
+    console.error("Dashboard render failed", {
+      view,
+      stage,
+      message:
+        error instanceof Error ? error.message : "unknown render error"
+    });
+    throw error;
+  }
 }
 
 async function publishGeneration(
@@ -1315,6 +1391,9 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/display") {
       return display(request, env);
+    }
+    if (request.method === "GET" && url.pathname === "/api/image") {
+      return directImage(request, env);
     }
     if (request.method === "GET" && url.pathname.startsWith("/images/")) {
       return image(request, env, url.pathname.slice("/images/".length));

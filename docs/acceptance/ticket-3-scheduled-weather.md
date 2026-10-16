@@ -38,8 +38,10 @@ When a last valid weather snapshot exists, the Worker renders it with an
 explicit stale marker. Without a valid snapshot, the slot fails visibly and
 the existing published generation remains active.
 
-`/api/display` calculates `refresh_rate` from the next configured local slot,
-including daylight-saving transitions.
+The always-awake ESPHome client refreshes `/api/image` at 06:32, 10:32, 15:02,
+and 19:02 in `America/Los_Angeles`, two minutes after these generation slots.
+The rollback-only `/api/display` route continues to calculate its legacy
+`refresh_rate`.
 
 An operator can force the same production generation path outside a scheduled
 slot with `POST /admin/generations` and the generation secret. The endpoint

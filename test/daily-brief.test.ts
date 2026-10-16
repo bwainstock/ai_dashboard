@@ -1,7 +1,19 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import type { CalendarEvent } from "../src/calendar";
 import { dailyBriefHtml } from "../src/daily-brief";
 import type { DailyBriefWeatherModel } from "../src/generation";
+
+const chromeExecutable = [
+  process.env.CHROME_PATH,
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser"
+].find((candidate): candidate is string =>
+  Boolean(candidate && existsSync(candidate))
+);
 
 function event(
   title: string,
@@ -114,4 +126,63 @@ describe("Daily Brief", () => {
     expect(html).toContain(text);
     expect(html).toContain("data-missing-state");
   });
+
+  test.skipIf(!chromeExecutable)(
+    "keeps tomorrow event labels within the 800x480 render",
+    () => {
+      let html = dailyBriefHtml(
+        model({
+          updatedAt: "2026-10-16T14:00:00.000Z",
+          calendar: [
+            event("First tomorrow event", "2026-10-17T16:00:00.000Z"),
+            event("Second tomorrow event", "2026-10-17T18:00:00.000Z")
+          ]
+        })
+      );
+      html = html.replaceAll(
+        '"Arial Narrow", Arial, Helvetica, sans-serif',
+        "Arial, Helvetica, sans-serif"
+      );
+      html = html.replace(
+        "</body>",
+        `<script>
+          const overflowing = Array.from(document.body.querySelectorAll("*"))
+            .filter((element) => {
+              const bounds = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              const clipsHorizontally = ["hidden", "clip"].includes(style.overflowX);
+              const clipsVertically = ["hidden", "clip"].includes(style.overflowY);
+              return bounds.left < 0 || bounds.top < 0 ||
+                bounds.right > 800 || bounds.bottom > 480 ||
+                (!clipsHorizontally && element.scrollWidth > element.clientWidth) ||
+                (!clipsVertically &&
+                  element.scrollHeight - element.clientHeight > 4);
+            });
+          document.title = JSON.stringify(
+            overflowing.map((element) => element.tagName)
+          );
+        </script></body>`
+      );
+
+      const rendered = execFileSync(
+        chromeExecutable!,
+        [
+          "--headless=new",
+          "--disable-gpu",
+          "--no-sandbox",
+          "--hide-scrollbars",
+          "--window-size=800,567",
+          "--dump-dom",
+          `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+        ],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+      );
+      const overflowing = JSON.parse(
+        rendered.match(/<title>(.*?)<\/title>/s)?.[1] ?? "null"
+      ) as string[];
+
+      expect(overflowing).toEqual([]);
+    },
+    45_000
+  );
 });

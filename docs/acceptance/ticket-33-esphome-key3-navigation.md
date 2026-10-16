@@ -1,8 +1,7 @@
 # Ticket #33: ESPHome Key 3 navigation
 
-Stock TRMNL firmware and its documented BYOS setup remain the standard device
-path. This acceptance contract extends only the optional ESPHome proof of
-concept from ticket #32.
+ESPHome is the supported production device client. This contract covers Key 3
+navigation through the one-request direct-image interface.
 
 ## Hardware contract
 
@@ -22,32 +21,29 @@ wakeup configuration for the selected ESP32-S3 target.
 
 ## Gesture and request contract
 
-The first Key 3 press wakes the sleeping device. Its debounced release opens a
-750 ms click window; one second debounced press completes the double-click.
+The first debounced Key 3 release opens a 750 ms click window; the second
+debounced press completes the double-click.
 The gesture is latched before Wi-Fi request dispatch, and a separate
-`request_started` guard permits exactly one manifest request for that boot.
-A single press, bounce, held button, or later press outside the click window
-does not request a view.
+`request_started` guard permits exactly one direct image request for the
+gesture. A single press, bounce, held button, or later press outside the click
+window does not request a view.
 
-The completed gesture requests the existing authenticated `/api/display`
-manifest with:
+The completed gesture requests authenticated `/api/image` with:
 
 - `ID` and `Access-Token` headers;
 - `Update-Source: button`;
-- no local view name, index, or cursor.
+- no local view name, index, filename, or cursor.
 
 The Worker remains the only owner of the two-view cursor and returns the next
 Daily Brief or Calendar View filename from the current atomically published
 generation. Non-button boots request `Update-Source: timer`, which resets the
 Worker cursor to Daily Brief.
 
-Manifest and image validation are unchanged from ticket #32: redirects remain
-disabled, the image URL must exactly match the configured HTTPS origin and
-returned filename, credentials stay in headers, and only a successful private
-PNG download refreshes the panel. Any HTTP, authentication, manifest, origin,
-download, or decode failure preserves the current e-paper image and enters the
-bounded 15-minute fallback sleep. The 75-second boot guard still bounds paths
-that never complete a callback.
+Credentials stay in headers, redirects remain disabled, and only a successful
+fresh private PNG download refreshes the panel. Any HTTP, authentication,
+download, or decode failure preserves the current e-paper image. The 75-second
+guard still bounds paths that never produce a callback. Deep-sleep wake
+navigation is deferred to #36; the production client currently remains awake.
 
 ## Verification
 
