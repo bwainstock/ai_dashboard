@@ -19,6 +19,13 @@ duplicate email. Recovery resolves the active row; a later recurrence creates
 a new incident and sends a new email. Failed email delivery remains pending and
 is retried by the next scheduled evaluation.
 
+Manual generation reports publication independently from this follow-up. When
+publication succeeds but Operational Incident notification delivery fails,
+`POST /admin/generations` still returns HTTP 201 with the fixed warning
+`OPERATIONAL_INCIDENT_NOTIFICATION_FAILED`. The Worker logs only that code,
+without exception text, addresses, credentials, or household content.
+Publication failures continue to return their normal failed result.
+
 Operational email contains only one of these fixed codes:
 
 - `OAUTH_REVOKED_OR_EXPIRED`

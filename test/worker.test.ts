@@ -196,8 +196,15 @@ class TestBucket {
   }
 }
 
+class FailingPublicationBucket extends TestBucket {
+  override async put(): Promise<never> {
+    throw new Error("publication secret");
+  }
+}
+
 class ScheduledTestDatabase {
   readonly publishedViewTypes: string[] = [];
+  weatherConsecutiveFailures = 0;
 
   prepare(query: string) {
     let parameters: unknown[] = [];
@@ -228,7 +235,10 @@ class ScheduledTestDatabase {
         if (query.includes("FROM source_status")) {
           return {
             results: [
-              { source: "weather", consecutive_failures: 0 },
+              {
+                source: "weather",
+                consecutive_failures: this.weatherConsecutiveFailures
+              },
               { source: "calendar", consecutive_failures: 0 },
               { source: "lunch", consecutive_failures: 0 },
               { source: "gmail", consecutive_failures: 0 }
@@ -386,6 +396,7 @@ function scheduledFetch(input: string | URL | Request): Promise<Response> {
 
 afterEach(() => {
   launchBrowser.mockReset();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -493,6 +504,109 @@ describe("TRMNL BYOS device service", () => {
       status: "published"
     });
     expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
+  });
+
+  test("a published manual generation remains successful when its operational notification fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase();
+    database.weatherConsecutiveFailures = 2;
+    const screenshot = new Uint8Array(24);
+    screenshot.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    new DataView(screenshot.buffer).setUint32(16, 800);
+    new DataView(screenshot.buffer).setUint32(20, 480);
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => screenshot)
+      })),
+      close: vi.fn()
+    });
+    const send = vi.fn(async () => {
+      throw new Error("secret@example.com rejected credential household-data");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = scheduledEnv(database);
+    env.INCIDENT_EMAIL = { send } as SendEmail;
+    env.OPERATIONAL_EMAIL_FROM = "sender@example.com";
+    env.OPERATIONAL_EMAIL_TO = "secret@example.com";
+
+    const response = await worker.fetch(
+      new Request("https://device.test/admin/generations", {
+        method: "POST",
+        headers: { Authorization: "generation-secret" }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json<{
+      status: string;
+      warnings: string[];
+    }>();
+    expect(body).toMatchObject({
+      status: "published",
+      warnings: ["OPERATIONAL_INCIDENT_NOTIFICATION_FAILED"]
+    });
+    expect(JSON.stringify(body)).not.toContain("secret@example.com");
+    expect(error).toHaveBeenCalledWith({
+      code: "OPERATIONAL_INCIDENT_NOTIFICATION_FAILED"
+    });
+    expect(JSON.stringify(error.mock.calls)).not.toContain("secret@example.com");
+  });
+
+  test("a publication failure remains failed when its operational notification also fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase();
+    database.weatherConsecutiveFailures = 2;
+    const screenshot = new Uint8Array(24);
+    screenshot.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    new DataView(screenshot.buffer).setUint32(16, 800);
+    new DataView(screenshot.buffer).setUint32(20, 480);
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => screenshot)
+      })),
+      close: vi.fn()
+    });
+    const send = vi.fn(async () => {
+      throw new Error("secret@example.com rejected credential household-data");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = testEnv(
+      database as unknown as TestDatabase,
+      new FailingPublicationBucket()
+    );
+    env.INCIDENT_EMAIL = { send } as SendEmail;
+    env.OPERATIONAL_EMAIL_FROM = "sender@example.com";
+    env.OPERATIONAL_EMAIL_TO = "secret@example.com";
+
+    const response = await worker.fetch(
+      new Request("https://device.test/admin/generations", {
+        method: "POST",
+        headers: { Authorization: "generation-secret" }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(422);
+    const body = await response.json<{
+      status: string;
+      code: string;
+      warnings?: string[];
+    }>();
+    expect(body).toMatchObject({
+      status: "failed",
+      code: "GENERATION_PUBLICATION_FAILED"
+    });
+    expect(body.warnings).toBeUndefined();
+    expect(error).toHaveBeenCalledWith({
+      code: "OPERATIONAL_INCIDENT_NOTIFICATION_FAILED"
+    });
   });
 
   test("setup exchanges a device MAC address for a high-entropy per-device token", async () => {

@@ -1320,13 +1320,31 @@ async function forceGeneration(request: Request, env: Env): Promise<Response> {
   }
   const now = new Date();
   const slotKey = `manual-${now.toISOString()}-${randomToken(5)}`;
+  const notificationFailureCode =
+    "OPERATIONAL_INCIDENT_NOTIFICATION_FAILED" as const;
   let result: ScheduledGenerationResult;
   try {
     result = await runScheduled(env, now, slotKey);
-  } finally {
-    await runOperationalIncidentCheck(env, now);
+  } catch (generationError) {
+    try {
+      await runOperationalIncidentCheck(env, now);
+    } catch {
+      console.error({ code: notificationFailureCode });
+    }
+    throw generationError;
   }
-  return json(result, result.status === "published" ? 201 : 422);
+  let notificationFailed = false;
+  try {
+    await runOperationalIncidentCheck(env, now);
+  } catch {
+    notificationFailed = true;
+    console.error({ code: notificationFailureCode });
+  }
+  const response =
+    notificationFailed && result.status === "published"
+      ? { ...result, warnings: [notificationFailureCode] }
+      : result;
+  return json(response, result.status === "published" ? 201 : 422);
 }
 
 export default {
