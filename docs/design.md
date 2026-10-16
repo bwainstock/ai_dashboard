@@ -87,7 +87,7 @@ mixed pair.
 - Startup and scheduled refresh stage both views in the inactive PSRAM slot.
   The slot becomes active only after both images decode successfully.
 - Scheduled refresh resets local selection to Daily Brief.
-- Key 3 double-click switches between the two active decoded images locally;
+- One Key 3 press switches between the two active decoded images locally;
   navigation does not require Wi-Fi or a Worker request.
 - Per-view `ETag` revalidation skips both downloads and the physical panel
   refresh when the published generation is unchanged.

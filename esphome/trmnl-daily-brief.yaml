@@ -86,14 +86,6 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
-  - id: button_armed
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: button_gesture_complete
-    type: bool
-    restore_value: false
-    initial_value: "false"
   - id: active_slot
     type: int
     restore_value: false
@@ -188,16 +180,6 @@ script:
             - delay: 120ms
             - output.turn_off: status_led
             - delay: 120ms
-
-  - id: button_click_window
-    mode: restart
-    then:
-      - delay: 750ms
-      - if:
-          condition:
-            lambda: "return !id(button_gesture_complete);"
-          then:
-            - lambda: "id(button_armed) = false;"
 
   - id: update_timeout
     mode: restart
@@ -328,8 +310,6 @@ script:
       - lambda: |-
           id(request_finished) = true;
           id(request_started) = false;
-          id(button_armed) = false;
-          id(button_gesture_complete) = false;
       - if:
           condition:
             lambda: "return id(reset_display_to_daily);"
@@ -361,8 +341,6 @@ script:
       - script.execute: status_led_awake
       - lambda: |-
           id(request_started) = false;
-          id(button_armed) = false;
-          id(button_gesture_complete) = false;
 
   - id: scheduled_image_refresh
     mode: single
@@ -375,8 +353,6 @@ script:
                 id(reset_display_to_daily) =
                     id(has_active_view_set) && id(selected_view) != 0;
                 id(selected_view) = 0;
-                id(button_armed) = false;
-                id(button_gesture_complete) = false;
             - script.execute: request_view_set_if_ready
 
   - id: handle_update_failure
@@ -408,8 +384,6 @@ script:
             - script.execute: status_led_awake
             - lambda: |-
                 id(request_started) = false;
-                id(button_armed) = false;
-                id(button_gesture_complete) = false;
 
 image:
   - platform: online_image
@@ -554,8 +528,6 @@ binary_sensor:
         - lambda: |-
             id(maintenance_mode) = true;
             id(request_started) = false;
-            id(button_armed) = false;
-            id(button_gesture_complete) = false;
         - script.execute: status_led_awake
         - logger.log:
             level: WARN
@@ -576,24 +548,8 @@ binary_sensor:
         - if:
             condition:
               lambda: |-
-                return id(button_armed) &&
-                       !id(button_gesture_complete) &&
-                       !id(request_started) &&
+                return !id(request_started) &&
                        id(has_active_view_set);
             then:
-              - lambda: |-
-                  id(button_gesture_complete) = true;
-                  id(button_armed) = false;
-                  id(selected_view) = 1 - id(selected_view);
-              - script.stop: button_click_window
+              - lambda: "id(selected_view) = 1 - id(selected_view);"
               - component.update: main_display
-    on_release:
-      then:
-        - if:
-            condition:
-              lambda: |-
-                return !id(button_gesture_complete) &&
-                       !id(request_started);
-            then:
-              - lambda: "id(button_armed) = true;"
-              - script.execute: button_click_window

@@ -41,7 +41,7 @@ These are two minutes after Cloudflare's generation slots so the complete
 atomic view set is available. Four `online_image` components provide active
 and staging slots for two decoded `BINARY` images. Both downloads are pinned
 to the generation returned by metadata; only two successful decodes activate
-the staging slot. Key 3 double-click changes the selected active image locally.
+the staging slot. One Key 3 press changes the selected active image locally.
 Scheduled refresh resets selection to Daily Brief.
 
 When both metadata requests return `304`, ESPHome skips image downloads and the
@@ -86,7 +86,7 @@ Physical acceptance confirms:
 
 1. Startup stages one same-generation Daily Brief and Calendar View pair, then
    displays Daily Brief.
-2. Key 3 double-click advances exactly one cached view without Wi-Fi or a
+2. One Key 3 press advances exactly one cached view without Wi-Fi or a
    Worker request.
 3. Timer refreshes occur at the four documented local times and reset to Daily
    Brief.

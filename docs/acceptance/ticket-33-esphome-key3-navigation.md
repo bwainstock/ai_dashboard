@@ -20,12 +20,10 @@ wakeup configuration for the selected ESP32-S3 target.
 
 ## Gesture and request contract
 
-The first debounced Key 3 release opens a 750 ms click window; the second
-debounced press completes the double-click.
-The gesture is accepted only when a complete active view set exists and no
-refresh is in progress. It toggles the local Daily Brief/Calendar View
-selection and refreshes the panel from PSRAM. A single press, bounce, held
-button, or later press outside the click window does not switch views.
+A debounced Key 3 press is accepted only when a complete active view set exists
+and no refresh is in progress. It toggles the local Daily Brief/Calendar View
+selection and refreshes the panel from PSRAM. The 30 ms debounce filters switch
+bounce so one physical press produces one view change.
 
 No HTTP action, Wi-Fi condition, credential use, or Cloudflare request occurs
 in the Key 3 path. Scheduled refresh resets local selection to Daily Brief

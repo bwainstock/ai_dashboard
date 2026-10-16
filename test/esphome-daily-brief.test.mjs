@@ -76,18 +76,17 @@ test("XIAO user LED reports download, refresh, error, and idle states", async ()
   assert.match(config, /script\.execute:\s*status_led_awake/);
 });
 
-test("Key 3 double-click switches the active cached view locally", async () => {
+test("one Key 3 press switches the active cached view locally", async () => {
   const config = await readFile(configUrl, "utf8");
   const key3 = config.slice(config.indexOf("id: key3"));
 
   assert.match(key3, /number:\s*GPIO5/);
   assert.match(key3, /delayed_on:\s*30ms/);
   assert.match(key3, /delayed_off:\s*30ms/);
-  assert.match(config, /delay:\s*750ms/);
-  assert.match(key3, /id\(button_gesture_complete\)\s*=\s*true/);
   assert.match(key3, /id\(selected_view\)\s*=\s*1\s*-\s*id\(selected_view\)/);
   assert.match(key3, /component\.update:\s*main_display/);
   assert.doesNotMatch(key3, /http_request|component\.update:\s*slot_/);
+  assert.doesNotMatch(config, /button_click_window|button_armed|button_gesture_complete|750ms/);
 });
 
 test("scheduled refresh resets to Daily Brief before refreshing the complete pair", async () => {

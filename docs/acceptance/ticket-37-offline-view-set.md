@@ -12,7 +12,7 @@ downloads include `X-Dashboard-Generation`, which pins both responses to the
 same immutable published generation even if the current pointer advances
 between requests. Device credentials remain in headers.
 
-Key 3 double-click switches Daily Brief to Calendar View and back from the
+One Key 3 press switches Daily Brief to Calendar View and back from the
 active decoded slot. The navigation path performs no HTTP action and remains
 available without Wi-Fi. Scheduled refresh resets local selection to Daily
 Brief. If both metadata requests return `304`, no image body is downloaded and
@@ -39,8 +39,8 @@ navigation.
 Run the two-view deployed verifier from ticket #31. On the physical device,
 record the serial PSRAM-headroom line after activation, verify scheduled
 refresh, force a second-view download and decode failure, and confirm both
-previous views remain available. Disconnect Wi-Fi and confirm two Key 3
-double-clicks cycle Calendar View then Daily Brief without a device request.
+previous views remain available. Disconnect Wi-Fi and confirm two Key 3 presses cycle Calendar View then Daily
+Brief without a device request.
 Record these observations in the physical acceptance report fields
 `viewSetMemoryHeadroom`, `partialFailurePreservation`, and
 `offlineNavigation`.

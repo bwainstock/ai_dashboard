@@ -39,7 +39,7 @@ validates one shared generation, and confirms per-view ETag revalidation.
    returns steady.
 2. Confirm landscape orientation, readable typography at the agreed viewing
    distance, recognizable labeled icons, and no failed-decode screen.
-3. Disable Wi-Fi after startup, double-click Key 3, and confirm Calendar View
+3. Disable Wi-Fi after startup, press Key 3 once, and confirm Calendar View
    appears with one panel refresh and no device request.
 4. Double-click Key 3 again. Confirm the cycle returns to Daily Brief.
 5. Observe automatic local refreshes at 06:32, 10:32, 15:02, and 19:02. Each
