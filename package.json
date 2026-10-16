@@ -17,6 +17,7 @@
     "gmail:model:promote": "node scripts/promote-gmail-model.mjs",
     "lint": "eslint .",
     "privacy:gmail": "vitest run test/gmail-privacy.test.ts",
+    "preview:render": "tsx scripts/render-local-preview.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "validate:production-config": "node scripts/validate-production-config.mjs wrangler.toml"
@@ -31,6 +32,8 @@
     "@types/pngjs": "^6.0.5",
     "eslint": "^9.37.0",
     "pngjs": "^7.0.0",
+    "puppeteer-core": "^24.43.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.0",
     "vitest": "^3.2.4",
