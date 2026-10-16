@@ -230,6 +230,41 @@ describe("persistent acceptance report", () => {
     expect(JSON.stringify(report)).not.toContain("device-id");
   });
 
+  test("a physical setup pass records firmware and serial evidence while observations stay pending", () => {
+    const report = createPendingReport({
+      runId: "physical-setup",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: "sha256:abc123",
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: {
+        ...AUTOMATED_PASS,
+        physicalSetup: {
+          status: "pass",
+          checks: [
+            { name: "pinned ESPHome firmware compilation", status: "pass" }
+          ],
+          firmwareIdentity: "sha256:abc123",
+          delivery: "reset",
+          serialReconnects: 1,
+          activatedGeneration: "generation",
+          psramHeadroomBytes: 7_340_032
+        }
+      }
+    });
+
+    expect(validateReport(report)).toEqual([]);
+    expect(report.target.firmwareVersion).toBe("sha256:abc123");
+    expect(
+      Object.values(report.hardware.observations).every(
+        ({ status }) => status === "pending"
+      )
+    ).toBe(true);
+    delete report.automated.physicalSetup.psramHeadroomBytes;
+    expect(validateReport(report)).toContain(
+      "physical setup pass requires PSRAM headroom evidence"
+    );
+  });
+
   test("a protocol failure is recorded separately from pending physical observations", async () => {
     const automated = await runProductionAcceptance({
       baseUrl: "https://device.example.com",

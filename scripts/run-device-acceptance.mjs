@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   createPendingReport,
@@ -40,5 +40,6 @@ await mkdir(dirname(output), { recursive: true });
 await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, {
   mode: 0o600
 });
+await chmod(output, 0o600);
 console.log(JSON.stringify({ report: output, automated: automated.status }, null, 2));
 if (automated.status === "fail") process.exitCode = 1;
