@@ -40,6 +40,13 @@ decodes both PNGs, enforces configured size and exact opaque black-and-white
 constraints, and confirms independent ETag revalidation. The generated report
 records automated pass or failure while leaving physical observations pending.
 
+For a physical setup run, use the living procedure in the
+[production device-client contract](../device-client-contract.md). The
+`acceptance:physical` command additionally compiles the pinned firmware,
+conditionally performs OTA, reconnects serial logging after reset, and records
+the activated generation and PSRAM headroom without promoting human
+observations to pass.
+
 ## 2. Physical image, navigation, and scheduling
 
 1. Reset normally. Confirm the GPIO21 user LED blinks rapidly during one image

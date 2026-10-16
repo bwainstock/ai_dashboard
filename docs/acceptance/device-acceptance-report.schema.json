@@ -43,13 +43,14 @@
             "required": ["name", "status"],
             "properties": {
               "name": { "type": "string", "minLength": 1 },
-              "status": { "const": "pass" }
+              "status": { "enum": ["pass", "fail"] }
             },
             "additionalProperties": false
           }
         },
         "sequence": { "type": "object" },
         "generation": { "type": "string", "minLength": 1 },
+        "physicalSetup": { "$ref": "#/$defs/physicalSetup" },
         "artifacts": {
           "type": "array",
           "items": { "$ref": "#/$defs/artifact" }
@@ -104,6 +105,50 @@
     }
   },
   "$defs": {
+    "physicalSetup": {
+      "type": "object",
+      "required": ["status", "checks"],
+      "properties": {
+        "status": { "enum": ["pass", "fail"] },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "status"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["pass", "fail"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "firmwareIdentity": { "type": "string", "minLength": 1 },
+        "delivery": { "enum": ["ota", "reset"] },
+        "serialReconnects": { "type": "integer", "minimum": 0 },
+        "activatedGeneration": { "type": "string", "minLength": 1 },
+        "psramHeadroomBytes": { "type": "integer", "minimum": 1 },
+        "error": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "pass" } },
+            "required": ["status"]
+          },
+          "then": {
+            "required": [
+              "firmwareIdentity",
+              "delivery",
+              "serialReconnects",
+              "activatedGeneration",
+              "psramHeadroomBytes"
+            ]
+          },
+          "else": { "required": ["error"] }
+        }
+      ],
+      "additionalProperties": false
+    },
     "artifact": {
       "type": "object",
       "required": [

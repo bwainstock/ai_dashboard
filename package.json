@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "acceptance:physical": "node scripts/run-physical-device-acceptance.mjs",
     "acceptance:run": "node scripts/run-device-acceptance.mjs",
     "acceptance:rollback-byos-image": "node scripts/verify-device-image.mjs",
     "acceptance:rollback-byos-manifest": "node scripts/verify-byos-manifest.mjs",
@@ -14,6 +15,8 @@
     "check": "npm run validate:production-config && npm run check:device-documentation && npm run typecheck && npm run lint && npm test && npm run build",
     "check:device-documentation": "node scripts/check-device-documentation.mjs",
     "esphome:compile": "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief.yaml",
+    "esphome:logs": "uvx --from esphome==2026.9.1 esphome logs esphome/trmnl-daily-brief.yaml",
+    "esphome:upload": "uvx --from esphome==2026.9.1 esphome upload esphome/trmnl-daily-brief.yaml",
     "gmail:model:promote": "node scripts/promote-gmail-model.mjs",
     "lint": "eslint .",
     "privacy:gmail": "vitest run test/gmail-privacy.test.ts",
