@@ -31,6 +31,20 @@ test("the canonical device contract covers every production responsibility", asy
   assert.match(contract, /no Worker request/i);
 });
 
+test("living design documentation records the accepted renderer decisions", async () => {
+  const design = await readFile(
+    new URL("../docs/design.md", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(design, /native\s+800x480 scale/i);
+  assert.match(design, /fixed monochrome threshold/i);
+  assert.match(design, /heavy sans/i);
+  assert.match(design, /at least 14px/i);
+  assert.doesNotMatch(design, /2x device scale/i);
+  assert.doesNotMatch(design, /at least 12px/i);
+});
+
 test("agents and historical ticket specifications point to the living contract", async () => {
   const agents = await readFile(new URL("../AGENTS.md", import.meta.url), "utf8");
   assert.match(
