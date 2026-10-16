@@ -33,6 +33,30 @@ images only through authenticated `/api/image` requests.
 
 ## Previewing without a physical display
 
+### Local renderer previews
+
+Render both active views with an installed Chrome-family browser, without
+deploying:
+
+```sh
+npm run preview:render
+```
+
+Set `CHROME_PATH` or pass `-- --chrome /path/to/chrome` when Chrome is not in a
+standard location. Use `-- --output path` to choose the artifact directory and
+`-- --now 2026-10-07T17:30:00.000Z` for a repeatable comparison. The command
+creates labeled Daily Brief and Calendar View PNGs plus a manifest recording
+the native 800x480 scale, monochrome threshold, font strategy, and configured
+minimum text size. It uses the same HTML, viewport, mechanical validation, and
+palette conversion as production.
+
+Local preview artifacts belong under `artifacts/renderer-previews/`. They are
+for renderer debugging and comparison only. They are not physical acceptance
+evidence and do not replace human observation of readability and mechanical
+quality on the e-paper display.
+
+### Published-generation diagnostics
+
 Use a preview-only device ID rather than the physical device MAC, because
 `/api/setup` replaces the token for an existing device ID.
 
