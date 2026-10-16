@@ -11,6 +11,7 @@
     "limitsConfiguration",
     "automated",
     "hardware",
+    "issueSummary",
     "battery",
     "discoveredLimits"
   ],
@@ -66,20 +67,39 @@
         "observations": {
           "type": "object",
           "required": [
-            "orientation",
-            "readability",
-            "icons",
-            "pngDecoding",
-            "namedImageCaching",
-            "buttonCycle",
-            "timerReset",
-            "wifiReconnection",
-            "scheduledWakes",
-            "authenticatedPrivacy"
+            "offlineOnePressNavigation",
+            "offlineTwoPressViewCycle",
+            "scheduledDailyBriefReset",
+            "downloadFailurePreservesPair",
+            "decodeFailurePreservesPair",
+            "unchangedGenerationNoDownload",
+            "unchangedGenerationNoPanelRefresh",
+            "displayReadability",
+            "mechanicalSoundness"
           ],
           "additionalProperties": { "$ref": "#/$defs/observation" }
         }
       },
+      "additionalProperties": false
+    },
+    "issueSummary": {
+      "type": "object",
+      "required": ["issue", "status", "postedAt"],
+      "properties": {
+        "issue": { "const": 38 },
+        "status": { "enum": ["pending", "posted"] },
+        "postedAt": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "posted" } },
+            "required": ["status"]
+          },
+          "then": { "properties": { "postedAt": { "type": "string" } } },
+          "else": { "properties": { "postedAt": { "const": null } } }
+        }
+      ],
       "additionalProperties": false
     },
     "battery": { "$ref": "#/$defs/battery" },
@@ -178,6 +198,26 @@
         "observedAt": { "type": ["string", "null"], "format": "date-time" },
         "notes": { "type": "string" }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "enum": ["pass", "fail"] } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "observedAt": { "type": "string", "format": "date-time" },
+              "notes": { "type": "string", "minLength": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "observedAt": { "const": null },
+              "notes": { "const": "" }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "battery": {

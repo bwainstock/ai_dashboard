@@ -126,6 +126,20 @@ pass. Sanitized completed reports belong under `evidence/device-acceptance/`
 and must validate against
 `docs/acceptance/device-acceptance-report.schema.json`.
 
+The physical command requires an interactive terminal before it will change a
+human observation from pending. For every pass or failure, the operator enters
+the observation timestamp and a concise operational note. A failure requires
+the same timestamp and note evidence as a pass. The workflow writes each
+transition immediately, so a report can be resumed later by running the same
+command with the same report path. Tests and non-interactive processes can
+create pending reports but cannot complete physical acceptance.
+
+The guided scenarios cover offline one-press navigation, the second press back
+to Daily Brief, scheduled reset to Daily Brief, separate second-view download
+and decode failures preserving the previous complete pair, unchanged-generation
+behavior with neither image-body download nor panel refresh, display
+readability, and mechanical soundness.
+
 The human-assisted setup command compiles with the pinned ESPHome release,
 compares the resulting SHA-256 identity with the installed identity, and
 uploads only when they differ. When the identity is unchanged, serial logging
@@ -148,4 +162,7 @@ Omit `INSTALLED_FIRMWARE_IDENTITY` when the installed identity is unknown; the
 command then treats OTA delivery as required. Use the identity recorded in the
 resulting owner-readable report for the next run. Automated protocol and setup
 steps receive explicit pass or fail results. Every judgment-dependent hardware
-and battery observation remains pending for a human to complete.
+observation remains pending for a human to complete. Report paths outside
+`evidence/device-acceptance/` are rejected. After all required physical
+observations pass, the command posts a concise non-sensitive summary to #38 and
+records the posting timestamp without closing or rewriting the issue.
