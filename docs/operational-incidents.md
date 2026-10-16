@@ -38,8 +38,15 @@ other secret.
 Apply migration `0009_operational_incidents.sql`. Configure the
 `INCIDENT_EMAIL` send-email binding with an Email Routing-verified destination,
 then set `OPERATIONAL_EMAIL_FROM` and `OPERATIONAL_EMAIL_TO` to verified
-non-secret addresses. The placeholders in `wrangler.toml` must be replaced
-before deployment.
+non-secret addresses. Keep the binding destination and
+`OPERATIONAL_EMAIL_TO` aligned.
+
+`npm run validate:production-config` performs an offline repository check for
+missing values, invalid email shapes, and reserved placeholder domains. It
+runs first in `npm run check` and does not contact Cloudflare. Passing this
+check does not prove address ownership or Email Routing configuration; the
+operator must verify the sender and destination in the production Cloudflare
+account before deployment.
 
 `GET /admin/status` lists active incidents with their fixed code, occurrence
 time, and notification time. A null notification time means email delivery is
