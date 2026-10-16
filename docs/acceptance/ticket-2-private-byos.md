@@ -55,7 +55,7 @@ the Seeed/TRMNL 7.5-inch OG DIY Kit; they are intentionally not claimed by CI.
 
    ```sh
    DEVICE_ID="$DEVICE_MAC" DEVICE_TOKEN="$DEVICE_TOKEN" \
-     npm run acceptance:device -- https://dashboard-device.example.com
+     npm run acceptance:rollback-byos-image -- https://dashboard-device.example.com
    ```
 
 7. Unset the temporary token, then point the stock TRMNL firmware BYOS base URL
@@ -79,7 +79,8 @@ byte size with the result. Mark an item pass only after observing it on hardware
       the bundled house icon are legible at normal viewing distance; no remote
       asset is missing.
 - [ ] **Decode and size:** the panel displays the same filename reported by
-      `acceptance:device`, and its byte size is at or below `MAX_IMAGE_BYTES`.
+      `acceptance:rollback-byos-image`, and its byte size is at or below
+      `MAX_IMAGE_BYTES`.
 - [ ] **Named PNG caching:** two consecutive wakes without a new generation
       return the same filename and do not produce a failed-download screen.
       After generating a new fixture, the next wake returns a different

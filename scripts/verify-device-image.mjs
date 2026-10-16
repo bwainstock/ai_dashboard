@@ -11,7 +11,7 @@ const maximumBytes = Number(process.env.MAX_IMAGE_BYTES ?? 1_000_000);
 
 if (!baseUrl || !deviceId || !token) {
   console.error(
-    "Usage: DEVICE_ID=... DEVICE_TOKEN=... npm run acceptance:device -- https://dashboard-device.example.com"
+    "Usage: DEVICE_ID=... DEVICE_TOKEN=... npm run acceptance:rollback-byos-image -- https://dashboard-device.example.com"
   );
   process.exit(2);
 }

@@ -6,7 +6,7 @@ const accessToken = process.env.DEVICE_TOKEN;
 
 if (!baseUrl || !deviceId || !accessToken) {
   console.error(
-    "Usage: DEVICE_ID=... DEVICE_TOKEN=... npm run acceptance:esphome-image -- https://dashboard-device.example.com [timer|button]"
+    "Usage: DEVICE_ID=... DEVICE_TOKEN=... npm run acceptance:rollback-esphome-cursor -- https://dashboard-device.example.com [timer|button]"
   );
   process.exit(2);
 }

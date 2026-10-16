@@ -28,14 +28,17 @@ export DEVICE_TOKEN="$(printf '%s' "$SETUP_JSON" | jq -er .api_key)"
 unset SETUP_JSON
 
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
-  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN" timer
+  npm run acceptance:run -- \
+  "$DEVICE_ORIGIN" evidence/device-acceptance/ticket-11.json
 
 unset DEVICE_TOKEN DEVICE_ID DEVICE_ORIGIN
 ```
 
-The check authenticates one `/api/image` request, decodes the PNG, enforces
-800x480 dimensions and an exact opaque black-and-white palette, validates
-non-sensitive generation headers, and confirms ETag revalidation.
+The check authenticates every metadata and image boundary, explicitly selects
+Daily Brief and Calendar View, pins both bodies to one published generation,
+decodes both PNGs, enforces configured size and exact opaque black-and-white
+constraints, and confirms independent ETag revalidation. The generated report
+records automated pass or failure while leaving physical observations pending.
 
 ## 2. Physical image, navigation, and scheduling
 

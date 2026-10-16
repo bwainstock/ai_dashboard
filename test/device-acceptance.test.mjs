@@ -2,6 +2,7 @@ import { PNG } from "pngjs";
 import { describe, expect, test } from "vitest";
 import {
   createPendingReport,
+  runProductionAcceptance,
   validateDisplaySequence,
   validatePngArtifact,
   validateReport
@@ -31,6 +32,127 @@ function png(width = 800, height = 480, color = 0) {
 }
 
 describe("device acceptance artifacts", () => {
+  test("production acceptance pins an explicitly selected complete generation", async () => {
+    const requests = [];
+    let currentGeneration = "generation-a";
+    const images = {
+      daily_brief: png(),
+      calendar: png()
+    };
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(input);
+      const headers = {
+        get(name) {
+          const entry = Object.entries(init.headers ?? {}).find(
+            ([key]) => key.toLowerCase() === name.toLowerCase()
+          );
+          return entry?.[1] ?? null;
+        }
+      };
+      requests.push({ url, method: init.method ?? "GET", headers });
+      const view = url.searchParams.get("view");
+      const generation =
+        url.searchParams.get("generation") ?? currentGeneration;
+      if (headers.get("Access-Token") !== "device-token") {
+        return new Response(null, { status: 401 });
+      }
+      if (init.method === "HEAD") {
+        if (view === "calendar") currentGeneration = "generation-b";
+        return new Response(null, {
+          headers: {
+            etag: `"${view}-etag"`,
+            "x-dashboard-filename":
+              view === "daily_brief"
+                ? `daily-brief-${generation}.png`
+                : `calendar-view-${generation}.png`,
+            "x-dashboard-generation": generation,
+            "x-dashboard-view": view
+          }
+        });
+      }
+      if (headers.get("If-None-Match") === `"${view}-etag"`) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            etag: `"${view}-etag"`,
+            "x-dashboard-filename":
+              view === "daily_brief"
+                ? `daily-brief-${generation}.png`
+                : `calendar-view-${generation}.png`,
+            "x-dashboard-generation": generation,
+            "x-dashboard-view": view
+          }
+        });
+      }
+      return new Response(images[view], {
+        headers: {
+          "content-type": "image/png",
+          etag: `"${view}-etag"`,
+          "x-dashboard-filename":
+            view === "daily_brief"
+              ? `daily-brief-${generation}.png`
+              : `calendar-view-${generation}.png`,
+          "x-dashboard-generation": generation,
+          "x-dashboard-view": view
+        }
+      });
+    };
+
+    const automated = await runProductionAcceptance({
+      baseUrl: "https://device.example.com",
+      deviceId: "device-id",
+      accessToken: "device-token",
+      maximumImageBytes: 1_000_000,
+      imageWidth: 800,
+      imageHeight: 480,
+      fetchImpl
+    });
+
+    expect(automated.error).toBeUndefined();
+    expect(automated).toMatchObject({ status: "pass" });
+    expect(automated.generation).toBe("generation-a");
+    expect(automated.artifacts).toHaveLength(2);
+    expect(automated.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          view: "daily_brief",
+          generation: "generation-a",
+          etag: '"daily_brief-etag"'
+        }),
+        expect.objectContaining({
+          view: "calendar",
+          generation: "generation-a",
+          etag: '"calendar-etag"'
+        })
+      ])
+    );
+    expect(
+      requests
+        .filter(({ method }) => method === "GET")
+        .every(
+          ({ url }) => url.searchParams.get("generation") === "generation-a"
+        )
+    ).toBe(true);
+    expect(
+      requests.every(
+        ({ url, headers }) =>
+          !url.href.includes("device-id") &&
+          !url.href.includes("device-token") &&
+          headers.get("ID") === "device-id"
+      )
+    ).toBe(true);
+    expect(
+      requests.filter(
+        ({ headers }) => headers.get("Access-Token") !== "device-token"
+      )
+    ).toHaveLength(8);
+    expect(
+      requests.every(({ url }) =>
+        ["daily_brief", "calendar"].includes(url.searchParams.get("view"))
+      )
+    ).toBe(true);
+  });
+
   test("accepts a decodable monochrome 800x480 named PNG within tested limits", () => {
     expect(
       validatePngArtifact(
@@ -104,6 +226,34 @@ describe("persistent acceptance report", () => {
       )
     ).toBe(true);
     expect(report.battery.status).toBe("pending");
+    expect(JSON.stringify(report)).not.toContain("device-token");
+    expect(JSON.stringify(report)).not.toContain("device-id");
+  });
+
+  test("a protocol failure is recorded separately from pending physical observations", async () => {
+    const automated = await runProductionAcceptance({
+      baseUrl: "https://device.example.com",
+      deviceId: "device-id",
+      accessToken: "device-token",
+      maximumImageBytes: 1_000_000,
+      imageWidth: 800,
+      imageHeight: 480,
+      fetchImpl: async () => new Response(null, { status: 503 })
+    });
+    const report = createPendingReport({
+      runId: "protocol-failure",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated
+    });
+
+    expect(report.automated.status).toBe("fail");
+    expect(
+      Object.values(report.hardware.observations).every(
+        (observation) => observation.status === "pending"
+      )
+    ).toBe(true);
   });
 
   test("does not permit a four-week battery pass without 28 days of measurements", () => {

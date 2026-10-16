@@ -34,7 +34,7 @@ An `If-None-Match` request for the unchanged selected view returns `304`.
 ESPHome then skips the physical e-paper refresh. Credentials never appear in
 URLs, logs, filenames, or retained acceptance output.
 
-## Executable deployed contract
+## Rollback server-cursor diagnostic
 
 Use preview-only credentials because `/api/setup` rotates the token for an
 existing identifier:
@@ -50,12 +50,12 @@ export DEVICE_TOKEN="$(printf '%s' "$SETUP_JSON" | jq -er .api_key)"
 unset SETUP_JSON
 
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
-  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN" timer
+  npm run acceptance:rollback-esphome-cursor -- "$DEVICE_ORIGIN" timer
 ```
 
-The command validates authentication, direct PNG delivery, dimensions, exact
-black-and-white palette, generation headers, and ETag revalidation. Its output
-contains no credential or household content.
+This rollback-only command validates the historical server-cursor request
+shape. It does not count as production acceptance. Its output contains no
+credential or household content.
 
 Verify the route remains private:
 

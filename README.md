@@ -28,8 +28,8 @@ npm run check
 ```
 
 The device Worker is configured in `wrangler.toml`. Its R2 binding is private;
-the production ESPHome client receives images only through authenticated
-`/api/image`.
+the production ESPHome client receives explicitly selected, generation-pinned
+images only through authenticated `/api/image` requests.
 
 ## Previewing without a physical display
 
@@ -47,27 +47,20 @@ export DEVICE_TOKEN="$(
   node -p 'JSON.parse(process.argv[1]).api_key' "$SETUP_JSON"
 )"
 
-curl --fail-with-body \
-  -H "ID: $DEVICE_ID" \
-  -H "Access-Token: $DEVICE_TOKEN" \
-  -H "Update-Source: timer" \
-  -o dashboard-preview.png \
-  "$DEVICE_ORIGIN/api/image"
-open dashboard-preview.png
-```
-
-The preview command above exercises the legacy request shape and is retained
-for rollback diagnosis. Follow the
-[production device-client contract](docs/device-client-contract.md) for current
-explicit view selection, complete-generation caching, and local navigation.
-Run the deployed image check with the same preview credentials:
-
-```sh
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
-  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN" timer
+  npm run acceptance:run -- \
+  "$DEVICE_ORIGIN" evidence/device-acceptance/preview.json
 
 unset DEVICE_TOKEN
 ```
+
+The report validates explicit Daily Brief and Calendar View selection, one
+published generation, generation-pinned downloads, independent ETags,
+authentication, and exact image constraints. Automated results are recorded
+separately from physical observations, which remain pending.
+
+Legacy manifest, named-image, and server-cursor diagnostics are available only
+through the `acceptance:rollback-*` commands.
 
 ## Maintainer workflow
 

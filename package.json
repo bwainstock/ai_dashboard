@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "acceptance:byos-manifest": "node scripts/verify-byos-manifest.mjs",
-    "acceptance:device": "node scripts/verify-device-image.mjs",
-    "acceptance:esphome-image": "node scripts/verify-esphome-image.mjs",
     "acceptance:run": "node scripts/run-device-acceptance.mjs",
+    "acceptance:rollback-byos-image": "node scripts/verify-device-image.mjs",
+    "acceptance:rollback-byos-manifest": "node scripts/verify-byos-manifest.mjs",
+    "acceptance:rollback-esphome-cursor": "node scripts/verify-esphome-image.mjs",
     "acceptance:validate": "node scripts/validate-acceptance-report.mjs",
     "build": "npm run build:device && npm run build:gmail",
     "build:device": "wrangler deploy --dry-run",

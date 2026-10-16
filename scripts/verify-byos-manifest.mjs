@@ -6,7 +6,7 @@ const accessToken = process.env.DEVICE_TOKEN;
 
 if (!baseUrl || !deviceId || !accessToken) {
   console.error(
-    "Usage: DEVICE_ID=... DEVICE_TOKEN=... npm run acceptance:byos-manifest -- https://dashboard-device.example.com [timer|scheduled|powercycle|unknown|button]"
+    "Usage: DEVICE_ID=... DEVICE_TOKEN=... npm run acceptance:rollback-byos-manifest -- https://dashboard-device.example.com [timer|scheduled|powercycle|unknown|button]"
   );
   process.exit(2);
 }
