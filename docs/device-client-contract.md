@@ -125,3 +125,27 @@ Automation may leave human observations pending, but cannot promote them to
 pass. Sanitized completed reports belong under `evidence/device-acceptance/`
 and must validate against
 `docs/acceptance/device-acceptance-report.schema.json`.
+
+The human-assisted setup command compiles with the pinned ESPHome release,
+compares the resulting SHA-256 identity with the installed identity, and
+uploads only when they differ. When the identity is unchanged, serial logging
+resets the device instead of re-uploading it. Logging reconnects after a USB
+reset and retains only allowlisted generation and PSRAM evidence; credentials,
+device and Wi-Fi identifiers, and non-operational household output are
+discarded.
+
+```sh
+DEVICE_ID=... \
+DEVICE_TOKEN=... \
+ESPHOME_OTA_TARGET=family-dashboard.local \
+ESPHOME_SERIAL_DEVICE=/dev/cu.usbmodem... \
+INSTALLED_FIRMWARE_IDENTITY=sha256:... \
+npm run acceptance:physical -- \
+  "$DEVICE_ORIGIN" evidence/device-acceptance/physical.json
+```
+
+Omit `INSTALLED_FIRMWARE_IDENTITY` when the installed identity is unknown; the
+command then treats OTA delivery as required. Use the identity recorded in the
+resulting owner-readable report for the next run. Automated protocol and setup
+steps receive explicit pass or fail results. Every judgment-dependent hardware
+and battery observation remains pending for a human to complete.

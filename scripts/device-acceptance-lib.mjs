@@ -365,6 +365,50 @@ export function validateReport(report, configuredLimits) {
       errors.push("automated pass requires passing checks");
     }
   }
+  const physicalSetup = report?.automated?.physicalSetup;
+  if (physicalSetup) {
+    if (!["pass", "fail"].includes(physicalSetup.status)) {
+      errors.push("physical setup status must be pass or fail");
+    }
+    if (
+      !Array.isArray(physicalSetup.checks) ||
+      physicalSetup.checks.some(
+        ({ status }) => !["pass", "fail"].includes(status)
+      )
+    ) {
+      errors.push("physical setup requires explicit pass or fail checks");
+    }
+    if (physicalSetup.status === "pass") {
+      if (!nonEmpty(physicalSetup.firmwareIdentity)) {
+        errors.push("physical setup pass requires firmware identity");
+      }
+      if (!["ota", "reset"].includes(physicalSetup.delivery)) {
+        errors.push("physical setup pass requires OTA or reset delivery evidence");
+      }
+      if (
+        !Number.isInteger(physicalSetup.serialReconnects) ||
+        physicalSetup.serialReconnects < 0
+      ) {
+        errors.push("physical setup pass requires serial reconnect evidence");
+      }
+      if (!nonEmpty(physicalSetup.activatedGeneration)) {
+        errors.push("physical setup pass requires activated generation evidence");
+      }
+      if (
+        !Number.isInteger(physicalSetup.psramHeadroomBytes) ||
+        physicalSetup.psramHeadroomBytes <= 0
+      ) {
+        errors.push("physical setup pass requires PSRAM headroom evidence");
+      }
+      if (
+        report?.target?.firmwareVersion !== physicalSetup.firmwareIdentity
+      ) {
+        errors.push("report firmware version must match physical setup identity");
+      }
+    } else if (!nonEmpty(physicalSetup.error)) {
+      errors.push("physical setup failure requires an error");
+    }
+  }
   for (const name of HARDWARE_OBSERVATIONS) {
     const observation = report?.hardware?.observations?.[name];
     if (!["pending", "pass", "fail"].includes(observation?.status)) {
