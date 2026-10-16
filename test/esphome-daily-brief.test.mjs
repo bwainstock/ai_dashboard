@@ -21,17 +21,23 @@ test("ESPHome Daily Brief targets the Seeed TRMNL OG kit", async () => {
   assert.match(config, /inverted:\s*true/);
 });
 
-test("ESPHome Daily Brief downloads one authenticated private image", async () => {
+test("ESPHome stages an authenticated Daily Brief and Calendar View pair", async () => {
   const config = await readFile(configUrl, "utf8");
 
-  assert.match(config, /Update-Source:\s*!lambda/);
   assert.match(config, /ID:\s*!secret device_id/);
   assert.match(config, /Access-Token:\s*!secret device_token/);
   assert.match(config, /follow_redirects:\s*false/);
   assert.match(config, /url:\s*"\$\{device_origin\}\/api\/image"/);
+  assert.match(config, /X-Dashboard-View:\s*daily_brief/);
+  assert.match(config, /X-Dashboard-View:\s*calendar/);
+  assert.match(config, /id:\s*slot_a_daily_brief/);
+  assert.match(config, /id:\s*slot_a_calendar/);
+  assert.match(config, /id:\s*slot_b_daily_brief/);
+  assert.match(config, /id:\s*slot_b_calendar/);
   assert.match(config, /type:\s*BINARY/);
   assert.match(config, /resize:\s*800x480/);
-  assert.match(config, /on_download_finished:/);
+  assert.match(config, /id:\s*activate_staged_view_set/);
+  assert.match(config, /id\(active_slot\)\s*=\s*id\(staging_slot\)/);
   assert.match(config, /component\.update:\s*main_display/);
   assert.match(config, /on_error:/);
   assert.doesNotMatch(config, /\/api\/display|json::parse_json|image_url/);
@@ -41,10 +47,19 @@ test("ESPHome Daily Brief downloads one authenticated private image", async () =
 test("ESPHome maps bright PNG pixels to white e-paper pixels", async () => {
   const config = await readFile(configUrl, "utf8");
 
-  assert.match(
-    config,
-    /it\.image\(0,\s*0,\s*id\(dashboard_image\),\s*COLOR_OFF,\s*COLOR_ON\)/,
-  );
+  for (const image of [
+    "slot_a_daily_brief",
+    "slot_a_calendar",
+    "slot_b_daily_brief",
+    "slot_b_calendar",
+  ]) {
+    assert.match(
+      config,
+      new RegExp(
+        `it\\.image\\(0,\\s*0,\\s*id\\(${image}\\),\\s*COLOR_OFF,\\s*COLOR_ON\\)`,
+      ),
+    );
+  }
 });
 
 test("XIAO user LED reports download, refresh, error, and idle states", async () => {
@@ -61,27 +76,52 @@ test("XIAO user LED reports download, refresh, error, and idle states", async ()
   assert.match(config, /script\.execute:\s*status_led_awake/);
 });
 
-test("Key 3 double-click requests one server-managed button navigation", async () => {
+test("one Key 3 press switches the active cached view locally", async () => {
   const config = await readFile(configUrl, "utf8");
+  const key3 = config.slice(config.indexOf("id: key3"));
 
-  assert.match(config, /id:\s*key3/);
-  assert.match(config, /number:\s*GPIO5/);
-  assert.match(config, /Update-Source:\s*!lambda/);
-  assert.match(config, /return id\(update_source\)\.c_str\(\);/);
-  assert.match(config, /delayed_on:\s*30ms/);
-  assert.match(config, /delayed_off:\s*30ms/);
-  assert.match(config, /delay:\s*750ms/);
-  assert.match(config, /id\(button_gesture_complete\)\s*=\s*true/);
-  assert.match(config, /id\(update_source\)\s*=\s*"button"/);
-  assert.match(config, /!id\(request_started\)/);
+  assert.match(key3, /number:\s*GPIO5/);
+  assert.match(key3, /delayed_on:\s*30ms/);
+  assert.match(key3, /delayed_off:\s*30ms/);
+  assert.match(key3, /id\(selected_view\)\s*=\s*1\s*-\s*id\(selected_view\)/);
+  assert.match(key3, /component\.update:\s*main_display/);
+  assert.doesNotMatch(key3, /http_request|component\.update:\s*slot_/);
 });
 
-test("timer wakes reset navigation without a client-side view cursor", async () => {
+test("obsolete double-click navigation state cannot return", async () => {
   const config = await readFile(configUrl, "utf8");
 
-  assert.match(config, /initial_value:\s*'"timer"'/);
-  assert.doesNotMatch(config, /page_index|view_cursor|current_view/);
-  assert.doesNotMatch(config, /weather|calendar.*refresh|generate/i);
+  assert.doesNotMatch(
+    config,
+    /button_click_window|button_armed|button_gesture_complete|750ms/,
+  );
+});
+
+test("scheduled refresh resets to Daily Brief and revalidates both views", async () => {
+  const config = await readFile(configUrl, "utf8");
+
+  assert.match(
+    config,
+    /id:\s*scheduled_image_refresh[\s\S]*id\(selected_view\)\s*=\s*0[\s\S]*script\.execute:\s*request_view_set_if_ready/,
+  );
+  assert.match(config, /X-Dashboard-Metadata:\s*"true"/);
+  assert.match(config, /If-None-Match:\s*!lambda/);
+  assert.match(config, /response->status_code\s*==\s*304/);
+});
+
+test("partial staging failure preserves the active cached pair", async () => {
+  const config = await readFile(configUrl, "utf8");
+  const failureScript = config.slice(
+    config.indexOf("id: handle_update_failure"),
+    config.indexOf("\nimage:"),
+  );
+
+  assert.match(config, /id\(staging_slot\)\s*=\s*1\s*-\s*id\(active_slot\)/);
+  assert.match(config, /View-set metadata is incomplete or mixed-generation/);
+  assert.doesNotMatch(
+    failureScript,
+    /id\(active_slot\)\s*=|id\(active_daily_etag\)\s*=|id\(active_calendar_etag\)\s*=/,
+  );
 });
 
 test("local scheduling refreshes after each server generation", async () => {

@@ -11,7 +11,6 @@ esphome:
         - lambda: |-
             pinMode(2, INPUT_PULLUP);
             id(maintenance_mode) = digitalRead(2) == LOW;
-            id(update_source) = "timer";
     - priority: -100
       then:
         - if:
@@ -38,7 +37,7 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   on_connect:
-    - script.execute: request_image_if_ready
+    - script.execute: request_view_set_if_ready
 
 ota:
   - platform: esphome
@@ -87,18 +86,54 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
-  - id: button_armed
+  - id: active_slot
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: staging_slot
+    type: int
+    restore_value: false
+    initial_value: "1"
+  - id: selected_view
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: reset_display_to_daily
     type: bool
     restore_value: false
     initial_value: "false"
-  - id: button_gesture_complete
+  - id: has_active_view_set
     type: bool
     restore_value: false
     initial_value: "false"
-  - id: update_source
+  - id: daily_metadata_status
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: staging_generation
     type: std::string
     restore_value: false
-    initial_value: '"timer"'
+    initial_value: '""'
+  - id: daily_generation
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: active_daily_etag
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: active_calendar_etag
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: staged_daily_etag
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: staged_calendar_etag
+    type: std::string
+    restore_value: false
+    initial_value: '""'
   - id: maintenance_mode
     type: bool
     restore_value: false
@@ -146,30 +181,166 @@ script:
             - output.turn_off: status_led
             - delay: 120ms
 
-  - id: button_click_window
+  - id: update_timeout
     mode: restart
     then:
-      - delay: 750ms
-      - if:
-          condition:
-            lambda: "return !id(button_gesture_complete);"
-          then:
-            - lambda: "id(button_armed) = false;"
+      - delay: 75s
+      - script.execute: handle_update_failure
 
-  - id: request_image_if_ready
+  - id: request_view_set_if_ready
     mode: single
     then:
       - if:
           condition:
             lambda: |-
               return !id(maintenance_mode) &&
-                     !id(request_started) &&
-                     (id(update_source) == "timer" ||
-                      id(button_gesture_complete));
+                     !id(request_started);
           then:
-            - lambda: "id(request_started) = true;"
+            - lambda: |-
+                id(request_started) = true;
+                id(request_finished) = false;
+                id(staging_slot) = 1 - id(active_slot);
+                id(daily_metadata_status) = 0;
+                id(daily_generation).clear();
+                id(staging_generation).clear();
+                id(staged_daily_etag).clear();
+                id(staged_calendar_etag).clear();
             - script.execute: status_led_downloading
-            - component.update: dashboard_image
+            - script.execute: update_timeout
+            - http_request.get:
+                url: "${device_origin}/api/image"
+                request_headers:
+                  ID: !secret device_id
+                  Access-Token: !secret device_token
+                  X-Dashboard-View: daily_brief
+                  X-Dashboard-Metadata: "true"
+                  If-None-Match: !lambda "return id(active_daily_etag).c_str();"
+                  Accept: image/png
+                collect_headers:
+                  - ETag
+                  - X-Dashboard-Generation
+                on_response:
+                  then:
+                    - if:
+                        condition:
+                          lambda: |-
+                            return response->status_code == 200 ||
+                                   response->status_code == 304;
+                        then:
+                          - lambda: |-
+                              id(daily_metadata_status) = response->status_code;
+                              id(daily_generation) = response->get_response_header("X-Dashboard-Generation");
+                              id(staged_daily_etag) = response->get_response_header("ETag");
+                          - script.execute: request_calendar_metadata
+                        else:
+                          - logger.log:
+                              level: WARN
+                              format: "Daily Brief metadata request failed"
+                          - script.execute: handle_update_failure
+                on_error:
+                  then:
+                    - script.execute: handle_update_failure
+          else:
+            - logger.log:
+                level: WARN
+                format: "View-set request skipped while another update is active"
+
+  - id: request_calendar_metadata
+    mode: single
+    then:
+      - http_request.get:
+          url: "${device_origin}/api/image"
+          request_headers:
+            ID: !secret device_id
+            Access-Token: !secret device_token
+            X-Dashboard-View: calendar
+            X-Dashboard-Metadata: "true"
+            If-None-Match: !lambda "return id(active_calendar_etag).c_str();"
+            Accept: image/png
+          collect_headers:
+            - ETag
+            - X-Dashboard-Generation
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: |-
+                      const int calendar_status = response->status_code;
+                      const std::string calendar_generation =
+                          response->get_response_header("X-Dashboard-Generation");
+                      return (calendar_status == 200 || calendar_status == 304) &&
+                             calendar_generation == id(daily_generation) &&
+                             !calendar_generation.empty() &&
+                             !id(staged_daily_etag).empty() &&
+                             !response->get_response_header("ETag").empty();
+                  then:
+                    - lambda: |-
+                        id(staging_generation) =
+                            response->get_response_header("X-Dashboard-Generation");
+                        id(staged_calendar_etag) =
+                            response->get_response_header("ETag");
+                    - if:
+                        condition:
+                          lambda: |-
+                            return id(daily_metadata_status) == 304 &&
+                                   response->status_code == 304;
+                        then:
+                          - script.execute: finish_unchanged_view_set
+                        else:
+                          - if:
+                              condition:
+                                lambda: "return id(staging_slot) == 0;"
+                              then:
+                                - component.update: slot_a_daily_brief
+                              else:
+                                - component.update: slot_b_daily_brief
+                  else:
+                    - logger.log:
+                        level: WARN
+                        format: "View-set metadata is incomplete or mixed-generation"
+                    - script.execute: handle_update_failure
+          on_error:
+            then:
+              - script.execute: handle_update_failure
+
+  - id: finish_unchanged_view_set
+    mode: single
+    then:
+      - script.stop: update_timeout
+      - lambda: |-
+          id(request_finished) = true;
+          id(request_started) = false;
+      - if:
+          condition:
+            lambda: "return id(reset_display_to_daily);"
+          then:
+            - component.update: main_display
+      - lambda: "id(reset_display_to_daily) = false;"
+      - script.execute: status_led_awake
+
+  - id: activate_staged_view_set
+    mode: single
+    then:
+      - script.stop: update_timeout
+      - script.execute: status_led_refreshing
+      - script.wait: status_led_refreshing
+      - lambda: |-
+          id(active_slot) = id(staging_slot);
+          id(active_daily_etag) = id(staged_daily_etag);
+          id(active_calendar_etag) = id(staged_calendar_etag);
+          id(has_active_view_set) = true;
+          id(selected_view) = 0;
+          id(reset_display_to_daily) = false;
+          id(request_finished) = true;
+          ESP_LOGW(
+              "view_set",
+              "Activated generation %s with %lu bytes PSRAM headroom",
+              id(staging_generation).c_str(),
+              static_cast<unsigned long>(ESP.getFreePsram()));
+      - component.update: main_display
+      - script.execute: status_led_awake
+      - lambda: |-
+          id(request_started) = false;
 
   - id: scheduled_image_refresh
     mode: single
@@ -179,12 +350,10 @@ script:
             lambda: "return !id(maintenance_mode);"
           then:
             - lambda: |-
-                id(update_source) = "timer";
-                id(request_started) = false;
-                id(request_finished) = false;
-                id(button_armed) = false;
-                id(button_gesture_complete) = false;
-            - script.execute: request_image_if_ready
+                id(reset_display_to_daily) =
+                    id(has_active_view_set) && id(selected_view) != 0;
+                id(selected_view) = 0;
+            - script.execute: request_view_set_if_ready
 
   - id: handle_update_failure
     mode: single
@@ -193,23 +362,38 @@ script:
           condition:
             lambda: "return !id(request_finished);"
           then:
+            - script.stop: update_timeout
+            - if:
+                condition:
+                  lambda: "return id(staging_slot) == 0;"
+                then:
+                  - online_image.release: slot_a_daily_brief
+                  - online_image.release: slot_a_calendar
+                else:
+                  - online_image.release: slot_b_daily_brief
+                  - online_image.release: slot_b_calendar
+            - if:
+                condition:
+                  lambda: "return id(reset_display_to_daily);"
+                then:
+                  - component.update: main_display
+            - lambda: "id(reset_display_to_daily) = false;"
             - lambda: "id(request_finished) = true;"
             - script.execute: status_led_error
             - script.wait: status_led_error
             - script.execute: status_led_awake
             - lambda: |-
                 id(request_started) = false;
-                id(button_armed) = false;
-                id(button_gesture_complete) = false;
 
 image:
   - platform: online_image
-    id: dashboard_image
+    id: slot_a_daily_brief
     url: "${device_origin}/api/image"
     request_headers:
       ID: !secret device_id
       Access-Token: !secret device_token
-      Update-Source: !lambda "return id(update_source).c_str();"
+      X-Dashboard-View: daily_brief
+      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
     type: BINARY
@@ -218,25 +402,84 @@ image:
     update_interval: never
     on_download_finished:
       then:
-        - lambda: "id(request_finished) = true;"
-        - if:
-            condition:
-              lambda: "return !cached;"
-            then:
-              - script.execute: status_led_refreshing
-              - script.wait: status_led_refreshing
-              - component.update: main_display
-        - online_image.release: dashboard_image
-        - script.execute: status_led_awake
-        - lambda: |-
-            id(request_started) = false;
-            id(button_armed) = false;
-            id(button_gesture_complete) = false;
+        - component.update: slot_a_calendar
     on_error:
       then:
         - logger.log:
             level: WARN
-            format: "Image download or decode failed"
+            format: "Daily Brief staging failed"
+        - script.execute: handle_update_failure
+
+  - platform: online_image
+    id: slot_a_calendar
+    url: "${device_origin}/api/image"
+    request_headers:
+      ID: !secret device_id
+      Access-Token: !secret device_token
+      X-Dashboard-View: calendar
+      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
+      Accept: image/png
+    format: PNG
+    type: BINARY
+    resize: 800x480
+    buffer_size: 16384
+    update_interval: never
+    on_download_finished:
+      then:
+        - script.execute: activate_staged_view_set
+    on_error:
+      then:
+        - logger.log:
+            level: WARN
+            format: "Calendar View staging failed"
+        - script.execute: handle_update_failure
+
+  - platform: online_image
+    id: slot_b_daily_brief
+    url: "${device_origin}/api/image"
+    request_headers:
+      ID: !secret device_id
+      Access-Token: !secret device_token
+      X-Dashboard-View: daily_brief
+      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
+      Accept: image/png
+    format: PNG
+    type: BINARY
+    resize: 800x480
+    buffer_size: 16384
+    update_interval: never
+    on_download_finished:
+      then:
+        - component.update: slot_b_calendar
+    on_error:
+      then:
+        - logger.log:
+            level: WARN
+            format: "Daily Brief staging failed"
+        - script.execute: handle_update_failure
+
+  - platform: online_image
+    id: slot_b_calendar
+    url: "${device_origin}/api/image"
+    request_headers:
+      ID: !secret device_id
+      Access-Token: !secret device_token
+      X-Dashboard-View: calendar
+      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
+      Accept: image/png
+    format: PNG
+    type: BINARY
+    resize: 800x480
+    buffer_size: 16384
+    update_interval: never
+    on_download_finished:
+      then:
+        - script.execute: activate_staged_view_set
+    on_error:
+      then:
+        - logger.log:
+            level: WARN
+            format: "Calendar View staging failed"
         - script.execute: handle_update_failure
 
 spi:
@@ -256,7 +499,18 @@ display:
     rotation: 0°
     update_interval: never
     lambda: |-
-      it.image(0, 0, id(dashboard_image), COLOR_OFF, COLOR_ON);
+      if (!id(has_active_view_set)) {
+        return;
+      }
+      if (id(active_slot) == 0 && id(selected_view) == 0) {
+        it.image(0, 0, id(slot_a_daily_brief), COLOR_OFF, COLOR_ON);
+      } else if (id(active_slot) == 0) {
+        it.image(0, 0, id(slot_a_calendar), COLOR_OFF, COLOR_ON);
+      } else if (id(selected_view) == 0) {
+        it.image(0, 0, id(slot_b_daily_brief), COLOR_OFF, COLOR_ON);
+      } else {
+        it.image(0, 0, id(slot_b_calendar), COLOR_OFF, COLOR_ON);
+      }
 
 binary_sensor:
   - platform: gpio
@@ -274,8 +528,6 @@ binary_sensor:
         - lambda: |-
             id(maintenance_mode) = true;
             id(request_started) = false;
-            id(button_armed) = false;
-            id(button_gesture_complete) = false;
         - script.execute: status_led_awake
         - logger.log:
             level: WARN
@@ -296,27 +548,8 @@ binary_sensor:
         - if:
             condition:
               lambda: |-
-                return id(button_armed) &&
-                       !id(button_gesture_complete) &&
-                       !id(request_started);
+                return !id(request_started) &&
+                       id(has_active_view_set);
             then:
-              - lambda: |-
-                  id(button_gesture_complete) = true;
-                  id(button_armed) = false;
-                  id(update_source) = "button";
-              - script.stop: button_click_window
-              - if:
-                  condition:
-                    wifi.connected:
-                  then:
-                    - script.execute: request_image_if_ready
-    on_release:
-      then:
-        - if:
-            condition:
-              lambda: |-
-                return !id(button_gesture_complete) &&
-                       !id(request_started);
-            then:
-              - lambda: "id(button_armed) = true;"
-              - script.execute: button_click_window
+              - lambda: "id(selected_view) = 1 - id(selected_view);"
+              - component.update: main_display

@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 
+export const COMPILED_OTA_FIRMWARE_URL = new URL(
+  "../esphome/.esphome/build/family-dashboard/build/firmware.ota.bin",
+  import.meta.url
+);
+
 const SAFE_CAPTURE_PATTERNS = [
   /Activated generation \S+ with \d+ bytes PSRAM headroom/,
   /serial (?:port )?(?:connected|disconnected|reconnected)/i,

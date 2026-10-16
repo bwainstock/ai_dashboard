@@ -110,12 +110,10 @@ For each slot:
 
 1. Refresh due sources in parallel.
 2. Preserve the newest valid normalized snapshot for any failed source.
-3. Render all active views using a self-contained HTML document at 2x device
-   scale, downsample once with high-quality filtering, and apply restrained
-   4x4 ordered dithering to an exact 1-bit black-and-white palette. This keeps
-   typography and line art crisp while representing any remaining edge
-   antialiasing with stable e-paper-safe patterns; photo-oriented error
-   diffusion is not used for these UI-heavy views.
+3. Render all active views using a self-contained HTML document at native
+   800x480 scale, then apply the stable fixed monochrome threshold to an exact
+   1-bit black-and-white palette. This preserves crisp typography and line art
+   without supersampling artifacts or photo-oriented error diffusion.
 4. Validate each screenshot as an 800x480 1-bit-palette PNG within the device
    model's tested size limit.
 5. Write immutable R2 objects.
@@ -131,11 +129,11 @@ last-good section with its snapshot age.
 
 ## Screen design
 
-Both active views are fixed 800x480 monochrome compositions. They share condensed
-sans-serif labels and numbers, editorial serif headings, inversion, spacing,
-and rule styles. Use bundled, open-licensed SVG assets rendered inline and pair
-every icon with text; do not depend on remote assets.
-Keep every element inside the viewport and all visible text at least 12px.
+Both active views are fixed 800x480 monochrome compositions. They use robust
+heavy sans typography, inversion, spacing, and rule styles. Use bundled,
+open-licensed SVG assets rendered inline and pair every icon with text; do not
+depend on remote assets. Keep every element inside the viewport and all visible
+text at least 14px.
 
 ### Daily Brief
 

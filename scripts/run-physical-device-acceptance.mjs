@@ -8,6 +8,7 @@ import {
   validateReport
 } from "./device-acceptance-lib.mjs";
 import {
+  COMPILED_OTA_FIRMWARE_URL,
   createPhysicalAcceptanceResult,
   createPhysicalSetupOperations,
   runPhysicalAcceptanceSetup,
@@ -79,10 +80,7 @@ const installedFirmwareIdentity = (
   process.env.INSTALLED_FIRMWARE_IDENTITY ?? ""
 ).replace(/^sha256:/, "");
 const operations = createPhysicalSetupOperations({
-  firmwarePath: new URL(
-    "../esphome/.esphome/build/family-dashboard/.pioenvs/family-dashboard/firmware.bin",
-    import.meta.url
-  ),
+  firmwarePath: COMPILED_OTA_FIRMWARE_URL,
   otaTarget,
   serialDevice,
   readFile,

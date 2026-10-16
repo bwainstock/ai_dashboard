@@ -164,30 +164,30 @@ export function calendarViewHtml(model: CalendarViewModel): string {
     .rail .weather { margin-top: 24px; padding-top: 14px; border-top: 2px solid var(--paper); }
     .rail .weather svg { width: 38px; height: 38px; margin-bottom: 5px; }
     .rail .weather strong { display: block; font-size: 24px; line-height: 1; }
-    .rail .weather span { display: block; margin-top: 5px; font-size: 12px; font-weight: 800; line-height: 1.25; }
-    .rail .tomorrow { margin-top: 18px; padding-top: 13px; border-top: 2px solid var(--paper); font-size: 12px; font-weight: 900; line-height: 1.25; text-transform: uppercase; }
+    .rail .weather span { display: block; margin-top: 5px; font-size: 14px; font-weight: 800; line-height: 1.25; }
+    .rail .tomorrow { margin-top: 18px; padding-top: 13px; border-top: 2px solid var(--paper); font-size: 14px; font-weight: 900; line-height: 1.25; text-transform: uppercase; }
     .rail .tomorrow strong { display: block; margin: 5px 0; font-size: 23px; line-height: 1; }
-    .rail .updated { margin-top: auto; font-size: 12px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
+    .rail .updated { margin-top: auto; font-size: 14px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
     .content { min-width: 0; padding: 15px 18px 12px; }
     header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 9px; border-bottom: 4px solid var(--ink); }
     h1 { margin: 0; font-size: 35px; line-height: 1; }
-    header span { font-size: 12px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    header span { font-size: 14px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
     main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; height: 352px; padding-top: 11px; }
     main section { min-width: 0; padding-right: 9px; border-right: 2px solid var(--ink); overflow: hidden; }
     main section:last-child { padding-right: 0; border-right: 0; }
     h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; font-size: 20px; }
-    h2 small { font-size: 12px; text-transform: uppercase; }
+    h2 small { font-size: 14px; text-transform: uppercase; }
     ul { list-style: none; padding: 0; margin: 0; }
     li { position: relative; min-width: 0; height: 70px; margin-bottom: 7px; padding: 4px 7px 4px 13px; border: 2px solid var(--ink); border-radius: 10px; line-height: 1; overflow: hidden; }
     li::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 6px; background: var(--ink); }
     li.hatch::before { background: repeating-linear-gradient(135deg, var(--ink) 0 2px, var(--paper) 2px 4px); border-right: 1px solid var(--ink); }
     li.dots::before { background-color: var(--paper); background-image: radial-gradient(var(--ink) 1.4px, transparent 1.4px); background-size: 5px 5px; border-right: 1px solid var(--ink); }
-    .time { display: block; font-size: 12px; font-weight: 900; text-transform: uppercase; white-space: nowrap; }
-    li strong { display: -webkit-box; margin-top: 1px; font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-style: italic; line-height: 1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .meta, .location { display: block; margin-top: 1px; font-size: 12px; font-weight: 700; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .time { display: block; font-size: 14px; font-weight: 900; text-transform: uppercase; white-space: nowrap; }
+    li strong { display: -webkit-box; margin-top: 1px; font-size: 18px; font-style: italic; line-height: 1; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .meta, .location { display: block; margin-top: 1px; font-size: 14px; font-weight: 700; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .location::before { content: "⌖ "; }
     .empty { display: block; min-height: 58px; padding: 12px; font-size: 15px; font-weight: 900; }
-    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 14px; font-weight: 900; text-transform: uppercase; }
     .stale { border: 2px solid var(--ink); padding: 1px 5px; }
   </style>
 </head>

@@ -27,6 +27,8 @@ function inspection(
     iconCount: 1,
     textLength: 20,
     minimumVisibleTextSize: 14,
+    computedFontFamilies: ["sans-serif"],
+    minimumVisibleFontWeight: 700,
     nonMonochromeValues: [],
     missingStates: [
       {
@@ -106,6 +108,8 @@ async function validateDescendant(
     display: "block",
     visibility: "visible",
     fontSize: "16px",
+    fontFamily: "sans-serif",
+    fontWeight: "700",
     overflowX: "visible",
     overflowY: "visible",
     ...styleValues
@@ -156,7 +160,9 @@ describe.each(VIEWS)("%s renderer validation", (view) => {
   test.each([
     ["overflow", { overflowingElements: 1 }],
     ["missing icon", { iconCount: 0 }],
-    ["text below the tested device limit", { minimumVisibleTextSize: 11 }],
+    ["text below the tested device limit", { minimumVisibleTextSize: 13 }],
+    ["an unavailable font strategy", { computedFontFamilies: ["Arial Narrow"] }],
+    ["fragile typography", { minimumVisibleFontWeight: 400 }],
     ["color", { nonMonochromeValues: ["rgb(255, 0, 0)"] }],
     [
       "unreadable missing state",

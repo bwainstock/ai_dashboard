@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import {
+  COMPILED_OTA_FIRMWARE_URL,
   createPhysicalSetupOperations,
   createPhysicalAcceptanceResult,
   redactCapturedOutput,
@@ -13,6 +14,12 @@ const firmware = Buffer.from("compiled firmware");
 const firmwareIdentity = createHash("sha256").update(firmware).digest("hex");
 
 describe("physical device acceptance setup", () => {
+  test("uses ESPHome's compiled OTA firmware artifact for identity", () => {
+    expect(COMPILED_OTA_FIRMWARE_URL.pathname).toMatch(
+      /\/esphome\/\.esphome\/build\/family-dashboard\/build\/firmware\.ota\.bin$/
+    );
+  });
+
   test("compiles pinned firmware, skips unchanged OTA, resets, and captures activation evidence", async () => {
     const actions = [];
     const result = await runPhysicalAcceptanceSetup({
