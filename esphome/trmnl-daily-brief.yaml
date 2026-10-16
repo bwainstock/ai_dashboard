@@ -1,6 +1,11 @@
 substitutions:
   device_origin: !secret device_origin
 
+external_components:
+  - source: components
+
+http_request_head:
+
 esphome:
   name: family-dashboard
   friendly_name: Family Dashboard
@@ -98,10 +103,6 @@ globals:
     type: int
     restore_value: false
     initial_value: "0"
-  - id: reset_display_to_daily
-    type: bool
-    restore_value: false
-    initial_value: "false"
   - id: has_active_view_set
     type: bool
     restore_value: false
@@ -207,13 +208,12 @@ script:
                 id(staged_calendar_etag).clear();
             - script.execute: status_led_downloading
             - script.execute: update_timeout
-            - http_request.get:
-                url: "${device_origin}/api/image"
+            - http_request_head.request:
+                method: HEAD
+                url: "${device_origin}/api/image?view=daily_brief"
                 request_headers:
                   ID: !secret device_id
                   Access-Token: !secret device_token
-                  X-Dashboard-View: daily_brief
-                  X-Dashboard-Metadata: "true"
                   If-None-Match: !lambda "return id(active_daily_etag).c_str();"
                   Accept: image/png
                 collect_headers:
@@ -248,13 +248,12 @@ script:
   - id: request_calendar_metadata
     mode: single
     then:
-      - http_request.get:
-          url: "${device_origin}/api/image"
+      - http_request_head.request:
+          method: HEAD
+          url: "${device_origin}/api/image?view=calendar"
           request_headers:
             ID: !secret device_id
             Access-Token: !secret device_token
-            X-Dashboard-View: calendar
-            X-Dashboard-Metadata: "true"
             If-None-Match: !lambda "return id(active_calendar_etag).c_str();"
             Accept: image/png
           collect_headers:
@@ -291,9 +290,19 @@ script:
                               condition:
                                 lambda: "return id(staging_slot) == 0;"
                               then:
-                                - component.update: slot_a_daily_brief
+                                - online_image.set_url:
+                                    id: slot_a_daily_brief
+                                    url: !lambda |-
+                                      return std::string("${device_origin}/api/image?view=daily_brief&generation=") +
+                                             id(staging_generation);
+                                    update: true
                               else:
-                                - component.update: slot_b_daily_brief
+                                - online_image.set_url:
+                                    id: slot_b_daily_brief
+                                    url: !lambda |-
+                                      return std::string("${device_origin}/api/image?view=daily_brief&generation=") +
+                                             id(staging_generation);
+                                    update: true
                   else:
                     - logger.log:
                         level: WARN
@@ -310,12 +319,6 @@ script:
       - lambda: |-
           id(request_finished) = true;
           id(request_started) = false;
-      - if:
-          condition:
-            lambda: "return id(reset_display_to_daily);"
-          then:
-            - component.update: main_display
-      - lambda: "id(reset_display_to_daily) = false;"
       - script.execute: status_led_awake
 
   - id: activate_staged_view_set
@@ -330,7 +333,6 @@ script:
           id(active_calendar_etag) = id(staged_calendar_etag);
           id(has_active_view_set) = true;
           id(selected_view) = 0;
-          id(reset_display_to_daily) = false;
           id(request_finished) = true;
           ESP_LOGW(
               "view_set",
@@ -349,10 +351,6 @@ script:
           condition:
             lambda: "return !id(maintenance_mode);"
           then:
-            - lambda: |-
-                id(reset_display_to_daily) =
-                    id(has_active_view_set) && id(selected_view) != 0;
-                id(selected_view) = 0;
             - script.execute: request_view_set_if_ready
 
   - id: handle_update_failure
@@ -372,12 +370,6 @@ script:
                 else:
                   - online_image.release: slot_b_daily_brief
                   - online_image.release: slot_b_calendar
-            - if:
-                condition:
-                  lambda: "return id(reset_display_to_daily);"
-                then:
-                  - component.update: main_display
-            - lambda: "id(reset_display_to_daily) = false;"
             - lambda: "id(request_finished) = true;"
             - script.execute: status_led_error
             - script.wait: status_led_error
@@ -388,12 +380,10 @@ script:
 image:
   - platform: online_image
     id: slot_a_daily_brief
-    url: "${device_origin}/api/image"
+    url: "${device_origin}/api/image?view=daily_brief"
     request_headers:
       ID: !secret device_id
       Access-Token: !secret device_token
-      X-Dashboard-View: daily_brief
-      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
     type: BINARY
@@ -402,7 +392,12 @@ image:
     update_interval: never
     on_download_finished:
       then:
-        - component.update: slot_a_calendar
+        - online_image.set_url:
+            id: slot_a_calendar
+            url: !lambda |-
+              return std::string("${device_origin}/api/image?view=calendar&generation=") +
+                     id(staging_generation);
+            update: true
     on_error:
       then:
         - logger.log:
@@ -412,12 +407,10 @@ image:
 
   - platform: online_image
     id: slot_a_calendar
-    url: "${device_origin}/api/image"
+    url: "${device_origin}/api/image?view=calendar"
     request_headers:
       ID: !secret device_id
       Access-Token: !secret device_token
-      X-Dashboard-View: calendar
-      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
     type: BINARY
@@ -436,12 +429,10 @@ image:
 
   - platform: online_image
     id: slot_b_daily_brief
-    url: "${device_origin}/api/image"
+    url: "${device_origin}/api/image?view=daily_brief"
     request_headers:
       ID: !secret device_id
       Access-Token: !secret device_token
-      X-Dashboard-View: daily_brief
-      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
     type: BINARY
@@ -450,7 +441,12 @@ image:
     update_interval: never
     on_download_finished:
       then:
-        - component.update: slot_b_calendar
+        - online_image.set_url:
+            id: slot_b_calendar
+            url: !lambda |-
+              return std::string("${device_origin}/api/image?view=calendar&generation=") +
+                     id(staging_generation);
+            update: true
     on_error:
       then:
         - logger.log:
@@ -460,12 +456,10 @@ image:
 
   - platform: online_image
     id: slot_b_calendar
-    url: "${device_origin}/api/image"
+    url: "${device_origin}/api/image?view=calendar"
     request_headers:
       ID: !secret device_id
       Access-Token: !secret device_token
-      X-Dashboard-View: calendar
-      X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
     type: BINARY

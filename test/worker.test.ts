@@ -843,6 +843,49 @@ describe("TRMNL BYOS device service", () => {
     expect((await response.arrayBuffer()).byteLength).toBe(0);
   });
 
+  test("unchanged production image metadata returns 304 without a body", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image?view=daily_brief", {
+        method: "HEAD",
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token,
+          "If-None-Match": '"test"'
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(304);
+    expect(response.headers.get("etag")).toBe('"test"');
+    expect(response.headers.get("x-dashboard-generation")).toBe(
+      NAVIGATION_GENERATION
+    );
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(response.headers.get("content-type")).toBeNull();
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+  });
+
   test("a generation-pinned image remains available after the current pointer advances", async () => {
     const database = new TestDatabase();
     database.publishedGeneration = {
