@@ -1,5 +1,10 @@
 # Ticket #33: ESPHome Key 3 navigation
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 ESPHome is the supported production device client. This contract covers Key 3
 navigation through the one-request direct-image interface.
 

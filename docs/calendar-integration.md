@@ -59,9 +59,7 @@ local days, orders all-day events before timed events, uses compact 12-hour
 times, and reports overflow as `+N more`. Shortened locations are rendered only
 on Calendar View; private events remain `Busy` and never retain a location.
 
-The device sends its firmware `Update-Source` header to `/api/display`. A
-`timer` wake resets the persisted device cursor to Daily Brief; a manual wake
-advances it to Calendar View. Daily Brief and Calendar View have distinct
-immutable cache filenames (`daily-brief-<timestamp>.png` and
-`calendar-view-<timestamp>.png`) that remain stable until the next complete
-generation is published.
+The device explicitly retrieves Daily Brief and Calendar View from one
+published generation and navigates between the cached images locally. See the
+[production device-client contract](device-client-contract.md) for the current
+protocol, caching, navigation, and refresh behavior.

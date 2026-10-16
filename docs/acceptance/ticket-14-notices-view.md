@@ -1,5 +1,10 @@
 # Ticket 14 — Notices View
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 Notices View and Gmail processing are deferred and are not part of active
 scheduled generation or the device view cycle.
 

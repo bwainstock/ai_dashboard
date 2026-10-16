@@ -1,5 +1,10 @@
 # Ticket #2: private BYOS path acceptance
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 The automated suite covers token issuance, display authentication, authenticated
 private image delivery, rejection of unpublished generations, and PNG
 dimensions/palette. The panel-specific observations below must be completed on

@@ -1,5 +1,10 @@
 # Ticket #8: stale-safe atomic generations
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 Every scheduled execution now builds one immutable generation containing Daily
 Brief and Calendar View. R2 objects are written under the
 generation ID first; one D1 batch then records the complete set and advances the

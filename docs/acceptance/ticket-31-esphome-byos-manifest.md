@@ -1,5 +1,10 @@
 # Ticket #31: ESPHome direct-image acceptance
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 ESPHome is the supported production device client. It performs one
 authenticated `GET /api/image` request per startup, scheduled refresh, or Key 3
 navigation gesture. Legacy TRMNL manifest and named-image routes remain

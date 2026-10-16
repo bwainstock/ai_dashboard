@@ -1,5 +1,10 @@
 # Ticket #11: physical device acceptance
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 This procedure separates automated checks from observations requiring the
 Seeed/TRMNL 7.5-inch OG DIY Kit. ESPHome is the supported production client.
 Legacy TRMNL BYOS acceptance remains useful only for rollback compatibility.

@@ -1,5 +1,10 @@
 # Ticket #5: Calendar View acceptance
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 Calendar View is generated with the composed Daily Brief at each due local
 slot. Publication writes both immutable PNG objects before one D1 batch marks
 the complete view set published.
