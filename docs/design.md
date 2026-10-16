@@ -77,17 +77,22 @@ device identifier and generation metadata are not credentials.
 
 ## Device protocol and navigation
 
-The production device interface is one authenticated `GET /api/image` request.
-`ID`, `Access-Token`, and `Update-Source` remain headers. The Worker selects the
-current atomically published view and returns the opaque 800x480 PNG directly
-with private cache validators and non-sensitive generation headers.
+The production device interface is authenticated `GET /api/image` requests.
+`ID` and `Access-Token` remain headers. ESPHome explicitly selects Daily Brief
+or Calendar View with `X-Dashboard-View`. It first performs bodyless metadata
+revalidation for both views, then pins both image downloads with
+`X-Dashboard-Generation` so a publication between requests cannot create a
+mixed pair.
 
-- Scheduled refresh: ESPHome sends `Update-Source: timer`, which selects Daily
-  Brief and resets the server-managed cursor.
-- Key 3 double-click: ESPHome sends `Update-Source: button`, which advances the
-  cursor through Daily Brief and Calendar View.
-- ESPHome uses `ETag` revalidation and skips the physical panel refresh for an
-  unchanged image.
+- Startup and scheduled refresh stage both views in the inactive PSRAM slot.
+  The slot becomes active only after both images decode successfully.
+- Scheduled refresh resets local selection to Daily Brief.
+- Key 3 double-click switches between the two active decoded images locally;
+  navigation does not require Wi-Fi or a Worker request.
+- Per-view `ETag` revalidation skips both downloads and the physical panel
+  refresh when the published generation is unchanged.
+- A request, authentication, download, decode, or mixed-generation failure
+  leaves the previous complete slot active.
 - The device remains awake in the initial production cutover. It refreshes at
   06:32, 10:32, 15:02, and 19:02 local time, two minutes after Cloudflare's
   generation slots. Deep sleep is deferred to #36.

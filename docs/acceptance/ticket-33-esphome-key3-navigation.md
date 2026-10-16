@@ -1,7 +1,6 @@
 # Ticket #33: ESPHome Key 3 navigation
 
-ESPHome is the supported production device client. This contract covers Key 3
-navigation through the one-request direct-image interface.
+ESPHome is the supported production device client. This contract covers Key 3 navigation through the locally cached view set.
 
 ## Hardware contract
 
@@ -23,27 +22,15 @@ wakeup configuration for the selected ESP32-S3 target.
 
 The first debounced Key 3 release opens a 750 ms click window; the second
 debounced press completes the double-click.
-The gesture is latched before Wi-Fi request dispatch, and a separate
-`request_started` guard permits exactly one direct image request for the
-gesture. A single press, bounce, held button, or later press outside the click
-window does not request a view.
+The gesture is accepted only when a complete active view set exists and no
+refresh is in progress. It toggles the local Daily Brief/Calendar View
+selection and refreshes the panel from PSRAM. A single press, bounce, held
+button, or later press outside the click window does not switch views.
 
-The completed gesture requests authenticated `/api/image` with:
-
-- `ID` and `Access-Token` headers;
-- `Update-Source: button`;
-- no local view name, index, filename, or cursor.
-
-The Worker remains the only owner of the two-view cursor and returns the next
-Daily Brief or Calendar View filename from the current atomically published
-generation. Non-button boots request `Update-Source: timer`, which resets the
-Worker cursor to Daily Brief.
-
-Credentials stay in headers, redirects remain disabled, and only a successful
-fresh private PNG download refreshes the panel. Any HTTP, authentication,
-download, or decode failure preserves the current e-paper image. The 75-second
-guard still bounds paths that never produce a callback. Deep-sleep wake
-navigation is deferred to #36; the production client currently remains awake.
+No HTTP action, Wi-Fi condition, credential use, or Cloudflare request occurs
+in the Key 3 path. Scheduled refresh resets local selection to Daily Brief
+before checking the next complete generation. Deep-sleep wake navigation is
+deferred to #36; the production client currently remains awake.
 
 ## Verification
 
@@ -55,8 +42,7 @@ npm run esphome:compile
 npm run check
 ```
 
-The configuration tests cover the authoritative GPIO, wake handling,
-debounce/request guard, timer source, absence of a client-side cursor,
-same-origin validation, and failure behavior. Worker tests cover alternating
-the server-managed two-view cursor exactly once per button request, timer reset,
-and selection from the current atomic generation.
+The configuration tests cover the authoritative GPIO, debounce guard, local
+toggle, absence of network actions in the Key 3 path, timer reset, atomic
+staging, and failure preservation. Worker tests cover explicit view selection,
+generation pinning, and current-generation cache validation.

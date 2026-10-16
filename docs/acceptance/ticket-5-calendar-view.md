@@ -6,9 +6,10 @@ the complete view set published.
 
 Automated coverage verifies:
 
-- `Update-Source: button` advances the server-side device cursor from Daily
-  Brief to Calendar View.
-- `Update-Source: timer` resets the cursor to Daily Brief.
+- Explicit authenticated requests select Daily Brief or Calendar View from one
+  published generation.
+- ESPHome caches both decoded views, Key 3 switches locally, and scheduled
+  refresh resets local selection to Daily Brief.
 - Authenticated display responses retain the dynamic seconds-to-next-slot
   `refresh_rate`; missing and invalid credentials are rejected.
 - Daily Brief and Calendar View filenames use distinct view prefixes and stay
@@ -23,6 +24,6 @@ Automated coverage verifies:
   `Busy`, and normalized/rendered data excludes descriptions, attendees,
   meeting links, organizer addresses, and personal email addresses.
 
-The schema migration adds the per-device cursor and a view type to immutable
-render generations. The previous single-row slot uniqueness becomes
-slot-and-view uniqueness.
+The schema migration added a rollback-compatible per-device cursor and a view
+type to immutable render generations. Production ESPHome navigation now uses
+the cached view set described in ticket #37.

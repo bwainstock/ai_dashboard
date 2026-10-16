@@ -23,6 +23,7 @@ Documentation:
 - [Ticket #31 ESPHome direct-image acceptance](docs/acceptance/ticket-31-esphome-byos-manifest.md)
 - [Ticket #32 ESPHome production client acceptance](docs/acceptance/ticket-32-esphome-daily-brief.md)
 - [Ticket #33 ESPHome Key 3 navigation](docs/acceptance/ticket-33-esphome-key3-navigation.md)
+- [Ticket #37 offline cached view set](docs/acceptance/ticket-37-offline-view-set.md)
 
 ## Development
 
@@ -54,20 +55,20 @@ export DEVICE_TOKEN="$(
 curl --fail-with-body \
   -H "ID: $DEVICE_ID" \
   -H "Access-Token: $DEVICE_TOKEN" \
-  -H "Update-Source: timer" \
+  -H "X-Dashboard-View: daily_brief" \
   -o dashboard-preview.png \
   "$DEVICE_ORIGIN/api/image"
 open dashboard-preview.png
 ```
 
-The preview is the current deployed Daily Brief PNG. Send
-`Update-Source: button` on subsequent `/api/image` requests to advance to
-Calendar View and then back to Daily Brief. Run the deployed image check
-with the same preview credentials:
+The preview is the current deployed Daily Brief PNG. Use
+`X-Dashboard-View: calendar` to retrieve Calendar View. The production device
+keeps both decoded views in PSRAM and navigates locally. Run the deployed image
+check with the same preview credentials:
 
 ```sh
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
-  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN" timer
+  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN"
 
 unset DEVICE_TOKEN
 ```

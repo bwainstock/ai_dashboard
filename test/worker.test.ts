@@ -54,6 +54,15 @@ class TestDatabase {
         viewType: "notices";
       }
     | undefined;
+  readonly historicalGenerations = new Map<
+    string,
+    {
+      filename: string;
+      objectKey: string;
+      byteSize: number;
+      viewType: "daily_brief" | "calendar";
+    }
+  >();
   configuration = {
     latitude: 37.3382,
     longitude: -121.8863,
@@ -99,8 +108,15 @@ class TestDatabase {
           const requestedView = query.includes("view_type = ?")
             ? String(parameters()[0])
             : "daily_brief";
+          const requestedGeneration = query.includes("generation_id = ?")
+            ? String(parameters()[1])
+            : undefined;
           const pointedGeneration =
-            requestedView === "calendar"
+            requestedGeneration
+              ? this.historicalGenerations.get(
+                  `${requestedGeneration}:${requestedView}`
+                )
+              : requestedView === "calendar"
               ? this.calendarGeneration
               : requestedView === "lunch"
                 ? this.lunchGeneration
@@ -626,6 +642,137 @@ describe("TRMNL BYOS device service", () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(
       new Uint8Array([137, 80, 78, 71])
     );
+    expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
+
+  test("explicit view downloads stay pinned when publication advances between requests", async () => {
+    const database = new TestDatabase();
+    const oldDaily = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4,
+      viewType: "daily_brief" as const
+    };
+    const oldCalendar = {
+      filename: CALENDAR_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      byteSize: 4,
+      viewType: "calendar" as const
+    };
+    database.publishedGeneration = oldDaily;
+    database.calendarGeneration = oldCalendar;
+    database.historicalGenerations.set(
+      `${NAVIGATION_GENERATION}:daily_brief`,
+      oldDaily
+    );
+    database.historicalGenerations.set(
+      `${NAVIGATION_GENERATION}:calendar`,
+      oldCalendar
+    );
+    const bucket = new TestBucket();
+    bucket.objects.set(oldDaily.objectKey, new Uint8Array([1, 2, 3, 4]));
+    bucket.objects.set(oldCalendar.objectKey, new Uint8Array([5, 6, 7, 8]));
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    database.publishedGeneration = {
+      filename: "daily-brief-new.png",
+      objectKey: "generations/new/daily-brief.png",
+      byteSize: 4,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: "calendar-view-new.png",
+      objectKey: "generations/new/calendar-view.png",
+      byteSize: 4,
+      viewType: "calendar"
+    };
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image", {
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token,
+          "X-Dashboard-View": "calendar",
+          "X-Dashboard-Generation": NAVIGATION_GENERATION
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-dashboard-filename")).toBe(
+      CALENDAR_FILENAME
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([5, 6, 7, 8])
+    );
+  });
+
+  test("direct image metadata explicitly selects both views from one published generation", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: CALENDAR_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      byteSize: 4,
+      viewType: "calendar"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      database.publishedGeneration.objectKey,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    bucket.objects.set(
+      database.calendarGeneration.objectKey,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const metadata = (view: "daily_brief" | "calendar") =>
+      worker.fetch(
+        new Request("https://device.test/api/image", {
+          headers: {
+            ID: DEVICE_ID,
+            "Access-Token": token,
+            "X-Dashboard-View": view,
+            "X-Dashboard-Metadata": "true"
+          }
+        }),
+        env
+      );
+
+    const dailyBrief = await metadata("daily_brief");
+    const calendar = await metadata("calendar");
+
+    expect(dailyBrief.status).toBe(200);
+    expect(calendar.status).toBe(200);
+    expect(dailyBrief.headers.get("x-dashboard-view")).toBe("daily_brief");
+    expect(calendar.headers.get("x-dashboard-view")).toBe("calendar");
+    expect(dailyBrief.headers.get("x-dashboard-generation")).toBe(
+      NAVIGATION_GENERATION
+    );
+    expect(calendar.headers.get("x-dashboard-generation")).toBe(
+      NAVIGATION_GENERATION
+    );
+    expect((await dailyBrief.arrayBuffer()).byteLength).toBe(0);
+    expect((await calendar.arrayBuffer()).byteLength).toBe(0);
     expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
   });
 

@@ -28,10 +28,9 @@ credentials in the main YAML, commands, documentation, issues, or logs.
 
 ## Runtime contract
 
-On Wi-Fi connection, ESPHome requests
-`<device_origin>/api/image` once with device credentials and
-`Update-Source: timer`. SNTP applies `America/Los_Angeles` and triggers later
-timer refreshes at:
+On Wi-Fi connection, ESPHome checks Daily Brief and Calendar View metadata,
+then downloads both images when the published generation changed. SNTP applies
+`America/Los_Angeles` and triggers later refreshes at:
 
 - 06:32;
 - 10:32;
@@ -39,14 +38,17 @@ timer refreshes at:
 - 19:02.
 
 These are two minutes after Cloudflare's generation slots so the complete
-atomic view set is available. Key 3 double-click requests the next view with
-`Update-Source: button`. Timer refreshes reset to Daily Brief.
+atomic view set is available. Four `online_image` components provide active
+and staging slots for two decoded `BINARY` images. Both downloads are pinned
+to the generation returned by metadata; only two successful decodes activate
+the staging slot. Key 3 double-click changes the selected active image locally.
+Scheduled refresh resets selection to Daily Brief.
 
-`online_image` decodes the direct PNG to `BINARY`. A fresh response updates the
-panel once; an ETag cache hit skips the panel refresh. Image memory is released
-after handling. HTTP, authentication, download, decode, or timeout failure
-preserves the existing e-paper image and returns the firmware to its idle
-state.
+When both metadata requests return `304`, ESPHome skips image downloads and the
+panel refresh. HTTP, authentication, mixed-generation metadata, download,
+decode, or timeout failure preserves the previous active pair and returns the
+firmware to its idle state. Activation logs remaining PSRAM for physical
+headroom measurement.
 
 The initial production cutover intentionally remains awake. Deep sleep,
 wake-button behavior, bounded retry sleep, and battery acceptance are tracked
@@ -82,14 +84,17 @@ npm run check
 
 Physical acceptance confirms:
 
-1. Startup performs one authenticated `/api/image` request and displays Daily
-   Brief.
-2. Key 3 double-click advances exactly one view and remains usable while the
-   device is awake.
+1. Startup stages one same-generation Daily Brief and Calendar View pair, then
+   displays Daily Brief.
+2. Key 3 double-click advances exactly one cached view without Wi-Fi or a
+   Worker request.
 3. Timer refreshes occur at the four documented local times and reset to Daily
    Brief.
 4. An unchanged ETag does not visibly refresh the panel.
-5. Invalid credentials and network failure preserve the previous image.
+5. Invalid credentials, partial download, decode failure, mixed generation,
+   and network failure preserve the previous complete pair.
 6. Holding Key 1 during reset enters maintenance mode and permits serial and
    OTA access.
-7. The deployed direct-image verifier passes with preview credentials.
+7. Serial logs record adequate PSRAM headroom after all four decoded buffers
+   are allocated.
+8. The deployed direct-image verifier passes with preview credentials.

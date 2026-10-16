@@ -8,6 +8,9 @@ export const HARDWARE_OBSERVATIONS = [
   "namedImageCaching",
   "buttonCycle",
   "timerReset",
+  "viewSetMemoryHeadroom",
+  "partialFailurePreservation",
+  "offlineNavigation",
   "wifiReconnection",
   "scheduledWakes",
   "authenticatedPrivacy"

@@ -71,6 +71,9 @@
             "namedImageCaching",
             "buttonCycle",
             "timerReset",
+            "viewSetMemoryHeadroom",
+            "partialFailurePreservation",
+            "offlineNavigation",
             "wifiReconnection",
             "scheduledWakes",
             "authenticatedPrivacy"

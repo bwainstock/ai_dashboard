@@ -103,6 +103,11 @@ describe("persistent acceptance report", () => {
         (observation) => observation.status === "pending"
       )
     ).toBe(true);
+    expect(report.hardware.observations).toMatchObject({
+      viewSetMemoryHeadroom: { status: "pending" },
+      partialFailurePreservation: { status: "pending" },
+      offlineNavigation: { status: "pending" },
+    });
     expect(report.battery.status).toBe("pending");
   });
 

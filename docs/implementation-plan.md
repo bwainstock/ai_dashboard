@@ -23,7 +23,7 @@ Do not build source integrations until this path is proven.
    - Users and roles.
    - OAuth connections and encrypted tokens.
    - Calendar selection.
-   - Device credentials and view cursor.
+   - Device credentials and rollback-compatible view cursor.
    - Source snapshots and freshness.
    - Render generations and immutable image keys.
    - Operational incidents.
@@ -58,7 +58,9 @@ Do not build source integrations until this path is proven.
 2. Make each slot idempotent.
 3. Retry a failed generation once after 15 minutes.
 4. Return a dynamic `refresh_rate` that wakes the device for the next local slot.
-5. Implement the forward-only view cursor and timer reset to Daily Brief.
+5. Cache the complete view set in ESPHome PSRAM, navigate locally, and reset
+   scheduled refresh to Daily Brief. Keep the forward-only server cursor only
+   for rollback compatibility.
 6. Alert after 24 hours without a device check-in.
 
 ### V1 acceptance

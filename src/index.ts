@@ -204,36 +204,59 @@ async function selectDeviceGeneration(
   )
     .bind(deviceId)
     .run();
-  const device = await env.DB.prepare(
-    "SELECT view_cursor FROM devices WHERE device_id = ?"
-  )
-    .bind(deviceId)
-    .first<{ view_cursor: number }>();
-  const updateSource = request.headers.get("Update-Source")?.toLowerCase();
-  const manualWake =
-    updateSource !== undefined &&
-    !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
-  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
-  const viewType = ["daily_brief", "calendar"][viewCursor] as
-    | "daily_brief"
-    | "calendar";
-  await env.DB.prepare(
-    `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE device_id = ?`
-  )
-    .bind(viewCursor, deviceId)
-    .run();
+  const requestedView = request.headers.get("X-Dashboard-View");
+  if (
+    requestedView !== null &&
+    requestedView !== "daily_brief" &&
+    requestedView !== "calendar"
+  ) {
+    return json({ error: "Invalid dashboard view" }, 400);
+  }
 
-  const generation = await env.DB.prepare(
-    `SELECT generation.filename, generation.object_key, generation.byte_size,
-            generation.generation_id, generation.published_at
-     FROM current_render_generation AS current_pointer
-     JOIN render_generations AS generation
-       ON generation.generation_id = current_pointer.generation_id
-     WHERE current_pointer.id = 1 AND generation.view_type = ?
-     LIMIT 1`
+  let viewType: "daily_brief" | "calendar";
+  if (requestedView) {
+    viewType = requestedView;
+  } else {
+    const device = await env.DB.prepare(
+      "SELECT view_cursor FROM devices WHERE device_id = ?"
+    )
+      .bind(deviceId)
+      .first<{ view_cursor: number }>();
+    const updateSource = request.headers.get("Update-Source")?.toLowerCase();
+    const manualWake =
+      updateSource !== undefined &&
+      !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
+    const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
+    viewType = ["daily_brief", "calendar"][viewCursor] as
+      | "daily_brief"
+      | "calendar";
+    await env.DB.prepare(
+      `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE device_id = ?`
+    )
+      .bind(viewCursor, deviceId)
+      .run();
+  }
+
+  const requestedGeneration = request.headers.get("X-Dashboard-Generation");
+  const generationQuery = requestedGeneration
+    ? `SELECT filename, object_key, byte_size, generation_id, published_at
+       FROM render_generations
+       WHERE view_type = ? AND generation_id = ?
+       LIMIT 1`
+    : `SELECT generation.filename, generation.object_key, generation.byte_size,
+              generation.generation_id, generation.published_at
+       FROM current_render_generation AS current_pointer
+       JOIN render_generations AS generation
+         ON generation.generation_id = current_pointer.generation_id
+       WHERE current_pointer.id = 1 AND generation.view_type = ?
+       LIMIT 1`;
+  const generationStatement = env.DB.prepare(generationQuery);
+  const generation = await (
+    requestedGeneration
+      ? generationStatement.bind(viewType, requestedGeneration)
+      : generationStatement.bind(viewType)
   )
-    .bind(viewType)
      .first<{
        filename: string;
        object_key: string;
@@ -292,7 +315,7 @@ function generationImageHeaders(
     "content-type": "image/png",
     etag: object.httpEtag,
     "last-modified": new Date(generation.publishedAt).toUTCString(),
-    vary: "ID, Update-Source",
+    vary: "ID, Update-Source, X-Dashboard-View, X-Dashboard-Generation",
     "x-content-type-options": "nosniff",
     "x-dashboard-filename": generation.filename,
     "x-dashboard-generation": generation.generationId,
@@ -314,6 +337,11 @@ async function directImage(request: Request, env: Env): Promise<Response> {
     headers.delete("content-length");
     headers.delete("content-type");
     return new Response(null, { status: 304, headers });
+  }
+  if (request.headers.get("X-Dashboard-Metadata") === "true") {
+    headers.delete("content-length");
+    headers.delete("content-type");
+    return new Response(null, { headers });
   }
   return new Response(object.body, { headers });
 }
