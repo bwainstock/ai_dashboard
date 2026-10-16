@@ -5,6 +5,10 @@ import {
 } from "../src/device-limits";
 
 describe("tested device limits", () => {
+  test("retains the physically accepted minimum visible text size", () => {
+    expect(DEVICE_LIMITS.minimumVisibleTextPixels).toBe(14);
+  });
+
   test("uses the evidence-backed image limit when deployment configuration is absent", () => {
     expect(effectiveMaximumImageBytes()).toBe(DEVICE_LIMITS.maximumImageBytes);
   });

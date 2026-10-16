@@ -11,6 +11,8 @@ export interface RenderInspection {
   iconCount: number;
   textLength: number;
   minimumVisibleTextSize: number;
+  computedFontFamilies: string[];
+  minimumVisibleFontWeight: number;
   nonMonochromeValues: string[];
   missingStates: Array<{
     text: string;
@@ -63,6 +65,17 @@ export function assertRenderInspection(
       `${view} renderer text must be at least ${DEVICE_LIMITS.minimumVisibleTextPixels}px`
     );
   }
+  if (
+    inspection.computedFontFamilies.length !== 1 ||
+    inspection.computedFontFamilies[0] !== "sans-serif"
+  ) {
+    throw new Error(
+      `${view} renderer must use the available sans-serif font family`
+    );
+  }
+  if (inspection.minimumVisibleFontWeight < 700) {
+    throw new Error(`${view} renderer must use robust heavy typography`);
+  }
   if (inspection.nonMonochromeValues.length > 0) {
     throw new Error(`${view} renderer must use only black and white`);
   }
@@ -108,6 +121,18 @@ export async function validateRenderedPage(
         height: bounds.height
       };
     });
+    const visibleTextElements = Array.from(
+      document.body.querySelectorAll<HTMLElement>("*")
+    ).filter((element) => {
+      const style = getComputedStyle(element);
+      const text = element.textContent ?? "";
+      return (
+        element.childElementCount === 0 &&
+        text.trim().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    });
     return {
       viewport: { width: innerWidth, height: innerHeight },
       document: {
@@ -135,20 +160,26 @@ export async function validateRenderedPage(
       iconCount: document.querySelectorAll('[role="img"]').length,
       textLength: document.body.innerText.trim().length,
       minimumVisibleTextSize: Math.min(
-        ...Array.from(document.body.querySelectorAll("*"))
-          .filter((element) => {
-            const style = getComputedStyle(element);
-            const text = element.textContent ?? "";
-            return (
-              element.childElementCount === 0 &&
-              text.trim().length > 0 &&
-              style.display !== "none" &&
-              style.visibility !== "hidden"
-            );
-          })
-          .map((element) =>
-            Number.parseFloat(getComputedStyle(element).fontSize)
+        ...visibleTextElements.map((element) =>
+          Number.parseFloat(getComputedStyle(element).fontSize)
+        )
+      ),
+      computedFontFamilies: [
+        ...new Set(
+          visibleTextElements.map(
+            (element) => getComputedStyle(element).fontFamily
           )
+        )
+      ],
+      minimumVisibleFontWeight: Math.min(
+        ...visibleTextElements.map((element) => {
+          const weight = getComputedStyle(element).fontWeight;
+          return weight === "normal"
+            ? 400
+            : weight === "bold"
+              ? 700
+              : Number.parseInt(weight, 10);
+        })
       ),
       nonMonochromeValues: [...values].filter(
         (value) =>

@@ -348,6 +348,8 @@ function validRenderInspection() {
     iconCount: 1,
     textLength: 20,
     minimumVisibleTextSize: 16,
+    computedFontFamilies: ["sans-serif"],
+    minimumVisibleFontWeight: 700,
     nonMonochromeValues: [],
     missingStates: []
   };
@@ -1082,13 +1084,9 @@ describe("TRMNL BYOS device service", () => {
     expect(setViewport).toHaveBeenNthCalledWith(1, {
       width: 800,
       height: 480,
-      deviceScaleFactor: 2
-    });
-    expect(setViewport).toHaveBeenNthCalledWith(2, {
-      width: 800,
-      height: 480,
       deviceScaleFactor: 1
     });
+    expect(setViewport).toHaveBeenCalledTimes(1);
     expect(
       database.preparedQueries.some((query) =>
         query.includes("INSERT INTO current_render_generation")
