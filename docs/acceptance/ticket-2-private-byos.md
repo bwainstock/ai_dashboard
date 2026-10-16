@@ -7,8 +7,9 @@ the Seeed/TRMNL 7.5-inch OG DIY Kit; they are intentionally not claimed by CI.
 
 ## Deploy the proof
 
-1. Create the resources and replace the placeholder D1 ID, bucket name, and
-   `DEVICE_ORIGIN` in `wrangler.toml`:
+1. Create the resources and replace the placeholder D1 ID and bucket name in
+   `wrangler.toml`. Display manifests derive their private image origin from
+   the authenticated device request, preventing deployment-variable drift:
 
    ```sh
    npx wrangler d1 create family-dashboard

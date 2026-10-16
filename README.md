@@ -20,6 +20,9 @@ Documentation:
 - [Ticket #2 private BYOS acceptance](docs/acceptance/ticket-2-private-byos.md)
 - [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
 - [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
+- [Ticket #31 ESPHome direct-image acceptance](docs/acceptance/ticket-31-esphome-byos-manifest.md)
+- [Ticket #32 ESPHome production client acceptance](docs/acceptance/ticket-32-esphome-daily-brief.md)
+- [Ticket #33 ESPHome Key 3 navigation](docs/acceptance/ticket-33-esphome-key3-navigation.md)
 
 ## Development
 
@@ -29,7 +32,8 @@ npm run check
 ```
 
 The device Worker is configured in `wrangler.toml`. Its R2 binding is private;
-display images are served only by the authenticated `/images/:filename` route.
+the production ESPHome client receives images only through authenticated
+`/api/image`.
 
 ## Previewing without a physical display
 
@@ -47,31 +51,23 @@ export DEVICE_TOKEN="$(
   node -p 'JSON.parse(process.argv[1]).api_key' "$SETUP_JSON"
 )"
 
-DISPLAY_JSON="$(curl --fail-with-body \
-  -H "ID: $DEVICE_ID" \
-  -H "Access-Token: $DEVICE_TOKEN" \
-  -H "Update-Source: timer" \
-  "$DEVICE_ORIGIN/api/display")"
-IMAGE_URL="$(
-  node -p 'JSON.parse(process.argv[1]).image_url' "$DISPLAY_JSON"
-)"
-
 curl --fail-with-body \
   -H "ID: $DEVICE_ID" \
   -H "Access-Token: $DEVICE_TOKEN" \
+  -H "Update-Source: timer" \
   -o dashboard-preview.png \
-  "$IMAGE_URL"
+  "$DEVICE_ORIGIN/api/image"
 open dashboard-preview.png
 ```
 
 The preview is the current deployed Daily Brief PNG. Send
-`Update-Source: button` on subsequent `/api/display` requests to advance
-to Calendar View and then back to Daily Brief. Run the deployed image check
+`Update-Source: button` on subsequent `/api/image` requests to advance to
+Calendar View and then back to Daily Brief. Run the deployed image check
 with the same preview credentials:
 
 ```sh
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
-  npm run acceptance:device -- "$DEVICE_ORIGIN"
+  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN" timer
 
 unset DEVICE_TOKEN
 ```

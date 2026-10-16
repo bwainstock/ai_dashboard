@@ -57,6 +57,9 @@ export function validatePngArtifact(
     if (red !== green || green !== blue || alpha !== 255) {
       throw new Error(`${filename} contains color or transparency`);
     }
+    if (red !== 0 && red !== 255) {
+      throw new Error(`${filename} contains pixels outside the 1-bit palette`);
+    }
     tones.add(red);
   }
   if (tones.size < 2) throw new Error(`${filename} is blank`);

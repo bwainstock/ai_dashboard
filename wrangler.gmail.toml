@@ -6,7 +6,7 @@ workers_dev = false
 [[d1_databases]]
 binding = "DB"
 database_name = "family-dashboard"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "8de2d03d-5ff3-4d36-ac31-2e3af4f326b7"
 migrations_dir = "migrations"
 
 [ai]

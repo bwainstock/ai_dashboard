@@ -349,7 +349,6 @@ function env(
     IMAGES: {} as R2Bucket,
     BROWSER: {} as Fetcher,
     GENERATION_SECRET: "generation-secret",
-    DEVICE_ORIGIN: "https://dashboard-device.example.com",
     ADMIN_ORIGIN: "https://dashboard-admin.example.com",
     ...overrides
   };

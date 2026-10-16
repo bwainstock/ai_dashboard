@@ -143,7 +143,7 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     .agenda-head { display: flex; justify-content: space-between; align-items: baseline; height: 24px; }
     .agenda-head span:last-child { font-size: 12px; font-weight: 900; text-transform: uppercase; }
     .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); gap: 7px 10px; height: 222px; }
-    .agenda-item { min-width: 0; display: grid; grid-template-columns: 75px minmax(0, 1fr); align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 11px; padding: 6px 9px; overflow: hidden; }
+    .agenda-item { min-width: 0; display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 11px; padding: 6px 9px; overflow: hidden; }
     .agenda-item time { font-size: 13px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
     .agenda-item time small { display: block; margin-bottom: 3px; font-size: 12px; letter-spacing: .05em; }
     .agenda-item strong { display: block; font-size: 19px; line-height: .95; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -49,7 +49,8 @@ describe("device acceptance artifacts", () => {
   test.each([
     ["wrong dimensions", png(799, 480), "daily-brief-1.png"],
     ["wrong view name", png(), "calendar-view-1.png"],
-    ["oversize", png(), "daily-brief-1.png", 10]
+    ["oversize", png(), "daily-brief-1.png", 10],
+    ["non-1-bit grayscale", png(800, 480, 128), "daily-brief-1.png"]
   ])("rejects %s", (_label, bytes, filename, maximum = 1_000_000) => {
     expect(() =>
       validatePngArtifact(bytes, filename, "daily-brief", maximum)

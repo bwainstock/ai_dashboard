@@ -122,7 +122,10 @@ class TestDatabase {
             ? {
                 filename: generation.filename,
                 object_key: generation.objectKey,
-                byte_size: generation.byteSize
+                byte_size: generation.byteSize,
+                generation_id:
+                  generation.objectKey.split("/")[1] ?? "test-generation",
+                published_at: "2026-10-07T17:00:00.000Z"
               }
             : null) as T | null;
         }
@@ -261,7 +264,6 @@ function testEnv(
     IMAGES: bucket as unknown as R2Bucket,
     BROWSER: {} as Fetcher,
     GENERATION_SECRET: "generation-secret",
-    DEVICE_ORIGIN: "https://dashboard-device.example.com",
     ADMIN_ORIGIN: "https://dashboard-admin.example.com"
   };
 }
@@ -271,6 +273,61 @@ function scheduledEnv(database = new ScheduledTestDatabase()): Env {
     database as unknown as TestDatabase,
     new TestBucket()
   );
+}
+
+const NAVIGATION_GENERATION = "20261007T173000Z";
+const DAILY_BRIEF_FILENAME = `daily-brief-${NAVIGATION_GENERATION}.png`;
+const CALENDAR_FILENAME = `calendar-view-${NAVIGATION_GENERATION}.png`;
+const DEVICE_ID = "AA:BB:CC:DD:EE:FF";
+
+async function navigationFixture({
+  incompleteDailyFilename
+}: { incompleteDailyFilename?: string } = {}) {
+  const database = new TestDatabase();
+  database.publishedGeneration = {
+    filename: DAILY_BRIEF_FILENAME,
+    objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+    byteSize: 12_345,
+    viewType: "daily_brief"
+  };
+  database.calendarGeneration = {
+    filename: CALENDAR_FILENAME,
+    objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+    byteSize: 12_346,
+    viewType: "calendar"
+  };
+  if (incompleteDailyFilename) {
+    database.incompleteDailyGeneration = {
+      filename: incompleteDailyFilename,
+      objectKey: "generations/incomplete/daily-brief.png",
+      byteSize: 12_999
+    };
+  }
+  const env = testEnv(database);
+  const setupResponse = await worker.fetch(
+    new Request("https://device.test/api/setup", {
+      headers: { ID: DEVICE_ID }
+    }),
+    env
+  );
+  const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+  return {
+    database,
+    async request(updateSource: string) {
+      const response = await worker.fetch(
+        new Request("https://device.test/api/display", {
+          headers: {
+            ID: DEVICE_ID,
+            "Access-Token": token,
+            "Update-Source": updateSource
+          }
+        }),
+        env
+      );
+      return response.json<{ filename: string }>();
+    }
+  };
 }
 
 function validRenderInspection() {
@@ -503,7 +560,7 @@ describe("TRMNL BYOS device service", () => {
     expect(await response.json()).toEqual({
       status: 0,
       image_url:
-        "https://dashboard-device.example.com/images/daily-brief-20261007T170000Z.png",
+        "https://device.test/images/daily-brief-20261007T170000Z.png",
       filename: "daily-brief-20261007T170000Z.png",
       refresh_rate: expect.any(Number),
       reset_firmware: false,
@@ -523,6 +580,154 @@ describe("TRMNL BYOS device service", () => {
     );
 
     expect(response.status).toBe(401);
+  });
+
+  test("direct image delivery selects and serves the current Daily Brief in one request", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-20261007T170000Z.png",
+      objectKey: "generations/20261007T170000Z/daily-brief.png",
+      byteSize: 4,
+      viewType: "daily_brief"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      "generations/20261007T170000Z/daily-brief.png",
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image", {
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token,
+          "Update-Source": "timer"
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cache-control")).toBe("private, no-cache");
+    expect(response.headers.get("etag")).toBe('"test"');
+    expect(response.headers.get("x-dashboard-filename")).toBe(
+      "daily-brief-20261007T170000Z.png"
+    );
+    expect(response.headers.get("x-dashboard-view")).toBe("daily_brief");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([137, 80, 78, 71])
+    );
+    expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
+
+  test("direct image delivery rejects missing credentials", async () => {
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image", {
+        headers: { ID: DEVICE_ID, "Update-Source": "timer" }
+      }),
+      testEnv()
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  test("direct image delivery advances on a button wake and resets on a timer wake", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: CALENDAR_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      byteSize: 4,
+      viewType: "calendar"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      database.publishedGeneration.objectKey,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    bucket.objects.set(
+      database.calendarGeneration.objectKey,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const request = (source: string) =>
+      worker.fetch(
+        new Request("https://device.test/api/image", {
+          headers: {
+            ID: DEVICE_ID,
+            "Access-Token": token,
+            "Update-Source": source
+          }
+        }),
+        env
+      );
+
+    const button = await request("button");
+    const timer = await request("timer");
+
+    expect(button.headers.get("x-dashboard-view")).toBe("calendar");
+    expect(timer.headers.get("x-dashboard-view")).toBe("daily_brief");
+    expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
+
+  test("direct image delivery supports ETag revalidation without refreshing unchanged pixels", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4,
+      viewType: "daily_brief"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      database.publishedGeneration.objectKey,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image", {
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token,
+          "Update-Source": "timer",
+          "If-None-Match": '"test"'
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(304);
+    expect(response.headers.get("etag")).toBe('"test"');
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
   });
 
   test("display schedules the next wake for the next Los Angeles slot", async () => {
@@ -574,188 +779,62 @@ describe("TRMNL BYOS device service", () => {
   });
 
   test("a short-button wake advances to Calendar View and a timer wake resets to Daily Brief", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
-    const headers = {
-      ID: "AA:BB:CC:DD:EE:FF",
-      "Access-Token": token
-    };
+    const fixture = await navigationFixture();
+    const button = await fixture.request("button");
+    const timer = await fixture.request("timer");
 
-    const button = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...headers, "Update-Source": "button" }
-      }),
-      env
-    );
-    const timer = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...headers, "Update-Source": "timer" }
-      }),
-      env
-    );
+    expect(button.filename).toBe(CALENDAR_FILENAME);
+    expect(timer.filename).toBe(DAILY_BRIEF_FILENAME);
+    expect(fixture.database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
 
-    expect((await button.json<{ filename: string }>()).filename).toBe(
-      "calendar-view-20261007T173000Z.png"
-    );
-    expect((await timer.json<{ filename: string }>()).filename).toBe(
-      "daily-brief-20261007T173000Z.png"
-    );
-    expect(database.devices.get("AA:BB:CC:DD:EE:FF")?.viewCursor).toBe(0);
+  test.each(["timer", "scheduled", "powercycle", "unknown"])(
+    "%s wake selects Daily Brief without advancing the device cursor",
+    async (updateSource) => {
+      const fixture = await navigationFixture();
+      const response = await fixture.request(updateSource);
+
+      expect(response.filename).toBe(DAILY_BRIEF_FILENAME);
+      expect(fixture.database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+    }
+  );
+
+  test("one manual button request advances the server-managed cursor exactly once", async () => {
+    const fixture = await navigationFixture();
+    const response = await fixture.request("button");
+
+    expect(response.filename).toBe(CALENDAR_FILENAME);
+    expect(fixture.database.devices.get(DEVICE_ID)?.viewCursor).toBe(1);
   });
 
   test("view cache filenames are distinct and remain stable until the next generation", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
-    const credentials = {
-      ID: "AA:BB:CC:DD:EE:FF",
-      "Access-Token": token
-    };
+    const fixture = await navigationFixture();
+    const first = await fixture.request("timer");
+    const second = await fixture.request("timer");
+    const button = await fixture.request("button");
 
-    const first = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...credentials, "Update-Source": "timer" }
-      }),
-      env
-    );
-    const second = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...credentials, "Update-Source": "timer" }
-      }),
-      env
-    );
-    const button = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: { ...credentials, "Update-Source": "button" }
-      }),
-      env
-    );
-
-    const firstFilename = (await first.json<{ filename: string }>()).filename;
-    expect((await second.json<{ filename: string }>()).filename).toBe(
-      firstFilename
-    );
-    expect((await button.json<{ filename: string }>()).filename).not.toBe(
-      firstFilename
-    );
+    expect(second.filename).toBe(first.filename);
+    expect(button.filename).not.toBe(first.filename);
   });
 
   test("display ignores a newer incomplete view set until the all-view pointer advances", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.incompleteDailyGeneration = {
-      filename: "daily-brief-20261007T220000Z.png",
-      objectKey: "generations/20261007T220000Z/daily-brief.png",
-      byteSize: 12_999
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const fixture = await navigationFixture({
+      incompleteDailyFilename: "daily-brief-20261007T220000Z.png"
+    });
+    const response = await fixture.request("timer");
 
-    const response = await worker.fetch(
-      new Request("https://device.test/api/display", {
-        headers: {
-          ID: "AA:BB:CC:DD:EE:FF",
-          "Access-Token": token,
-          "Update-Source": "timer"
-        }
-      }),
-      env
-    );
-
-    expect((await response.json<{ filename: string }>()).filename).toBe(
-      "daily-brief-20261007T173000Z.png"
-    );
+    expect(response.filename).toBe(DAILY_BRIEF_FILENAME);
   });
 
   test("short presses alternate Calendar View and Daily Brief", async () => {
-    const database = new TestDatabase();
-    database.publishedGeneration = {
-      filename: "daily-brief-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/daily-brief.png",
-      byteSize: 12_345,
-      viewType: "daily_brief"
-    };
-    database.calendarGeneration = {
-      filename: "calendar-view-20261007T173000Z.png",
-      objectKey: "generations/20261007T173000Z/calendar-view.png",
-      byteSize: 12_346,
-      viewType: "calendar"
-    };
-    const env = testEnv(database);
-    const setupResponse = await worker.fetch(
-      new Request("https://device.test/api/setup", {
-        headers: { ID: "AA:BB:CC:DD:EE:FF" }
-      }),
-      env
-    );
-    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
-    const headers = {
-      ID: "AA:BB:CC:DD:EE:FF",
-      "Access-Token": token,
-      "Update-Source": "button"
-    };
+    const fixture = await navigationFixture();
 
     const filenames = [];
     for (let press = 0; press < 2; press += 1) {
-      const response = await worker.fetch(
-        new Request("https://device.test/api/display", { headers }),
-        env
-      );
-      filenames.push((await response.json<{ filename: string }>()).filename);
+      filenames.push((await fixture.request("button")).filename);
     }
 
-    expect(filenames).toEqual([
-      "calendar-view-20261007T173000Z.png",
-      "daily-brief-20261007T173000Z.png"
-    ]);
+    expect(filenames).toEqual([CALENDAR_FILENAME, DAILY_BRIEF_FILENAME]);
     expect(new Set(filenames).size).toBe(2);
   });
 
@@ -801,6 +880,23 @@ describe("TRMNL BYOS device service", () => {
     );
   });
 
+  test("private image delivery rejects an invalid device token", async () => {
+    const response = await worker.fetch(
+      new Request(
+        "https://device.test/images/daily-brief-20261007T170000Z.png",
+        {
+          headers: {
+            ID: "AA:BB:CC:DD:EE:FF",
+            "Access-Token": "not-the-issued-token"
+          }
+        }
+      ),
+      testEnv()
+    );
+
+    expect(response.status).toBe(401);
+  });
+
   test("an R2 object is not available until its generation is published", async () => {
     const database = new TestDatabase();
     const bucket = new TestBucket();
@@ -840,12 +936,18 @@ describe("TRMNL BYOS device service", () => {
       png.data[offset + 3] = 255;
     }
     const screenshot = PNG.sync.write(png);
+    const screenshotBase64 = Buffer.from(screenshot).toString("base64");
     const close = vi.fn();
+    const setViewport = vi.fn();
     launchBrowser.mockResolvedValueOnce({
       newPage: async () => ({
-        setViewport: vi.fn(),
+        setViewport,
         setContent: vi.fn(),
-        screenshot: async () => screenshot
+        evaluate: vi.fn(),
+        screenshot: vi
+          .fn()
+          .mockResolvedValueOnce(screenshotBase64)
+          .mockResolvedValueOnce(screenshot)
       }),
       close
     });
@@ -863,6 +965,16 @@ describe("TRMNL BYOS device service", () => {
 
     expect(generationResponse.status).toBe(201);
     expect(close).toHaveBeenCalled();
+    expect(setViewport).toHaveBeenNthCalledWith(1, {
+      width: 800,
+      height: 480,
+      deviceScaleFactor: 2
+    });
+    expect(setViewport).toHaveBeenNthCalledWith(2, {
+      width: 800,
+      height: 480,
+      deviceScaleFactor: 1
+    });
     expect(
       database.preparedQueries.some((query) =>
         query.includes("INSERT INTO current_render_generation")
