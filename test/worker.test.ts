@@ -1115,7 +1115,7 @@ describe("TRMNL BYOS device service", () => {
     expect(setViewport).toHaveBeenNthCalledWith(1, {
       width: 800,
       height: 480,
-      deviceScaleFactor: 2
+      deviceScaleFactor: 1
     });
     expect(setViewport).toHaveBeenNthCalledWith(2, {
       width: 800,

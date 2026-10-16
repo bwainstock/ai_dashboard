@@ -179,7 +179,7 @@ describe("persistent acceptance report", () => {
     expect(
       validateReport(report, {
         maximumImageBytes: 1_000_000,
-        minimumVisibleTextPixels: 12
+        minimumVisibleTextPixels: 14
       })
     ).toContain(
       "discovered maximumImageBytes must be applied to config/device-limits.json"

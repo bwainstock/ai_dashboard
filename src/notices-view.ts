@@ -93,12 +93,12 @@ export function noticesViewHtml(model: NoticesViewModel): string {
     .rail .day-number { font-size: 70px; line-height: .8; }
     .rail .date { margin-top: 9px; font-size: 18px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
     .rail svg { width: 60px; height: 60px; margin-top: 28px; }
-    .rail .count { margin-top: 12px; font-size: 12px; font-weight: 900; line-height: 1.3; text-transform: uppercase; }
-    .rail .updated { margin-top: auto; font-size: 12px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
+    .rail .count { margin-top: 12px; font-size: 14px; font-weight: 900; line-height: 1.25; text-transform: uppercase; }
+    .rail .updated { margin-top: auto; font-size: 14px; font-weight: 900; letter-spacing: .04em; line-height: 1.25; text-transform: uppercase; }
     .content { min-width: 0; padding: 15px 18px 12px; }
     header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 9px; border-bottom: 4px solid var(--ink); }
     h1 { margin: 0; font-size: 35px; line-height: 1; }
-    header span { font-size: 12px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    header span { font-size: 14px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
     main { height: 352px; padding-top: 11px; }
     ul { height: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; gap: 8px 12px; list-style: none; margin: 0; padding: 0; overflow: hidden; }
     ul.odd li:last-child { grid-column: 1 / 3; }
@@ -107,11 +107,11 @@ export function noticesViewHtml(model: NoticesViewModel): string {
     li svg { width: 40px; height: 40px; flex: none; }
     li div { min-width: 0; max-height: 100%; overflow: hidden; }
     li strong { display: -webkit-box; font-family: Georgia, "Times New Roman", serif; font-size: 17px; font-style: italic; line-height: 1.03; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    li span { display: -webkit-box; margin-top: 4px; font-size: 12px; font-weight: 700; line-height: 1.05; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    li span { display: -webkit-box; margin-top: 4px; font-size: 14px; font-weight: 700; line-height: 1.05; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .private { border-width: 3px; }
     .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; border: 3px solid var(--ink); border-radius: 15px; font-family: Georgia, "Times New Roman", serif; font-size: 28px; font-style: italic; font-weight: 700; }
     .empty svg { width: 64px; height: 64px; }
-    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 14px; font-weight: 900; text-transform: uppercase; }
   </style>
 </head>
 <body>

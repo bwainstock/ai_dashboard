@@ -118,12 +118,12 @@ For each slot:
 
 1. Refresh due sources in parallel.
 2. Preserve the newest valid normalized snapshot for any failed source.
-3. Render all active views using a self-contained HTML document at 2x device
-   scale, downsample once with high-quality filtering, and apply restrained
-   4x4 ordered dithering to an exact 1-bit black-and-white palette. This keeps
-   typography and line art crisp while representing any remaining edge
-   antialiasing with stable e-paper-safe patterns; photo-oriented error
-   diffusion is not used for these UI-heavy views.
+3. Render all active views using a self-contained HTML document at the native
+   800x480 device scale and apply one fixed luminance threshold to an exact
+   1-bit black-and-white palette. Native-scale rasterization preserves browser
+   font hinting; supersampling and downsampling make small glyphs visibly
+   irregular after 1-bit conversion. A spatially varying dither threshold is
+   also avoided because it makes antialiased text edges visibly speckled.
 4. Validate each screenshot as an 800x480 1-bit-palette PNG within the device
    model's tested size limit.
 5. Write immutable R2 objects.
