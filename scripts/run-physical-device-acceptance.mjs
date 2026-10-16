@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { relative } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { clearTimeout, setTimeout } from "node:timers";
+import { stdin, stdout } from "node:process";
 import {
   createPendingReport,
   runProductionAcceptance,
@@ -14,6 +16,13 @@ import {
   runPhysicalAcceptanceSetup,
   writePrivateJsonReport
 } from "./physical-device-setup-lib.mjs";
+import {
+  acceptanceEvidencePath,
+  assertSanitizedReport,
+  physicalAcceptanceStatus,
+  postSuccessfulIssueSummary,
+  runGuidedObservations
+} from "./physical-device-scenarios-lib.mjs";
 
 const [baseUrl, reportPath] = process.argv.slice(2);
 const {
@@ -72,68 +81,125 @@ function runCommand(command, args, { stopWhen, timeoutMs = 60_000 } = {}) {
   });
 }
 
+const origin = new URL(baseUrl).origin;
+const output = acceptanceEvidencePath(reportPath);
 const limits = JSON.parse(
   await readFile(new URL("../config/device-limits.json", import.meta.url), "utf8")
 );
-const origin = new URL(baseUrl).origin;
 const installedFirmwareIdentity = (
   process.env.INSTALLED_FIRMWARE_IDENTITY ?? ""
 ).replace(/^sha256:/, "");
-const operations = createPhysicalSetupOperations({
-  firmwarePath: COMPILED_OTA_FIRMWARE_URL,
-  otaTarget,
-  serialDevice,
-  readFile,
-  runCommand
-});
-
-console.log("Compiling pinned ESPHome firmware and preparing device evidence...");
-const setup = await runPhysicalAcceptanceSetup({
-  installedFirmwareIdentity,
-  ...operations,
-  sensitiveValues: [deviceId, accessToken, otaTarget, serialDevice]
-});
-const protocol = await runProductionAcceptance({
-  baseUrl: origin,
-  deviceId,
-  accessToken,
-  maximumImageBytes: limits.maximumImageBytes,
-  imageWidth: limits.imageWidth,
-  imageHeight: limits.imageHeight
-});
-const automated = createPhysicalAcceptanceResult({ protocol, setup });
-const report = createPendingReport({
-  runId: new Date().toISOString().replaceAll(/[:.]/g, "-"),
-  baseUrl: origin,
-  firmwareVersion: setup.firmwareIdentity ?? null,
-  panelModel: limits.panelModel,
-  automated
-});
-const errors = validateReport(report, limits);
-if (errors.length > 0) {
-  console.error("Acceptance report construction failed validation");
-  process.exit(1);
-}
-
-const output = resolve(reportPath);
-await writePrivateJsonReport(output, report, {
+const sensitiveValues = [deviceId, accessToken, otaTarget, serialDevice].filter(
+  Boolean
+);
+const fileOperations = {
   mkdir,
   writeFile,
   chmod
-});
+};
+let report;
+try {
+  await access(output);
+  report = JSON.parse(await readFile(output, "utf8"));
+  if (report.target.baseUrl !== origin) {
+    throw new Error("Existing report target does not match the requested origin");
+  }
+  console.log(`Resuming pending observations in ${relative(process.cwd(), output)}`);
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+  const operations = createPhysicalSetupOperations({
+    firmwarePath: COMPILED_OTA_FIRMWARE_URL,
+    otaTarget,
+    serialDevice,
+    readFile,
+    runCommand
+  });
+  console.log("Compiling pinned ESPHome firmware and preparing device evidence...");
+  const setup = await runPhysicalAcceptanceSetup({
+    installedFirmwareIdentity,
+    ...operations,
+    sensitiveValues
+  });
+  const protocol = await runProductionAcceptance({
+    baseUrl: origin,
+    deviceId,
+    accessToken,
+    maximumImageBytes: limits.maximumImageBytes,
+    imageWidth: limits.imageWidth,
+    imageHeight: limits.imageHeight
+  });
+  const automated = createPhysicalAcceptanceResult({ protocol, setup });
+  report = createPendingReport({
+    runId: new Date().toISOString().replaceAll(/[:.]/g, "-"),
+    baseUrl: origin,
+    firmwareVersion: setup.firmwareIdentity ?? null,
+    panelModel: limits.panelModel,
+    automated
+  });
+  assertSanitizedReport(report, { sensitiveValues });
+  await writePrivateJsonReport(output, report, fileOperations);
+}
+
+const initialErrors = validateReport(report, limits);
+if (initialErrors.length > 0) {
+  console.error(`Acceptance report validation failed: ${initialErrors.join("; ")}`);
+  process.exit(1);
+}
+
+if (report.automated.status === "pass") {
+  const readline = createInterface({ input: stdin, output: stdout });
+  try {
+    await runGuidedObservations(report, {
+      isHumanInteractive: Boolean(stdin.isTTY && stdout.isTTY),
+      sensitiveValues,
+      ask: (prompt) => readline.question(prompt),
+      onTransition: async () => {
+        assertSanitizedReport(report, { sensitiveValues });
+        await writePrivateJsonReport(output, report, fileOperations);
+      }
+    });
+  } finally {
+    readline.close();
+  }
+}
+
+assertSanitizedReport(report, { sensitiveValues });
+const errors = validateReport(report, limits);
+if (errors.length > 0) {
+  console.error(`Acceptance report validation failed: ${errors.join("; ")}`);
+  process.exit(1);
+}
+await writePrivateJsonReport(output, report, fileOperations);
+const physicalStatus = physicalAcceptanceStatus(report);
+if (physicalStatus === "pass" && report.issueSummary.status !== "posted") {
+  const postedAt = new Date().toISOString();
+  await postSuccessfulIssueSummary(
+    {
+      runId: report.runId,
+      reportPath: relative(process.cwd(), output),
+      completedAt: postedAt,
+      firmwareIdentity: report.automated.physicalSetup.firmwareIdentity,
+      generation: report.automated.generation
+    },
+    {
+      runCommand: (command, ...args) => runCommand(command, args)
+    }
+  );
+  report.issueSummary = { issue: 38, status: "posted", postedAt };
+  await writePrivateJsonReport(output, report, fileOperations);
+}
 console.log(
   JSON.stringify(
     {
       report: output,
-      automated: automated.status,
-      delivery: setup.delivery ?? null,
-      firmwareIdentity: setup.firmwareIdentity ?? null,
-      activatedGeneration: setup.activatedGeneration ?? null,
-      psramHeadroomBytes: setup.psramHeadroomBytes ?? null,
-      humanObservations: "pending"
+      automated: report.automated.status,
+      physical: physicalStatus,
+      issueSummary: report.issueSummary.status
     },
     null,
     2
   )
 );
-if (automated.status === "fail") process.exitCode = 1;
+if (report.automated.status === "fail" || physicalStatus === "fail") {
+  process.exitCode = 1;
+}

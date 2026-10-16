@@ -325,10 +325,32 @@ describe("persistent acceptance report", () => {
       panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
       automated: AUTOMATED_PASS
     });
-    report.hardware.observations.orientation.status = "fail";
+    report.hardware.observations.mechanicalSoundness.status = "fail";
 
     expect(validateReport(report)).toContain(
-      "hardware orientation failure requires notes"
+      "hardware mechanicalSoundness failure requires notes"
+    );
+  });
+
+  test("a physical result requires a human timestamp and non-sensitive note", () => {
+    const report = createPendingReport({
+      runId: "human-evidence",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: "1.2.3",
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.hardware.observations.offlineOnePressNavigation = {
+      status: "pass",
+      observedAt: "not-a-timestamp",
+      notes: ""
+    };
+
+    expect(validateReport(report)).toEqual(
+      expect.arrayContaining([
+        "hardware offlineOnePressNavigation result requires a valid observedAt",
+        "hardware offlineOnePressNavigation result requires notes"
+      ])
     );
   });
 

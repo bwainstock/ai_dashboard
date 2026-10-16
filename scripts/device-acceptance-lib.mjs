@@ -1,16 +1,11 @@
 import { PNG } from "pngjs";
+import {
+  HUMAN_OBSERVATIONS,
+  assertSanitizedReport
+} from "./physical-device-scenarios-lib.mjs";
 
 export const HARDWARE_OBSERVATIONS = [
-  "orientation",
-  "readability",
-  "icons",
-  "pngDecoding",
-  "namedImageCaching",
-  "buttonCycle",
-  "timerReset",
-  "wifiReconnection",
-  "scheduledWakes",
-  "authenticatedPrivacy"
+  ...HUMAN_OBSERVATIONS.map(({ name }) => name)
 ];
 
 function generationFrom(filename, prefix) {
@@ -314,6 +309,11 @@ export function createPendingReport({
         ])
       )
     },
+    issueSummary: {
+      issue: 38,
+      status: "pending",
+      postedAt: null
+    },
     battery: {
       status: "pending",
       startedAt: null,
@@ -340,6 +340,11 @@ function nonEmpty(value) {
 
 export function validateReport(report, configuredLimits) {
   const errors = [];
+  try {
+    assertSanitizedReport(report);
+  } catch {
+    errors.push("report contains sensitive device or household evidence");
+  }
   if (report?.schemaVersion !== 1) errors.push("schemaVersion must be 1");
   if (!nonEmpty(report?.runId)) errors.push("runId is required");
   if (!["pass", "fail"].includes(report?.automated?.status)) {
@@ -414,15 +419,38 @@ export function validateReport(report, configuredLimits) {
     if (!["pending", "pass", "fail"].includes(observation?.status)) {
       errors.push(`hardware ${name} status is invalid`);
     }
-    if (observation?.status === "fail" && !nonEmpty(observation.notes)) {
-      errors.push(`hardware ${name} failure requires notes`);
+    if (observation?.status !== "pending") {
+      if (!Number.isFinite(Date.parse(observation?.observedAt))) {
+        errors.push(`hardware ${name} result requires a valid observedAt`);
+      }
+      if (!nonEmpty(observation?.notes)) {
+        errors.push(
+          observation?.status === "fail"
+            ? `hardware ${name} failure requires notes`
+            : `hardware ${name} result requires notes`
+        );
+      }
+    } else if (observation?.observedAt !== null || observation?.notes !== "") {
+      errors.push(`hardware ${name} pending result cannot contain evidence`);
     }
-    if (
-      observation?.status !== "pending" &&
-      !nonEmpty(observation.observedAt)
-    ) {
-      errors.push(`hardware ${name} result requires observedAt`);
-    }
+  }
+  const issueSummary = report?.issueSummary;
+  if (issueSummary?.issue !== 38) {
+    errors.push("physical acceptance summary issue must be 38");
+  }
+  if (!["pending", "posted"].includes(issueSummary?.status)) {
+    errors.push("physical acceptance summary status is invalid");
+  }
+  if (
+    issueSummary?.status === "posted" &&
+    !Number.isFinite(Date.parse(issueSummary?.postedAt))
+  ) {
+    errors.push("posted physical acceptance summary requires postedAt");
+  } else if (
+    issueSummary?.status === "pending" &&
+    issueSummary?.postedAt !== null
+  ) {
+    errors.push("pending physical acceptance summary cannot have postedAt");
   }
   const battery = report?.battery;
   if (!["pending", "pass", "fail"].includes(battery?.status)) {
