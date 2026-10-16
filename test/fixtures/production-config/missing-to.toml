@@ -1,0 +1,6 @@
+[[send_email]]
+name = "INCIDENT_EMAIL"
+destination_address = "operator@household.dev"
+
+[vars]
+OPERATIONAL_EMAIL_FROM = "dashboard@household.dev"

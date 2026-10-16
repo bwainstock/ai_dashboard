@@ -21,20 +21,20 @@ bucket_name = "family-dashboard-private-images"
 
 [[send_email]]
 name = "INCIDENT_EMAIL"
-destination_address = "operator@example.com"
+destination_address = "barrywainstock@gmail.com"
 
 [vars]
 ADMIN_ORIGIN = "https://dashboard-admin.example.com"
-OPERATIONAL_EMAIL_FROM = "dashboard@example.com"
-OPERATIONAL_EMAIL_TO = "operator@example.com"
+OPERATIONAL_EMAIL_FROM = "dashboard@tigren.com"
+OPERATIONAL_EMAIL_TO = "barrywainstock@gmail.com"
 MAX_IMAGE_BYTES = "1000000"
 GENERATION_RETRY_MINUTES = "15"
 NOTICE_GRACE_DAYS = "3"
 
 # Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and CALENDAR_TOKEN_ENCRYPTION_KEY
 # with `wrangler secret put`; never place OAuth credentials in this file.
-# Replace the operational email placeholders with Email Routing-verified
-# addresses before deployment.
+# Keep the operational email values aligned with Email Routing-verified
+# addresses for the production account.
 # Route ADMIN_ORIGIN through a Cloudflare Access application. Route the device
 # hostname separately without an interactive Access policy.
 
