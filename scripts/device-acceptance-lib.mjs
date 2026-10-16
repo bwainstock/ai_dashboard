@@ -1,8 +1,11 @@
-import { PNG } from "pngjs";
 import {
   HUMAN_OBSERVATIONS,
   assertSanitizedReport
 } from "./physical-device-scenarios-lib.mjs";
+import {
+  PngValidationError,
+  validateOpaqueBinaryPng
+} from "./png-validation.mjs";
 
 export const HARDWARE_OBSERVATIONS = [
   ...HUMAN_OBSERVATIONS.map(({ name }) => name)
@@ -28,40 +31,35 @@ export function validatePngArtifact(
     );
   }
   generationFrom(filename, expectedPrefix);
-  let png;
+  let validation;
   try {
-    png = PNG.sync.read(bytes);
+    validation = validateOpaqueBinaryPng(bytes, {
+      width: expectedWidth,
+      height: expectedHeight,
+      requireBothTones: true
+    });
   } catch (error) {
-    throw new Error(
-      `${filename} is not a decodable PNG: ${
-        error instanceof Error ? error.message : "decode failed"
-      }`
-    );
-  }
-  if (png.width !== expectedWidth || png.height !== expectedHeight) {
-    throw new Error(
-      `${filename} is ${png.width}x${png.height}; expected ${expectedWidth}x${expectedHeight}`
-    );
-  }
-  const tones = new Set();
-  for (let offset = 0; offset < png.data.length; offset += 4) {
-    const red = png.data[offset];
-    const green = png.data[offset + 1];
-    const blue = png.data[offset + 2];
-    const alpha = png.data[offset + 3];
-    if (red !== green || green !== blue || alpha !== 255) {
+    if (!(error instanceof PngValidationError)) throw error;
+    if (error.code === "decode") {
+      throw new Error(`${filename} is not a decodable PNG: ${error.message}`);
+    }
+    if (error.code === "dimensions") {
+      throw new Error(
+        `${filename} is ${error.details.width}x${error.details.height}; expected ${expectedWidth}x${expectedHeight}`
+      );
+    }
+    if (error.code === "opaque") {
       throw new Error(`${filename} contains color or transparency`);
     }
-    if (red !== 0 && red !== 255) {
+    if (error.code === "palette") {
       throw new Error(`${filename} contains pixels outside the 1-bit palette`);
     }
-    tones.add(red);
+    throw new Error(`${filename} is blank`);
   }
-  if (tones.size < 2) throw new Error(`${filename} is blank`);
   return {
     filename,
     byteSize: bytes.byteLength,
-    dimensions: `${png.width}x${png.height}`,
+    dimensions: `${validation.width}x${validation.height}`,
     monochrome: true,
     nonBlank: true
   };

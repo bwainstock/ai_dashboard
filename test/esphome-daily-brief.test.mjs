@@ -27,9 +27,35 @@ test("ESPHome stages an authenticated Daily Brief and Calendar View pair", async
   assert.match(config, /ID:\s*!secret device_id/);
   assert.match(config, /Access-Token:\s*!secret device_token/);
   assert.match(config, /follow_redirects:\s*false/);
-  assert.match(config, /url:\s*"\$\{device_origin\}\/api\/image"/);
-  assert.match(config, /X-Dashboard-View:\s*daily_brief/);
-  assert.match(config, /X-Dashboard-View:\s*calendar/);
+  assert.match(
+    config,
+    /method:\s*HEAD[\s\S]*url:\s*"\$\{device_origin\}\/api\/image\?view=daily_brief"/,
+  );
+  assert.match(
+    config,
+    /method:\s*HEAD[\s\S]*url:\s*"\$\{device_origin\}\/api\/image\?view=calendar"/,
+  );
+  assert.match(
+    config,
+    /url:\s*!lambda[\s\S]*\/api\/image\?view=daily_brief&generation=/,
+  );
+  assert.match(
+    config,
+    /url:\s*!lambda[\s\S]*\/api\/image\?view=calendar&generation=/,
+  );
+  assert.equal(
+    config.match(
+      /return std::string\("\$\{device_origin\}\/api\/image\?view=daily_brief&generation="\)/g,
+    )?.length,
+    2,
+  );
+  assert.equal(
+    config.match(
+      /return std::string\("\$\{device_origin\}\/api\/image\?view=calendar&generation="\)/g,
+    )?.length,
+    2,
+  );
+  assert.doesNotMatch(config, /X-Dashboard-(?:View|Generation|Metadata):/);
   assert.match(config, /id:\s*slot_a_daily_brief/);
   assert.match(config, /id:\s*slot_a_calendar/);
   assert.match(config, /id:\s*slot_b_daily_brief/);
@@ -97,19 +123,28 @@ test("obsolete double-click navigation state cannot return", async () => {
   );
 });
 
-test("scheduled refresh resets to Daily Brief and revalidates both views", async () => {
+test("successful scheduled refresh resets to Daily Brief and revalidates both views", async () => {
   const config = await readFile(configUrl, "utf8");
+  const scheduledRefresh = config.slice(
+    config.indexOf("id: scheduled_image_refresh"),
+    config.indexOf("id: handle_update_failure"),
+  );
+  const activation = config.slice(
+    config.indexOf("id: activate_staged_view_set"),
+    config.indexOf("id: scheduled_image_refresh"),
+  );
 
   assert.match(
-    config,
-    /id:\s*scheduled_image_refresh[\s\S]*id\(selected_view\)\s*=\s*0[\s\S]*script\.execute:\s*request_view_set_if_ready/,
+    scheduledRefresh,
+    /script\.execute:\s*request_view_set_if_ready/,
   );
-  assert.match(config, /X-Dashboard-Metadata:\s*"true"/);
+  assert.doesNotMatch(scheduledRefresh, /id\(selected_view\)\s*=/);
+  assert.match(activation, /id\(selected_view\)\s*=\s*0/);
   assert.match(config, /If-None-Match:\s*!lambda/);
   assert.match(config, /response->status_code\s*==\s*304/);
 });
 
-test("partial staging failure preserves the active cached pair", async () => {
+test("failed refresh preserves the active cached pair and current selection", async () => {
   const config = await readFile(configUrl, "utf8");
   const failureScript = config.slice(
     config.indexOf("id: handle_update_failure"),
@@ -120,8 +155,27 @@ test("partial staging failure preserves the active cached pair", async () => {
   assert.match(config, /View-set metadata is incomplete or mixed-generation/);
   assert.doesNotMatch(
     failureScript,
-    /id\(active_slot\)\s*=|id\(active_daily_etag\)\s*=|id\(active_calendar_etag\)\s*=/,
+    /id\(active_slot\)\s*=|id\(active_daily_etag\)\s*=|id\(active_calendar_etag\)\s*=|id\(selected_view\)\s*=|component\.update:\s*main_display/,
   );
+});
+
+test("unchanged scheduled checks avoid image downloads and panel refresh", async () => {
+  const config = await readFile(configUrl, "utf8");
+  const metadata = config.slice(
+    config.indexOf("id: request_view_set_if_ready"),
+    config.indexOf("id: finish_unchanged_view_set"),
+  );
+  const unchanged = config.slice(
+    config.indexOf("id: finish_unchanged_view_set"),
+    config.indexOf("id: activate_staged_view_set"),
+  );
+
+  assert.match(metadata, /method:\s*HEAD/g);
+  assert.match(
+    metadata,
+    /id\(daily_metadata_status\)\s*==\s*304[\s\S]*response->status_code\s*==\s*304[\s\S]*script\.execute:\s*finish_unchanged_view_set/,
+  );
+  assert.doesNotMatch(unchanged, /component\.update:\s*(?:slot_|main_display)/);
 });
 
 test("local scheduling refreshes after each server generation", async () => {

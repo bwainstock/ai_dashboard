@@ -349,13 +349,13 @@ async function directImage(request: Request, env: Env): Promise<Response> {
   }
 
   const headers = generationImageHeaders(generation, object);
-  if (request.method === "HEAD") {
-    return new Response(null, { headers });
-  }
   if (request.headers.get("If-None-Match") === object.httpEtag) {
     headers.delete("content-length");
     headers.delete("content-type");
     return new Response(null, { status: 304, headers });
+  }
+  if (request.method === "HEAD") {
+    return new Response(null, { headers });
   }
   return new Response(object.body, { headers });
 }

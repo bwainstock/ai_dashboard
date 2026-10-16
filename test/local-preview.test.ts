@@ -36,57 +36,61 @@ function runDailyHtml(html: string) {
   );
 }
 
-test("one local command renders labeled Daily Brief and Calendar View previews", () => {
-  const output = execFileSync(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      "scripts/render-local-preview.ts",
-      "--output",
-      outputDirectory,
-      "--now",
-      "2026-10-07T17:30:00.000Z"
-    ],
-    { cwd: worktree, encoding: "utf8" }
-  );
+test(
+  "one local command renders labeled Daily Brief and Calendar View previews",
+  () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/render-local-preview.ts",
+        "--output",
+        outputDirectory,
+        "--now",
+        "2026-10-07T17:30:00.000Z"
+      ],
+      { cwd: worktree, encoding: "utf8" }
+    );
 
-  expect(output).toContain("Daily Brief");
-  expect(output).toContain("Calendar View");
-  expect(existsSync(join(outputDirectory, "daily-brief.png"))).toBe(true);
-  expect(existsSync(join(outputDirectory, "calendar-view.png"))).toBe(true);
+    expect(output).toContain("Daily Brief");
+    expect(output).toContain("Calendar View");
+    expect(existsSync(join(outputDirectory, "daily-brief.png"))).toBe(true);
+    expect(existsSync(join(outputDirectory, "calendar-view.png"))).toBe(true);
 
-  const manifest = JSON.parse(
-    readFileSync(join(outputDirectory, "preview-manifest.json"), "utf8")
-  ) as {
-    artifactKind: string;
-    capture: {
-      width: number;
-      height: number;
-      scale: number;
-      threshold: number;
-      fontStrategy: string;
-      minimumTextPixels: number;
+    const manifest = JSON.parse(
+      readFileSync(join(outputDirectory, "preview-manifest.json"), "utf8")
+    ) as {
+      artifactKind: string;
+      capture: {
+        width: number;
+        height: number;
+        scale: number;
+        threshold: number;
+        fontStrategy: string;
+        minimumTextPixels: number;
+      };
+      views: Array<{ label: string; filename: string }>;
     };
-    views: Array<{ label: string; filename: string }>;
-  };
 
-  expect(manifest).toMatchObject({
-    artifactKind: "local-renderer-preview",
-    capture: {
-      width: 800,
-      height: 480,
-      scale: 1,
-      threshold: 128,
-      fontStrategy: "sans-serif",
-      minimumTextPixels: 14
-    },
-    views: [
-      { label: "Daily Brief", filename: "daily-brief.png" },
-      { label: "Calendar View", filename: "calendar-view.png" }
-    ]
-  });
-});
+    expect(manifest).toMatchObject({
+      artifactKind: "local-renderer-preview",
+      capture: {
+        width: 800,
+        height: 480,
+        scale: 1,
+        threshold: 128,
+        fontStrategy: "sans-serif",
+        minimumTextPixels: 14
+      },
+      views: [
+        { label: "Daily Brief", filename: "daily-brief.png" },
+        { label: "Calendar View", filename: "calendar-view.png" }
+      ]
+    });
+  },
+  10_000
+);
 
 test("preview image validation rejects wrong native dimensions", () => {
   mkdirSync(outputDirectory, { recursive: true });

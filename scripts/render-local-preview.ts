@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import process from "node:process";
 import puppeteer, { type Browser } from "puppeteer-core";
-import { PNG } from "pngjs";
 import { calendarViewHtml, type CalendarViewModel } from "../src/calendar-view";
 import { dailyBriefHtml } from "../src/daily-brief";
 import { DEVICE_LIMITS } from "../src/device-limits";
@@ -16,6 +15,10 @@ import {
   type DashboardViewName,
   validateRenderedPage
 } from "../src/render-validation";
+import {
+  PngValidationError,
+  validateOpaqueBinaryPng
+} from "./png-validation.mjs";
 
 interface Arguments {
   output: string;
@@ -150,28 +153,22 @@ function previewModels(now: string): {
 }
 
 function assertPreviewPng(view: DashboardViewName, image: Uint8Array): void {
-  const png = PNG.sync.read(Buffer.from(image));
-  if (
-    png.width !== DEVICE_LIMITS.imageWidth ||
-    png.height !== DEVICE_LIMITS.imageHeight
-  ) {
-    throw new Error(
-      `${view} preview image must be ${DEVICE_LIMITS.imageWidth}x${DEVICE_LIMITS.imageHeight}`
-    );
-  }
-  for (let offset = 0; offset < png.data.length; offset += 4) {
-    const red = png.data[offset];
-    const green = png.data[offset + 1];
-    const blue = png.data[offset + 2];
-    const alpha = png.data[offset + 3];
-    if (
-      alpha !== 255 ||
-      red !== green ||
-      green !== blue ||
-      (red !== 0 && red !== 255)
-    ) {
+  try {
+    validateOpaqueBinaryPng(image, {
+      width: DEVICE_LIMITS.imageWidth,
+      height: DEVICE_LIMITS.imageHeight
+    });
+  } catch (error) {
+    if (!(error instanceof PngValidationError)) throw error;
+    if (error.code === "dimensions") {
+      throw new Error(
+        `${view} preview image must be ${DEVICE_LIMITS.imageWidth}x${DEVICE_LIMITS.imageHeight}`
+      );
+    }
+    if (error.code === "opaque" || error.code === "palette") {
       throw new Error(`${view} preview image must use only opaque black and white`);
     }
+    throw new Error(error.message);
   }
 }
 
