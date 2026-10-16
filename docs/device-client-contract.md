@@ -23,6 +23,12 @@ image metadata or body request:
 - keeps credentials out of URLs, filenames, logs, and reports; and
 - rejects redirects and accepts only an opaque `image/png` response.
 
+Metadata selection uses authenticated
+`HEAD /api/image?view=daily_brief|calendar`. Body retrieval uses authenticated
+`GET /api/image?view=<view>&generation=<selected-generation>`. The `view` and
+`generation` selectors are non-sensitive; device credentials remain only in
+the `ID` and `Access-Token` headers.
+
 The Worker authenticates every image boundary. A successful response identifies
 its generation and view using non-sensitive response metadata, supplies a
 private per-view `ETag`, and contains a nonblank opaque 800x480 PNG with only

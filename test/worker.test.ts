@@ -15,6 +15,15 @@ class TestDatabase {
     string,
     { tokenHash: string; friendlyId: string; viewCursor: number }
   >();
+  readonly historicalGenerations = new Map<
+    string,
+    {
+      filename: string;
+      objectKey: string;
+      byteSize: number;
+      viewType: "daily_brief" | "calendar";
+    }
+  >();
   publishedGeneration:
     | {
         filename: string;
@@ -96,9 +105,15 @@ class TestDatabase {
             : null) as T | null;
         }
         if (query.includes("render_generations")) {
+          const generationPinned = query.includes("generation_id = ?");
           const requestedView = query.includes("view_type = ?")
-            ? String(parameters()[0])
+            ? String(parameters()[generationPinned ? 1 : 0])
             : "daily_brief";
+          const historical = generationPinned
+            ? this.historicalGenerations.get(
+                `${String(parameters()[0])}:${requestedView}`
+              )
+            : undefined;
           const pointedGeneration =
             requestedView === "calendar"
               ? this.calendarGeneration
@@ -107,9 +122,10 @@ class TestDatabase {
                 : requestedView === "notices"
                   ? this.noticesGeneration
                 : this.publishedGeneration;
-          const generation =
-            requestedView === "daily_brief" &&
-            !query.includes("current_render_generation")
+          const generation = generationPinned
+            ? historical
+            : requestedView === "daily_brief" &&
+                !query.includes("current_render_generation")
               ? (this.incompleteDailyGeneration ?? pointedGeneration)
               : pointedGeneration;
           if (
@@ -741,6 +757,135 @@ describe("TRMNL BYOS device service", () => {
       new Uint8Array([137, 80, 78, 71])
     );
     expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
+
+  test("production image delivery explicitly selects Calendar View without changing the rollback cursor", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4
+    };
+    database.calendarGeneration = {
+      filename: CALENDAR_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      byteSize: 4,
+      viewType: "calendar"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image?view=calendar", {
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-dashboard-view")).toBe("calendar");
+    expect(response.headers.get("x-dashboard-filename")).toBe(CALENDAR_FILENAME);
+    expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
+
+  test("production image metadata is available without downloading the body", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: 4
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image?view=daily_brief", {
+        method: "HEAD",
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-dashboard-generation")).toBe(
+      NAVIGATION_GENERATION
+    );
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  test("a generation-pinned image remains available after the current pointer advances", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: "daily-brief-generation-b.png",
+      objectKey: "generations/generation-b/daily-brief.png",
+      byteSize: 4
+    };
+    database.historicalGenerations.set("generation-a:daily_brief", {
+      filename: "daily-brief-generation-a.png",
+      objectKey: "generations/generation-a/daily-brief.png",
+      byteSize: 4,
+      viewType: "daily_brief"
+    });
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      "generations/generation-a/daily-brief.png",
+      new Uint8Array([137, 80, 78, 71])
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request(
+        "https://device.test/api/image?view=daily_brief&generation=generation-a",
+        {
+          headers: {
+            ID: DEVICE_ID,
+            "Access-Token": token
+          }
+        }
+      ),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-dashboard-generation")).toBe("generation-a");
+    expect(response.headers.get("x-dashboard-filename")).toBe(
+      "daily-brief-generation-a.png"
+    );
   });
 
   test("direct image delivery rejects missing credentials", async () => {

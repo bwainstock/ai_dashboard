@@ -204,43 +204,82 @@ async function selectDeviceGeneration(
   )
     .bind(deviceId)
     .run();
-  const device = await env.DB.prepare(
-    "SELECT view_cursor FROM devices WHERE device_id = ?"
-  )
-    .bind(deviceId)
-    .first<{ view_cursor: number }>();
-  const updateSource = request.headers.get("Update-Source")?.toLowerCase();
-  const manualWake =
-    updateSource !== undefined &&
-    !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
-  const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
-  const viewType = ["daily_brief", "calendar"][viewCursor] as
-    | "daily_brief"
-    | "calendar";
-  await env.DB.prepare(
-    `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE device_id = ?`
-  )
-    .bind(viewCursor, deviceId)
-    .run();
+  const url = new URL(request.url);
+  const requestedView = url.searchParams.get("view");
+  if (
+    requestedView !== null &&
+    requestedView !== "daily_brief" &&
+    requestedView !== "calendar"
+  ) {
+    return json({ error: "Invalid device view" }, 400);
+  }
+  const requestedGeneration = url.searchParams.get("generation");
+  if (
+    requestedGeneration !== null &&
+    (!requestedView ||
+      requestedGeneration.length > 128 ||
+      !/^[A-Za-z0-9_-]+$/.test(requestedGeneration))
+  ) {
+    return json({ error: "Invalid device generation" }, 400);
+  }
 
-  const generation = await env.DB.prepare(
-    `SELECT generation.filename, generation.object_key, generation.byte_size,
-            generation.generation_id, generation.published_at
-     FROM current_render_generation AS current_pointer
-     JOIN render_generations AS generation
-       ON generation.generation_id = current_pointer.generation_id
-     WHERE current_pointer.id = 1 AND generation.view_type = ?
-     LIMIT 1`
-  )
-    .bind(viewType)
-     .first<{
-       filename: string;
-       object_key: string;
-       byte_size: number;
-       generation_id: string;
-       published_at: string;
-     }>();
+  let viewType: "daily_brief" | "calendar";
+  if (requestedView) {
+    viewType = requestedView;
+  } else {
+    const device = await env.DB.prepare(
+      "SELECT view_cursor FROM devices WHERE device_id = ?"
+    )
+      .bind(deviceId)
+      .first<{ view_cursor: number }>();
+    const updateSource = request.headers.get("Update-Source")?.toLowerCase();
+    const manualWake =
+      updateSource !== undefined &&
+      !["timer", "scheduled", "powercycle", "unknown"].includes(updateSource);
+    const viewCursor = manualWake ? ((device?.view_cursor ?? 0) + 1) % 2 : 0;
+    viewType = ["daily_brief", "calendar"][viewCursor] as
+      | "daily_brief"
+      | "calendar";
+    await env.DB.prepare(
+      `UPDATE devices SET view_cursor = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE device_id = ?`
+    )
+      .bind(viewCursor, deviceId)
+      .run();
+  }
+
+  const generation = requestedGeneration
+    ? await env.DB.prepare(
+        `SELECT filename, object_key, byte_size, generation_id, published_at
+         FROM render_generations
+         WHERE generation_id = ? AND view_type = ? AND published_at IS NOT NULL
+         LIMIT 1`
+      )
+        .bind(requestedGeneration, viewType)
+        .first<{
+          filename: string;
+          object_key: string;
+          byte_size: number;
+          generation_id: string;
+          published_at: string;
+        }>()
+    : await env.DB.prepare(
+        `SELECT generation.filename, generation.object_key, generation.byte_size,
+                generation.generation_id, generation.published_at
+         FROM current_render_generation AS current_pointer
+         JOIN render_generations AS generation
+           ON generation.generation_id = current_pointer.generation_id
+         WHERE current_pointer.id = 1 AND generation.view_type = ?
+         LIMIT 1`
+      )
+        .bind(viewType)
+        .first<{
+          filename: string;
+          object_key: string;
+          byte_size: number;
+          generation_id: string;
+          published_at: string;
+        }>();
   if (!generation) {
      return json({ status: 503, error: "No published generation" }, 503);
   }
@@ -310,6 +349,9 @@ async function directImage(request: Request, env: Env): Promise<Response> {
   }
 
   const headers = generationImageHeaders(generation, object);
+  if (request.method === "HEAD") {
+    return new Response(null, { headers });
+  }
   if (request.headers.get("If-None-Match") === object.httpEtag) {
     headers.delete("content-length");
     headers.delete("content-type");
@@ -1410,7 +1452,10 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/display") {
       return display(request, env);
     }
-    if (request.method === "GET" && url.pathname === "/api/image") {
+    if (
+      (request.method === "GET" || request.method === "HEAD") &&
+      url.pathname === "/api/image"
+    ) {
       return directImage(request, env);
     }
     if (request.method === "GET" && url.pathname.startsWith("/images/")) {

@@ -49,6 +49,7 @@
           }
         },
         "sequence": { "type": "object" },
+        "generation": { "type": "string", "minLength": 1 },
         "artifacts": {
           "type": "array",
           "items": { "$ref": "#/$defs/artifact" }
@@ -117,7 +118,10 @@
         "byteSize": { "type": "integer", "minimum": 1 },
         "dimensions": { "const": "800x480" },
         "monochrome": { "const": true },
-        "nonBlank": { "const": true }
+        "nonBlank": { "const": true },
+        "view": { "enum": ["daily_brief", "calendar"] },
+        "generation": { "type": "string", "minLength": 1 },
+        "etag": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },

@@ -72,6 +72,179 @@ export function validatePngArtifact(
   };
 }
 
+const PRODUCTION_VIEWS = [
+  { view: "daily_brief", filenamePrefix: "daily-brief" },
+  { view: "calendar", filenamePrefix: "calendar-view" }
+];
+
+function productionImageUrl(origin, view, generation) {
+  const url = new URL("/api/image", origin);
+  url.searchParams.set("view", view);
+  if (generation) url.searchParams.set("generation", generation);
+  return url;
+}
+
+function productionCredentials(deviceId, accessToken) {
+  return {
+    ID: deviceId,
+    "Access-Token": accessToken,
+    Accept: "image/png"
+  };
+}
+
+function responseIdentity(response, expectedView, expectedGeneration) {
+  const view = response.headers.get("x-dashboard-view");
+  const generation = response.headers.get("x-dashboard-generation");
+  const filename = response.headers.get("x-dashboard-filename");
+  const etag = response.headers.get("etag");
+  if (view !== expectedView) {
+    throw new Error(`Image response identified ${view}; expected ${expectedView}`);
+  }
+  if (!generation) throw new Error("Image response is missing its generation");
+  if (expectedGeneration && generation !== expectedGeneration) {
+    throw new Error(
+      `Image response identified generation ${generation}; expected ${expectedGeneration}`
+    );
+  }
+  if (!filename) throw new Error("Image response is missing its filename");
+  if (!etag) throw new Error("Image response is missing its ETag");
+  return { view, generation, filename, etag };
+}
+
+async function expectProductionUnauthorized({
+  url,
+  method,
+  deviceId,
+  accessToken,
+  fetchImpl
+}) {
+  for (const headers of [
+    { ID: deviceId, Accept: "image/png" },
+    productionCredentials(deviceId, `${accessToken}-invalid`)
+  ]) {
+    const response = await fetchImpl(url, {
+      method,
+      headers,
+      redirect: "manual"
+    });
+    if (response.status !== 401) {
+      throw new Error(
+        `${method} ${url.pathname} authentication check returned ${response.status}; expected 401`
+      );
+    }
+  }
+}
+
+export async function runProductionAcceptance({
+  baseUrl,
+  deviceId,
+  accessToken,
+  maximumImageBytes,
+  imageWidth,
+  imageHeight,
+  fetchImpl = fetch
+}) {
+  const checks = [];
+  const artifacts = [];
+  try {
+    const origin = new URL(baseUrl).origin;
+    const credentials = productionCredentials(deviceId, accessToken);
+    const selections = [];
+
+    for (const { view } of PRODUCTION_VIEWS) {
+      const url = productionImageUrl(origin, view);
+      await expectProductionUnauthorized({
+        url,
+        method: "HEAD",
+        deviceId,
+        accessToken,
+        fetchImpl
+      });
+      const response = await fetchImpl(url, {
+        method: "HEAD",
+        headers: credentials,
+        redirect: "manual"
+      });
+      if (!response.ok) {
+        throw new Error(`${view} metadata returned HTTP ${response.status}`);
+      }
+      selections.push(responseIdentity(response, view));
+    }
+    checks.push(
+      { name: "metadata boundaries reject invalid credentials", status: "pass" },
+      { name: "Daily Brief and Calendar View are selected explicitly", status: "pass" }
+    );
+
+    const generation = selections[0].generation;
+    if (selections.some((selection) => selection.generation !== generation)) {
+      throw new Error("Daily Brief and Calendar View metadata identify different generations");
+    }
+    checks.push({ name: "both views identify one published generation", status: "pass" });
+
+    for (const [index, { view, filenamePrefix }] of PRODUCTION_VIEWS.entries()) {
+      const selection = selections[index];
+      const url = productionImageUrl(origin, view, generation);
+      await expectProductionUnauthorized({
+        url,
+        method: "GET",
+        deviceId,
+        accessToken,
+        fetchImpl
+      });
+      const response = await fetchImpl(url, {
+        headers: credentials,
+        redirect: "manual"
+      });
+      if (!response.ok) {
+        throw new Error(`${view} image returned HTTP ${response.status}`);
+      }
+      if (response.headers.get("content-type") !== "image/png") {
+        throw new Error(`${view} image is not image/png`);
+      }
+      const identity = responseIdentity(response, view, generation);
+      if (identity.filename !== selection.filename) {
+        throw new Error(`${view} pinned image filename changed after selection`);
+      }
+      artifacts.push({
+        ...validatePngArtifact(
+          Buffer.from(await response.arrayBuffer()),
+          identity.filename,
+          filenamePrefix,
+          maximumImageBytes,
+          imageWidth,
+          imageHeight
+        ),
+        view,
+        generation,
+        etag: identity.etag
+      });
+
+      const cached = await fetchImpl(url, {
+        headers: { ...credentials, "If-None-Match": identity.etag },
+        redirect: "manual"
+      });
+      if (cached.status !== 304) {
+        throw new Error(`${view} ETag revalidation returned HTTP ${cached.status}`);
+      }
+      responseIdentity(cached, view, generation);
+    }
+    checks.push(
+      { name: "body boundaries reject invalid credentials", status: "pass" },
+      { name: "generation-pinned image downloads remain stable", status: "pass" },
+      { name: "each view independently revalidates with its ETag", status: "pass" },
+      { name: "both images satisfy configured PNG limits", status: "pass" },
+      { name: "device credentials remain in request headers", status: "pass" }
+    );
+    return { status: "pass", checks, generation, artifacts };
+  } catch (error) {
+    return {
+      status: "fail",
+      checks,
+      error: error instanceof Error ? error.message : "acceptance failed"
+    };
+  }
+}
+
 export function validateDisplaySequence(filenames) {
   if (filenames.length !== 5) {
     throw new Error("Display sequence must contain five requests");
