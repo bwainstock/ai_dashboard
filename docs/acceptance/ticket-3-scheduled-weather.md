@@ -1,5 +1,10 @@
 # Ticket 3: Scheduled weather Daily Brief
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 ## Runtime configuration
 
 Migration `0002_scheduled_weather.sql` creates the singleton

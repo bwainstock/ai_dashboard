@@ -10,6 +10,7 @@ Target hardware:
 Documentation:
 
 - [System design](docs/design.md)
+- [Production device-client contract](docs/device-client-contract.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Domain glossary](GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
@@ -17,12 +18,7 @@ Documentation:
 - [Google Calendar integration](docs/calendar-integration.md)
 - [Privacy-isolated Gmail processing](docs/gmail-integration.md)
 - [Google OAuth Production cutover](docs/google-oauth-production-cutover.md)
-- [Ticket #2 private BYOS acceptance](docs/acceptance/ticket-2-private-byos.md)
-- [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
-- [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
-- [Ticket #31 ESPHome direct-image acceptance](docs/acceptance/ticket-31-esphome-byos-manifest.md)
-- [Ticket #32 ESPHome production client acceptance](docs/acceptance/ticket-32-esphome-daily-brief.md)
-- [Ticket #33 ESPHome Key 3 navigation](docs/acceptance/ticket-33-esphome-key3-navigation.md)
+- [Historical ticket acceptance specifications](docs/acceptance/)
 
 ## Development
 
@@ -60,10 +56,11 @@ curl --fail-with-body \
 open dashboard-preview.png
 ```
 
-The preview is the current deployed Daily Brief PNG. Send
-`Update-Source: button` on subsequent `/api/image` requests to advance to
-Calendar View and then back to Daily Brief. Run the deployed image check
-with the same preview credentials:
+The preview command above exercises the legacy request shape and is retained
+for rollback diagnosis. Follow the
+[production device-client contract](docs/device-client-contract.md) for current
+explicit view selection, complete-generation caching, and local navigation.
+Run the deployed image check with the same preview credentials:
 
 ```sh
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \

@@ -1,5 +1,10 @@
 # Ticket #32: ESPHome production device client
 
+> [!NOTE]
+> Historical ticket specification. See the
+> [production device-client contract](../device-client-contract.md) for current
+> behavior.
+
 `esphome/trmnl-daily-brief.yaml` is the supported firmware for the
 Seeed/TRMNL 7.5-inch OG DIY Kit. It uses Cloudflare for private image
 generation and delivery but does not require Home Assistant.
