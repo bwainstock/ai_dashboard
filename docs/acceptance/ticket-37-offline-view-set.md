@@ -2,8 +2,9 @@
 
 Startup and each scheduled refresh validate Daily Brief and Calendar View as
 one published generation. When changed, ESPHome downloads both views into the
-inactive PSRAM slot and activates that slot only after both 800x480 binary PNGs
-decode successfully. The previous complete pair remains active on any metadata,
+inactive PSRAM slot and activates that slot only after both 800x480 grayscale PNGs
+decode successfully. The published PNGs use the exact four-gray palette
+`0`, `85`, `170`, and `255`. The previous complete pair remains active on any metadata,
 authentication, network, download, decode, or timeout failure.
 
 The Worker accepts explicit `X-Dashboard-View` selection. Metadata requests use

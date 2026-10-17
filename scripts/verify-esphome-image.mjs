@@ -3,6 +3,7 @@ import { PNG } from "pngjs";
 const [baseUrl] = process.argv.slice(2);
 const deviceId = process.env.DEVICE_ID;
 const accessToken = process.env.DEVICE_TOKEN;
+const maximumBytes = Number(process.env.MAX_IMAGE_BYTES ?? 1_000_000);
 
 if (!baseUrl || !deviceId || !accessToken) {
   console.error(
@@ -36,6 +37,11 @@ async function validateView(view) {
   }
 
   const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > maximumBytes) {
+    throw new Error(
+      `${view} image is ${bytes.byteLength} bytes; limit is ${maximumBytes}`
+    );
+  }
   const png = PNG.sync.read(bytes);
   if (png.width !== 800 || png.height !== 480) {
     throw new Error(`${view} image is ${png.width}x${png.height}; expected 800x480`);
@@ -45,16 +51,17 @@ async function validateView(view) {
     if (
       value !== png.data[offset + 1] ||
       value !== png.data[offset + 2] ||
-      (value !== 0 && value !== 255) ||
+      ![0, 85, 170, 255].includes(value) ||
       png.data[offset + 3] !== 255
     ) {
-      throw new Error(`${view} image is not an opaque 1-bit black-and-white PNG`);
+      throw new Error(`${view} image is not an opaque four-gray PNG`);
     }
   }
 
   const etag = response.headers.get("etag");
   const generation = response.headers.get("x-dashboard-generation");
-  if (!etag || !generation) {
+  const deliveredView = response.headers.get("x-dashboard-view");
+  if (!etag || !generation || deliveredView !== view) {
     throw new Error(`${view} response is missing cache or generation headers`);
   }
   const cached = await requestView(view, {
@@ -67,10 +74,10 @@ async function validateView(view) {
   return {
     filename: response.headers.get("x-dashboard-filename"),
     generation,
-    view: response.headers.get("x-dashboard-view"),
+    view: deliveredView,
     image_bytes: bytes.byteLength,
     dimensions: `${png.width}x${png.height}`,
-    palette: "1-bit",
+    palette: "four-gray",
     etag_revalidation: true
   };
 }

@@ -24,7 +24,7 @@ interface InspectablePage {
   evaluate<Result>(callback: () => Result): Promise<Result>;
 }
 
-function isBinaryMonochrome(value: string): boolean {
+function isSupportedFourGray(value: string): boolean {
   if (value === "none" || value === "transparent") return true;
   const channels = value.match(/[\d.]+/g)?.map(Number);
   if (!channels || channels.length < 3) return true;
@@ -32,7 +32,7 @@ function isBinaryMonochrome(value: string): boolean {
   return (
     channels[0] === channels[1] &&
     channels[1] === channels[2] &&
-    (channels[0] === 0 || channels[0] === 255)
+    [0, 85, 170, 255].includes(channels[0])
   );
 }
 
@@ -64,7 +64,7 @@ export function assertRenderInspection(
     );
   }
   if (inspection.nonMonochromeValues.length > 0) {
-    throw new Error(`${view} renderer must use only black and white`);
+    throw new Error(`${view} renderer must use only the four-gray palette`);
   }
   if (
     inspection.missingStates.some(
@@ -162,7 +162,7 @@ export async function validateRenderedPage(
               return (
                 channels[0] === channels[1] &&
                 channels[1] === channels[2] &&
-                (channels[0] === 0 || channels[0] === 255)
+                [0, 85, 170, 255].includes(channels[0])
               );
             })()
           )
@@ -171,7 +171,7 @@ export async function validateRenderedPage(
     };
   });
   inspection.nonMonochromeValues = inspection.nonMonochromeValues.filter(
-    (value) => !isBinaryMonochrome(value)
+    (value) => !isSupportedFourGray(value)
   );
   assertRenderInspection(view, inspection);
 }

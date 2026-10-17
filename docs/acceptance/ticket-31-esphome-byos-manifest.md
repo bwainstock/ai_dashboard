@@ -20,7 +20,8 @@ The request sends:
 The Worker authenticates before selecting a view. Explicit requests resolve
 through the atomic current-generation pointer, while pinned downloads can only
 select a named immutable published generation. The image response is the
-private 800x480 opaque 1-bit PNG itself, not a JSON manifest. It includes:
+private 800x480 opaque four-gray PNG itself, not a JSON manifest. Its only
+luminance values are `0`, `85`, `170`, and `255`. It includes:
 
 - `Content-Type: image/png`;
 - `Cache-Control: private, no-cache`;
@@ -52,8 +53,9 @@ DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
 ```
 
 The command validates both explicit views, same-generation delivery,
-dimensions, exact black-and-white palettes, generation headers, and per-view
-ETag revalidation. Its output contains no credential or household content.
+dimensions, byte limits, exact four-gray palettes, generation headers, view
+identity, and per-view ETag revalidation. Its output contains no credential or
+household content.
 
 Verify the route remains private:
 

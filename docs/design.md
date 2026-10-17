@@ -126,13 +126,13 @@ For each slot:
 1. Refresh due sources in parallel.
 2. Preserve the newest valid normalized snapshot for any failed source.
 3. Render all active views using a self-contained HTML document at the native
-   800x480 device scale and apply one fixed luminance threshold to an exact
-   1-bit black-and-white palette. Native-scale rasterization preserves browser
-   font hinting; supersampling and downsampling make small glyphs visibly
-   irregular after 1-bit conversion. A spatially varying dither threshold is
-   also avoided because it makes antialiased text edges visibly speckled.
-4. Validate each screenshot as an 800x480 1-bit-palette PNG within the device
-   model's tested size limit.
+   800x480 device scale and quantize each pixel to the nearest exact luminance
+   level in `0`, `85`, `170`, and `255`. Native-scale rasterization preserves
+   browser font hinting and antialiased text-edge coverage. Supersampling,
+   downsampling, and spatial dithering are avoided because they make small
+   glyphs irregular or speckled.
+4. Validate each screenshot as an opaque, neutral 800x480 four-gray PNG within
+   the device model's tested size limit.
 5. Write immutable R2 objects.
 6. In one D1 batch, record the complete generation set and atomically advance
    the singleton current-generation pointer only after every required image is
@@ -146,7 +146,7 @@ last-good section with its snapshot age.
 
 ## Screen design
 
-Both active views are fixed 800x480 monochrome compositions. They share condensed
+Both active views are fixed 800x480 four-gray compositions. They share condensed
 sans-serif labels and numbers, editorial serif headings, inversion, spacing,
 and rule styles. Use bundled, open-licensed SVG assets rendered inline and pair
 every icon with text; do not depend on remote assets.
@@ -192,7 +192,7 @@ Rules:
 - Show shortened location only on Calendar View.
 - Never show descriptions, attendees, conferencing links, organizer addresses, or personal email addresses.
 - Use compact 12-hour local time; all-day events precede timed events.
-- Distinguish calendar ownership with deterministic monochrome edge patterns,
+- Distinguish calendar ownership with deterministic edge patterns,
   not color alone.
 
 ### Deferred: Lunch
