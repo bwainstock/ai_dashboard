@@ -195,6 +195,50 @@ function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isIsoDateTime(value) {
+  if (typeof value !== "string") return false;
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/
+  );
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour =
+    match[7] === undefined ? undefined : Number(match[7]);
+  const offsetMinute =
+    match[8] === undefined ? undefined : Number(match[8]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31
+  ];
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth[month - 1] &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    (offsetHour === undefined ||
+      (offsetHour <= 23 && offsetMinute <= 59))
+  );
+}
+
 export function validateReport(report, configuredLimits) {
   const errors = [];
   if (report?.schemaVersion !== 1) errors.push("schemaVersion must be 1");
@@ -242,13 +286,62 @@ export function validateReport(report, configuredLimits) {
     if (!["pending", "pass", "fail"].includes(fourGray?.status)) {
       errors.push("fourGrayPrototype status is invalid");
     }
+    if (
+      fourGray?.firmwareCommit !== null &&
+      !/^[0-9a-f]{40}$/.test(fourGray?.firmwareCommit ?? "")
+    ) {
+      errors.push(
+        "fourGrayPrototype firmwareCommit must be null or a 40-character lowercase hexadecimal commit"
+      );
+    }
+    if (
+      fourGray?.panelMarking !== null &&
+      !nonEmpty(fourGray?.panelMarking)
+    ) {
+      errors.push(
+        "fourGrayPrototype panelMarking must be null or a non-empty string"
+      );
+    }
+    for (const [field, minimum] of [
+      ["refreshDurationMilliseconds", 1],
+      ["psramHeadroomBeforeBytes", 0],
+      ["psramHeadroomAfterBytes", 0]
+    ]) {
+      const value = fourGray?.[field];
+      if (
+        value !== null &&
+        (!Number.isInteger(value) || value < minimum)
+      ) {
+        errors.push(
+          `fourGrayPrototype ${field} must be null or a valid integer`
+        );
+      }
+    }
     for (const name of FOUR_GRAY_OBSERVATIONS) {
       const observation = fourGray?.observations?.[name];
       if (!["pending", "pass", "fail"].includes(observation?.status)) {
         errors.push(`fourGrayPrototype ${name} status is invalid`);
       }
+      if (
+        observation?.observedAt !== null &&
+        observation?.observedAt !== undefined &&
+        !isIsoDateTime(observation.observedAt)
+      ) {
+        errors.push(
+          `fourGrayPrototype ${name} observedAt must be null or an ISO 8601 timestamp`
+        );
+      }
       if (observation?.status === "fail" && !nonEmpty(observation.notes)) {
         errors.push(`fourGrayPrototype ${name} failure requires notes`);
+      }
+      if (
+        name === "ghosting" &&
+        observation?.status === "pass" &&
+        !nonEmpty(observation.notes)
+      ) {
+        errors.push(
+          "fourGrayPrototype ghosting pass requires notes describing visible ghosting"
+        );
       }
       if (
         observation?.status !== "pending" &&
