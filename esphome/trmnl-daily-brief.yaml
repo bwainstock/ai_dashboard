@@ -1,6 +1,14 @@
 substitutions:
   device_origin: !secret device_origin
 
+external_components:
+  - source:
+      type: git
+      url: https://github.com/parkghost/esphome-epaper
+      ref: cf145a72d835a5ef0b66576a5945bc7f16f232c0
+    components: [epaper_spi]
+    refresh: never
+
 esphome:
   name: family-dashboard
   friendly_name: Family Dashboard
@@ -396,7 +404,7 @@ image:
       X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
-    type: BINARY
+    type: GRAYSCALE
     resize: 800x480
     buffer_size: 16384
     update_interval: never
@@ -420,7 +428,7 @@ image:
       X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
-    type: BINARY
+    type: GRAYSCALE
     resize: 800x480
     buffer_size: 16384
     update_interval: never
@@ -444,7 +452,7 @@ image:
       X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
-    type: BINARY
+    type: GRAYSCALE
     resize: 800x480
     buffer_size: 16384
     update_interval: never
@@ -468,7 +476,7 @@ image:
       X-Dashboard-Generation: !lambda "return id(staging_generation).c_str();"
       Accept: image/png
     format: PNG
-    type: BINARY
+    type: GRAYSCALE
     resize: 800x480
     buffer_size: 16384
     update_interval: never
@@ -487,29 +495,27 @@ spi:
   mosi_pin: GPIO9
 
 display:
-  - platform: waveshare_epaper
+  - platform: epaper_spi
     id: main_display
-    model: 7.50inv2
+    model: gdey075t7-gray4-lut
     cs_pin: GPIO44
     dc_pin: GPIO10
     reset_pin: GPIO38
-    busy_pin:
-      number: GPIO4
-      inverted: true
-    rotation: 0°
+    busy_pin: GPIO4
+    rotation: 0
     update_interval: never
     lambda: |-
       if (!id(has_active_view_set)) {
         return;
       }
       if (id(active_slot) == 0 && id(selected_view) == 0) {
-        it.image(0, 0, id(slot_a_daily_brief), COLOR_OFF, COLOR_ON);
+        it.image(0, 0, id(slot_a_daily_brief));
       } else if (id(active_slot) == 0) {
-        it.image(0, 0, id(slot_a_calendar), COLOR_OFF, COLOR_ON);
+        it.image(0, 0, id(slot_a_calendar));
       } else if (id(selected_view) == 0) {
-        it.image(0, 0, id(slot_b_daily_brief), COLOR_OFF, COLOR_ON);
+        it.image(0, 0, id(slot_b_daily_brief));
       } else {
-        it.image(0, 0, id(slot_b_calendar), COLOR_OFF, COLOR_ON);
+        it.image(0, 0, id(slot_b_calendar));
       }
 
 binary_sensor:

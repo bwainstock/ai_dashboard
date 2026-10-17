@@ -53,16 +53,15 @@ test("four-gray diagnostic renders each supported luminance and reports headroom
   assert.match(config, /update_interval:\s*never/);
 });
 
-test("prototype leaves the production monochrome rendering contract unchanged", async () => {
+test("accepted prototype revision is promoted into production", async () => {
   const config = await readFile(productionConfigUrl, "utf8");
 
-  assert.match(config, /platform:\s*waveshare_epaper/);
-  assert.match(config, /model:\s*7\.50inv2/);
-  assert.match(config, /type:\s*BINARY/);
-  assert.doesNotMatch(config, /external_components|epaper_spi|GRAY4|GRAYSCALE/);
+  assert.match(config, /platform:\s*epaper_spi/);
+  assert.match(config, /model:\s*gdey075t7-gray4-lut/);
+  assert.equal(config.match(/type:\s*GRAYSCALE/g)?.length, 4);
 });
 
-test("repository scripts compile diagnostic and rollback with the pinned ESPHome release", async () => {
+test("repository scripts compile diagnostic, production, and rollback with the pinned ESPHome release", async () => {
   const packageJson = JSON.parse(await readFile(packageUrl, "utf8"));
 
   assert.equal(
@@ -75,7 +74,7 @@ test("repository scripts compile diagnostic and rollback with the pinned ESPHome
   );
   assert.equal(
     packageJson.scripts["esphome:compile:rollback"],
-    "npm run esphome:compile",
+    "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief-rollback.yaml",
   );
 });
 

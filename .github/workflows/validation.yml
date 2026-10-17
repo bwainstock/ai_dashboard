@@ -57,8 +57,8 @@ jobs:
       - name: Provision placeholder rollback secrets
         run: cp esphome/secrets.example.yaml esphome/secrets.yaml
 
-      - name: Compile four-gray diagnostic
-        run: npm run esphome:compile:gray4
+      - name: Compile production four-gray firmware
+        run: npm run esphome:compile
 
       - name: Compile monochrome rollback
         run: npm run esphome:compile:rollback
