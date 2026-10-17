@@ -16,6 +16,15 @@ export const HARDWARE_OBSERVATIONS = [
   "authenticatedPrivacy"
 ];
 
+export const FOUR_GRAY_OBSERVATIONS = [
+  "panelCompatibility",
+  "distinctGrayLevels",
+  "refreshCompletion",
+  "ghosting",
+  "controllerHealth",
+  "monochromeRollback"
+];
+
 function generationFrom(filename, prefix) {
   const match = filename.match(new RegExp(`^${prefix}-(.+)\\.png$`));
   if (!match) throw new Error(`${filename} is not a ${prefix} named PNG`);
@@ -164,6 +173,24 @@ export function createPendingReport({
   };
 }
 
+export function createPendingFourGrayPrototype() {
+  return {
+    status: "pending",
+    firmwareCommit: null,
+    panelMarking: null,
+    refreshDurationMilliseconds: null,
+    psramHeadroomBeforeBytes: null,
+    psramHeadroomAfterBytes: null,
+    observations: Object.fromEntries(
+      FOUR_GRAY_OBSERVATIONS.map((name) => [
+        name,
+        { status: "pending", observedAt: null, notes: "" }
+      ])
+    ),
+    notes: "Physical hardware acceptance has not yet been performed."
+  };
+}
+
 function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -208,6 +235,62 @@ export function validateReport(report, configuredLimits) {
       !nonEmpty(observation.observedAt)
     ) {
       errors.push(`hardware ${name} result requires observedAt`);
+    }
+  }
+  const fourGray = report?.fourGrayPrototype;
+  if (fourGray !== undefined) {
+    if (!["pending", "pass", "fail"].includes(fourGray?.status)) {
+      errors.push("fourGrayPrototype status is invalid");
+    }
+    for (const name of FOUR_GRAY_OBSERVATIONS) {
+      const observation = fourGray?.observations?.[name];
+      if (!["pending", "pass", "fail"].includes(observation?.status)) {
+        errors.push(`fourGrayPrototype ${name} status is invalid`);
+      }
+      if (observation?.status === "fail" && !nonEmpty(observation.notes)) {
+        errors.push(`fourGrayPrototype ${name} failure requires notes`);
+      }
+      if (
+        observation?.status !== "pending" &&
+        !nonEmpty(observation?.observedAt)
+      ) {
+        errors.push(`fourGrayPrototype ${name} result requires observedAt`);
+      }
+    }
+    if (fourGray?.status === "pass") {
+      if (!/^[0-9a-f]{40}$/.test(fourGray.firmwareCommit ?? "")) {
+        errors.push(
+          "fourGrayPrototype pass requires a 40-character firmwareCommit"
+        );
+      }
+      if (!nonEmpty(fourGray.panelMarking)) {
+        errors.push("fourGrayPrototype pass requires panelMarking");
+      }
+      if (
+        !Number.isFinite(fourGray.refreshDurationMilliseconds) ||
+        fourGray.refreshDurationMilliseconds <= 0
+      ) {
+        errors.push(
+          "fourGrayPrototype pass requires refreshDurationMilliseconds"
+        );
+      }
+      for (const field of [
+        "psramHeadroomBeforeBytes",
+        "psramHeadroomAfterBytes"
+      ]) {
+        if (!Number.isFinite(fourGray[field]) || fourGray[field] < 0) {
+          errors.push(`fourGrayPrototype pass requires ${field}`);
+        }
+      }
+      if (
+        FOUR_GRAY_OBSERVATIONS.some(
+          (name) => fourGray.observations?.[name]?.status !== "pass"
+        )
+      ) {
+        errors.push(
+          "fourGrayPrototype pass requires passing physical observations"
+        );
+      }
     }
   }
   const battery = report?.battery;

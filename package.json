@@ -14,7 +14,7 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
     "esphome:compile": "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief.yaml",
     "esphome:compile:gray4": "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-four-gray-diagnostic.yaml",
-    "esphome:compile:rollback": "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief.yaml",
+    "esphome:compile:rollback": "npm run esphome:compile",
     "gmail:model:promote": "node scripts/promote-gmail-model.mjs",
     "lint": "eslint .",
     "privacy:gmail": "vitest run test/gmail-privacy.test.ts",
