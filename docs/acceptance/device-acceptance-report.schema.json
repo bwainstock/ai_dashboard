@@ -173,7 +173,6 @@
       "required": [
         "status",
         "firmwareCommit",
-        "panelMarking",
         "refreshDurationMilliseconds",
         "psramHeadroomBeforeBytes",
         "psramHeadroomAfterBytes",
@@ -185,10 +184,6 @@
         "firmwareCommit": {
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{40}$"
-        },
-        "panelMarking": {
-          "type": ["string", "null"],
-          "pattern": "\\S"
         },
         "refreshDurationMilliseconds": {
           "type": ["integer", "null"],
@@ -205,7 +200,6 @@
         "observations": {
           "type": "object",
           "required": [
-            "panelCompatibility",
             "distinctGrayLevels",
             "refreshCompletion",
             "ghosting",
@@ -213,7 +207,6 @@
             "monochromeRollback"
           ],
           "properties": {
-            "panelCompatibility": { "$ref": "#/$defs/observation" },
             "distinctGrayLevels": { "$ref": "#/$defs/observation" },
             "refreshCompletion": { "$ref": "#/$defs/observation" },
             "ghosting": { "$ref": "#/$defs/observation" },
@@ -236,7 +229,6 @@
                 "type": "string",
                 "pattern": "^[0-9a-f]{40}$"
               },
-              "panelMarking": { "type": "string", "pattern": "\\S" },
               "refreshDurationMilliseconds": {
                 "type": "integer",
                 "minimum": 1
@@ -251,9 +243,6 @@
               },
               "observations": {
                 "properties": {
-                  "panelCompatibility": {
-                    "properties": { "status": { "const": "pass" } }
-                  },
                   "distinctGrayLevels": {
                     "properties": { "status": { "const": "pass" } }
                   },

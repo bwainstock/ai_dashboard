@@ -89,7 +89,8 @@ test("physical acceptance procedure records required observations without invent
   assert.match(acceptance, /device-acceptance-report\.schema\.json/);
   assert.match(acceptance, /"fourGrayPrototype":\s*\{/);
   assert.match(acceptance, /npm run acceptance:validate --/);
-  assert.match(acceptance, /controller or flex marking/i);
+  assert.match(acceptance, /do not open the enclosure solely/i);
+  assert.doesNotMatch(acceptance, /panelMarking/);
   assert.match(acceptance, /four visibly distinct/i);
   assert.match(acceptance, /refresh duration/i);
   assert.match(acceptance, /ghosting/i);

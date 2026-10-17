@@ -17,7 +17,6 @@ export const HARDWARE_OBSERVATIONS = [
 ];
 
 export const FOUR_GRAY_OBSERVATIONS = [
-  "panelCompatibility",
   "distinctGrayLevels",
   "refreshCompletion",
   "ghosting",
@@ -177,7 +176,6 @@ export function createPendingFourGrayPrototype() {
   return {
     status: "pending",
     firmwareCommit: null,
-    panelMarking: null,
     refreshDurationMilliseconds: null,
     psramHeadroomBeforeBytes: null,
     psramHeadroomAfterBytes: null,
@@ -294,14 +292,6 @@ export function validateReport(report, configuredLimits) {
         "fourGrayPrototype firmwareCommit must be null or a 40-character lowercase hexadecimal commit"
       );
     }
-    if (
-      fourGray?.panelMarking !== null &&
-      !nonEmpty(fourGray?.panelMarking)
-    ) {
-      errors.push(
-        "fourGrayPrototype panelMarking must be null or a non-empty string"
-      );
-    }
     for (const [field, minimum] of [
       ["refreshDurationMilliseconds", 1],
       ["psramHeadroomBeforeBytes", 0],
@@ -355,9 +345,6 @@ export function validateReport(report, configuredLimits) {
         errors.push(
           "fourGrayPrototype pass requires a 40-character firmwareCommit"
         );
-      }
-      if (!nonEmpty(fourGray.panelMarking)) {
-        errors.push("fourGrayPrototype pass requires panelMarking");
       }
       if (
         !Number.isFinite(fourGray.refreshDurationMilliseconds) ||

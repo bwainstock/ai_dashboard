@@ -41,13 +41,9 @@ The rollback command compiles the unchanged production monochrome
 Physical observations require the target Seeed/TRMNL 7.5-inch OG DIY Kit. Do
 not convert a successful compile into a physical result.
 
-1. Disconnect power before opening the enclosure.
-   Record the exact controller or flex marking visible on the installed panel.
-   Confirm it identifies a
-   UC8179/GDEY075T7-compatible panel before flashing. The pinned upstream
-   adapter was verified on `GDEY075T7 (FPC-C001 21.08.30 HB)`; an unidentified
-   or incompatible marking blocks rollout rather than selecting another model
-   silently.
+1. Do not open the enclosure solely to inspect or record the panel flex
+   marking. Compatibility is accepted through the observed diagnostic behavior
+   on the installed target hardware.
 2. Compile both commands above before connecting the device. Keep the complete
    command output as the reproducibility record, but do not retain credentials,
    household content, or raw device identifiers.
@@ -96,16 +92,10 @@ optional root property:
 "fourGrayPrototype": {
   "status": "pending",
   "firmwareCommit": null,
-  "panelMarking": null,
   "refreshDurationMilliseconds": null,
   "psramHeadroomBeforeBytes": null,
   "psramHeadroomAfterBytes": null,
   "observations": {
-    "panelCompatibility": {
-      "status": "pending",
-      "observedAt": null,
-      "notes": ""
-    },
     "distinctGrayLevels": {
       "status": "pending",
       "observedAt": null,
@@ -136,15 +126,15 @@ optional root property:
 }
 ```
 
-Any non-null commit, panel marking, refresh duration, or PSRAM value must
+Any non-null commit, refresh duration, or PSRAM value must
 already satisfy the canonical schema even while the section is `pending` or
 `fail`; do not retain malformed provisional evidence. Use ISO 8601 timestamps
 for performed observations and retain `pending` for blocked or unperformed
 observations. `ghosting` passes only when the observed ghosting or streaking is
 acceptable; its non-empty `notes` must describe what was seen.
 `controllerHealth` passes only when no controller timeout or stuck-panel
-symptom occurs. Set the section status to `pass` only after all six observations
-pass and the commit, panel marking, refresh duration, and both PSRAM values are
+symptom occurs. Set the section status to `pass` only after all five
+observations pass and the commit, refresh duration, and both PSRAM values are
 recorded.
 
 Validate the complete report before retaining or linking it:

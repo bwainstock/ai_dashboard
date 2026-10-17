@@ -49,7 +49,6 @@ function createPassingFourGrayReport() {
   Object.assign(report.fourGrayPrototype, {
     status: "pass",
     firmwareCommit: "cf145a72d835a5ef0b66576a5945bc7f16f232c0",
-    panelMarking: "GDEY075T7 (FPC-C001 21.08.30 HB)",
     refreshDurationMilliseconds: 12_345,
     psramHeadroomBeforeBytes: 1_000_000,
     psramHeadroomAfterBytes: 800_000,
@@ -144,7 +143,6 @@ describe("persistent acceptance report", () => {
     expect(report.fourGrayPrototype).toMatchObject({
       status: "pending",
       firmwareCommit: null,
-      panelMarking: null,
       refreshDurationMilliseconds: null,
       psramHeadroomBeforeBytes: null,
       psramHeadroomAfterBytes: null
@@ -169,22 +167,6 @@ describe("persistent acceptance report", () => {
 
     expect(validateReport(report)).toContain(
       "fourGrayPrototype firmwareCommit must be null or a 40-character lowercase hexadecimal commit"
-    );
-  });
-
-  test("pending four-gray evidence rejects a malformed supplied panel marking", () => {
-    const report = createPendingReport({
-      runId: "malformed-pending-panel-marking",
-      baseUrl: "https://device.example.com",
-      firmwareVersion: null,
-      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
-      automated: AUTOMATED_PASS
-    });
-    report.fourGrayPrototype = createPendingFourGrayPrototype();
-    report.fourGrayPrototype.panelMarking = 8179;
-
-    expect(validateReport(report)).toContain(
-      "fourGrayPrototype panelMarking must be null or a non-empty string"
     );
   });
 
@@ -238,7 +220,6 @@ describe("persistent acceptance report", () => {
     expect(validateReport(report)).toEqual(
       expect.arrayContaining([
         "fourGrayPrototype pass requires a 40-character firmwareCommit",
-        "fourGrayPrototype pass requires panelMarking",
         "fourGrayPrototype pass requires refreshDurationMilliseconds",
         "fourGrayPrototype pass requires psramHeadroomBeforeBytes",
         "fourGrayPrototype pass requires psramHeadroomAfterBytes",
