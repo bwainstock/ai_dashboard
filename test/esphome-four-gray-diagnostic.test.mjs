@@ -66,12 +66,16 @@ test("repository scripts compile diagnostic and rollback with the pinned ESPHome
   const packageJson = JSON.parse(await readFile(packageUrl, "utf8"));
 
   assert.equal(
+    packageJson.scripts["esphome:compile"],
+    "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief.yaml",
+  );
+  assert.equal(
     packageJson.scripts["esphome:compile:gray4"],
     "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-four-gray-diagnostic.yaml",
   );
   assert.equal(
     packageJson.scripts["esphome:compile:rollback"],
-    "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief.yaml",
+    "npm run esphome:compile",
   );
 });
 
@@ -82,12 +86,14 @@ test("physical acceptance procedure records required observations without invent
   assert.match(acceptance, /gdey075t7-gray4-lut/);
   assert.match(acceptance, /npm run esphome:compile:gray4/);
   assert.match(acceptance, /npm run esphome:compile:rollback/);
+  assert.match(acceptance, /device-acceptance-report\.schema\.json/);
+  assert.match(acceptance, /"fourGrayPrototype":\s*\{/);
+  assert.match(acceptance, /npm run acceptance:validate --/);
   assert.match(acceptance, /controller or flex marking/i);
   assert.match(acceptance, /four visibly distinct/i);
   assert.match(acceptance, /refresh duration/i);
   assert.match(acceptance, /ghosting/i);
   assert.match(acceptance, /PSRAM headroom/i);
   assert.match(acceptance, /busy polarity/i);
-  assert.match(acceptance, /Status:\s*pending/i);
-  assert.doesNotMatch(acceptance, /Status:\s*pass/i);
+  assert.doesNotMatch(acceptance, /^- Status:/m);
 });

@@ -103,6 +103,9 @@
         "notes": { "type": "string" }
       },
       "additionalProperties": false
+    },
+    "fourGrayPrototype": {
+      "$ref": "#/$defs/fourGrayPrototype"
     }
   },
   "$defs": {
@@ -132,6 +135,112 @@
         "observedAt": { "type": ["string", "null"], "format": "date-time" },
         "notes": { "type": "string" }
       },
+      "additionalProperties": false
+    },
+    "fourGrayPrototype": {
+      "type": "object",
+      "required": [
+        "status",
+        "firmwareCommit",
+        "panelMarking",
+        "refreshDurationMilliseconds",
+        "psramHeadroomBeforeBytes",
+        "psramHeadroomAfterBytes",
+        "observations",
+        "notes"
+      ],
+      "properties": {
+        "status": { "enum": ["pending", "pass", "fail"] },
+        "firmwareCommit": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "panelMarking": { "type": ["string", "null"], "minLength": 1 },
+        "refreshDurationMilliseconds": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "psramHeadroomBeforeBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "psramHeadroomAfterBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "observations": {
+          "type": "object",
+          "required": [
+            "panelCompatibility",
+            "distinctGrayLevels",
+            "refreshCompletion",
+            "ghosting",
+            "controllerHealth",
+            "monochromeRollback"
+          ],
+          "properties": {
+            "panelCompatibility": { "$ref": "#/$defs/observation" },
+            "distinctGrayLevels": { "$ref": "#/$defs/observation" },
+            "refreshCompletion": { "$ref": "#/$defs/observation" },
+            "ghosting": { "$ref": "#/$defs/observation" },
+            "controllerHealth": { "$ref": "#/$defs/observation" },
+            "monochromeRollback": { "$ref": "#/$defs/observation" }
+          },
+          "additionalProperties": false
+        },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "pass" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "firmwareCommit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "panelMarking": { "type": "string", "minLength": 1 },
+              "refreshDurationMilliseconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "psramHeadroomBeforeBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "psramHeadroomAfterBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "observations": {
+                "properties": {
+                  "panelCompatibility": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "distinctGrayLevels": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "refreshCompletion": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "ghosting": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "controllerHealth": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "monochromeRollback": {
+                    "properties": { "status": { "const": "pass" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "battery": {

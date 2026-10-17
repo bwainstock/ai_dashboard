@@ -1,11 +1,18 @@
+import { readFile } from "node:fs/promises";
 import { PNG } from "pngjs";
 import { describe, expect, test } from "vitest";
 import {
+  createPendingFourGrayPrototype,
   createPendingReport,
   validateDisplaySequence,
   validatePngArtifact,
   validateReport
 } from "../scripts/device-acceptance-lib.mjs";
+
+const ACCEPTANCE_SCHEMA_URL = new URL(
+  "../docs/acceptance/device-acceptance-report.schema.json",
+  import.meta.url
+);
 
 const AUTOMATED_PASS = {
   status: "pass",
@@ -88,6 +95,60 @@ describe("device acceptance artifacts", () => {
 });
 
 describe("persistent acceptance report", () => {
+  test("the canonical report optionally records pending four-gray prototype evidence", async () => {
+    const schema = JSON.parse(await readFile(ACCEPTANCE_SCHEMA_URL, "utf8"));
+    const report = createPendingReport({
+      runId: "four-gray-prototype",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.fourGrayPrototype = createPendingFourGrayPrototype();
+
+    expect(schema.required).not.toContain("fourGrayPrototype");
+    expect(schema.properties.fourGrayPrototype).toEqual({
+      $ref: "#/$defs/fourGrayPrototype"
+    });
+    expect(validateReport(report)).toEqual([]);
+    expect(report.fourGrayPrototype).toMatchObject({
+      status: "pending",
+      firmwareCommit: null,
+      panelMarking: null,
+      refreshDurationMilliseconds: null,
+      psramHeadroomBeforeBytes: null,
+      psramHeadroomAfterBytes: null
+    });
+    expect(
+      Object.values(report.fourGrayPrototype.observations).every(
+        (observation) => observation.status === "pending"
+      )
+    ).toBe(true);
+  });
+
+  test("a four-gray prototype pass requires complete physical evidence", () => {
+    const report = createPendingReport({
+      runId: "incomplete-four-gray-pass",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.fourGrayPrototype = createPendingFourGrayPrototype();
+    report.fourGrayPrototype.status = "pass";
+
+    expect(validateReport(report)).toEqual(
+      expect.arrayContaining([
+        "fourGrayPrototype pass requires a 40-character firmwareCommit",
+        "fourGrayPrototype pass requires panelMarking",
+        "fourGrayPrototype pass requires refreshDurationMilliseconds",
+        "fourGrayPrototype pass requires psramHeadroomBeforeBytes",
+        "fourGrayPrototype pass requires psramHeadroomAfterBytes",
+        "fourGrayPrototype pass requires passing physical observations"
+      ])
+    );
+  });
+
   test("a generated report explicitly leaves every hardware observation pending", () => {
     const report = createPendingReport({
       runId: "2026-10-07-device-1",

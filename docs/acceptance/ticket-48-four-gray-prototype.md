@@ -41,8 +41,9 @@ The rollback command compiles the unchanged production monochrome
 Physical observations require the target Seeed/TRMNL 7.5-inch OG DIY Kit. Do
 not convert a successful compile into a physical result.
 
-1. Disconnect power before opening the enclosure. Record the exact controller
-   or flex marking visible on the installed panel. Confirm it identifies a
+1. Disconnect power before opening the enclosure.
+   Record the exact controller or flex marking visible on the installed panel.
+   Confirm it identifies a
    UC8179/GDEY075T7-compatible panel before flashing. The pinned upstream
    adapter was verified on `GDEY075T7 (FPC-C001 21.08.30 HB)`; an unidentified
    or incompatible marking blocks rollout rather than selecting another model
@@ -60,8 +61,8 @@ not convert a successful compile into a physical result.
 
 4. Observe one full refresh. The screen must show four vertical bands, from
    left to right: black (`0`), dark gray (`85`), light gray (`170`), and white
-   (`255`). Record whether all four are visibly distinct under the same room
-   lighting and viewing distance used for the production display.
+   (`255`). Record whether the panel shows four visibly distinct levels under
+   the same room lighting and viewing distance used for the production display.
 5. Record the adapter's `Display update took ... ms` DEBUG log as the refresh
    duration. Record both `Four-gray diagnostic PSRAM headroom ...` lines. The
    values are non-sensitive; do not copy unrelated serial output.
@@ -83,23 +84,68 @@ not convert a successful compile into a physical result.
    view pair, and remains navigable. Do not record image contents or
    credentials.
 
-## Physical result record
+## Canonical physical result record
 
-Copy this section into the ticket's eventual acceptance record only after each
-observation is performed. Use ISO 8601 timestamps. Leave blocked or unperformed
-items pending; do not infer results.
+Record prototype results in the same report governed by
+[`device-acceptance-report.schema.json`](device-acceptance-report.schema.json);
+do not create a parallel ticket-only record. Preserve the report's existing
+automated, hardware, battery, and discovered-limits fields, then add this
+optional root property:
 
-- Status: pending
-- Recorded at: null
-- Firmware commit: null
-- Installed controller or flex marking: null
-- Marking compatible with UC8179/GDEY075T7: pending
-- Four visibly distinct levels: pending
-- Refresh duration milliseconds: null
-- Visible ghosting or streaking: pending
-- PSRAM headroom before refresh bytes: null
-- PSRAM headroom after refresh bytes: null
-- Busy polarity and refresh completion: pending
-- Controller timeouts or stuck-panel symptoms: pending
-- Monochrome rollback reflashed successfully: pending
-- Notes: Physical hardware acceptance has not yet been performed.
+```json
+"fourGrayPrototype": {
+  "status": "pending",
+  "firmwareCommit": null,
+  "panelMarking": null,
+  "refreshDurationMilliseconds": null,
+  "psramHeadroomBeforeBytes": null,
+  "psramHeadroomAfterBytes": null,
+  "observations": {
+    "panelCompatibility": {
+      "status": "pending",
+      "observedAt": null,
+      "notes": ""
+    },
+    "distinctGrayLevels": {
+      "status": "pending",
+      "observedAt": null,
+      "notes": ""
+    },
+    "refreshCompletion": {
+      "status": "pending",
+      "observedAt": null,
+      "notes": ""
+    },
+    "ghosting": {
+      "status": "pending",
+      "observedAt": null,
+      "notes": ""
+    },
+    "controllerHealth": {
+      "status": "pending",
+      "observedAt": null,
+      "notes": ""
+    },
+    "monochromeRollback": {
+      "status": "pending",
+      "observedAt": null,
+      "notes": ""
+    }
+  },
+  "notes": "Physical hardware acceptance has not yet been performed."
+}
+```
+
+Use ISO 8601 timestamps for performed observations and retain `pending` for
+blocked or unperformed observations. `ghosting` passes only when the observed
+ghosting or streaking is acceptable; describe what was seen in `notes`.
+`controllerHealth` passes only when no controller timeout or stuck-panel
+symptom occurs. Set the section status to `pass` only after all six observations
+pass and the commit, panel marking, refresh duration, and both PSRAM values are
+recorded.
+
+Validate the complete report before retaining or linking it:
+
+```sh
+npm run acceptance:validate -- evidence/device-acceptance.json
+```
