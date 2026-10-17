@@ -136,9 +136,12 @@ optional root property:
 }
 ```
 
-Use ISO 8601 timestamps for performed observations and retain `pending` for
-blocked or unperformed observations. `ghosting` passes only when the observed
-ghosting or streaking is acceptable; describe what was seen in `notes`.
+Any non-null commit, panel marking, refresh duration, or PSRAM value must
+already satisfy the canonical schema even while the section is `pending` or
+`fail`; do not retain malformed provisional evidence. Use ISO 8601 timestamps
+for performed observations and retain `pending` for blocked or unperformed
+observations. `ghosting` passes only when the observed ghosting or streaking is
+acceptable; its non-empty `notes` must describe what was seen.
 `controllerHealth` passes only when no controller timeout or stuck-panel
 symptom occurs. Set the section status to `pass` only after all six observations
 pass and the commit, panel marking, refresh duration, and both PSRAM values are

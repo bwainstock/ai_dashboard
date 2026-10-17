@@ -37,6 +37,36 @@ function png(width = 800, height = 480, color = 0) {
   return PNG.sync.write(image);
 }
 
+function createPassingFourGrayReport() {
+  const report = createPendingReport({
+    runId: "passing-four-gray",
+    baseUrl: "https://device.example.com",
+    firmwareVersion: null,
+    panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+    automated: AUTOMATED_PASS
+  });
+  report.fourGrayPrototype = createPendingFourGrayPrototype();
+  Object.assign(report.fourGrayPrototype, {
+    status: "pass",
+    firmwareCommit: "cf145a72d835a5ef0b66576a5945bc7f16f232c0",
+    panelMarking: "GDEY075T7 (FPC-C001 21.08.30 HB)",
+    refreshDurationMilliseconds: 12_345,
+    psramHeadroomBeforeBytes: 1_000_000,
+    psramHeadroomAfterBytes: 800_000,
+    notes: "Prototype acceptance completed on the target panel."
+  });
+  for (const [name, observation] of Object.entries(
+    report.fourGrayPrototype.observations
+  )) {
+    Object.assign(observation, {
+      status: "pass",
+      observedAt: "2026-10-17T08:30:00.000-07:00",
+      notes: `Observed acceptable ${name}.`
+    });
+  }
+  return report;
+}
+
 describe("device acceptance artifacts", () => {
   test("accepts a decodable monochrome 800x480 named PNG within tested limits", () => {
     expect(
@@ -126,6 +156,74 @@ describe("persistent acceptance report", () => {
     ).toBe(true);
   });
 
+  test("pending four-gray evidence rejects a malformed supplied firmware commit", () => {
+    const report = createPendingReport({
+      runId: "malformed-pending-four-gray-commit",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.fourGrayPrototype = createPendingFourGrayPrototype();
+    report.fourGrayPrototype.firmwareCommit = "not-a-commit";
+
+    expect(validateReport(report)).toContain(
+      "fourGrayPrototype firmwareCommit must be null or a 40-character lowercase hexadecimal commit"
+    );
+  });
+
+  test("pending four-gray evidence rejects a malformed supplied panel marking", () => {
+    const report = createPendingReport({
+      runId: "malformed-pending-panel-marking",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.fourGrayPrototype = createPendingFourGrayPrototype();
+    report.fourGrayPrototype.panelMarking = 8179;
+
+    expect(validateReport(report)).toContain(
+      "fourGrayPrototype panelMarking must be null or a non-empty string"
+    );
+  });
+
+  test.each([
+    ["refreshDurationMilliseconds", "1200"],
+    ["psramHeadroomBeforeBytes", "500000"],
+    ["psramHeadroomAfterBytes", "400000"]
+  ])("pending four-gray evidence rejects a string %s", (field, value) => {
+    const report = createPendingReport({
+      runId: `malformed-pending-${field}`,
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.fourGrayPrototype = createPendingFourGrayPrototype();
+    report.fourGrayPrototype[field] = value;
+
+    expect(validateReport(report)).toContain(
+      `fourGrayPrototype ${field} must be null or a valid integer`
+    );
+  });
+
+  test("pending four-gray evidence rejects a malformed supplied observation timestamp", () => {
+    const report = createPendingReport({
+      runId: "malformed-pending-observed-at",
+      baseUrl: "https://device.example.com",
+      firmwareVersion: null,
+      panelModel: "Seeed/TRMNL 7.5-inch OG DIY Kit",
+      automated: AUTOMATED_PASS
+    });
+    report.fourGrayPrototype = createPendingFourGrayPrototype();
+    report.fourGrayPrototype.observations.ghosting.observedAt = "yesterday";
+
+    expect(validateReport(report)).toContain(
+      "fourGrayPrototype ghosting observedAt must be null or an ISO 8601 timestamp"
+    );
+  });
+
   test("a four-gray prototype pass requires complete physical evidence", () => {
     const report = createPendingReport({
       runId: "incomplete-four-gray-pass",
@@ -147,6 +245,24 @@ describe("persistent acceptance report", () => {
         "fourGrayPrototype pass requires passing physical observations"
       ])
     );
+  });
+
+  test("a four-gray prototype pass rejects invalid timestamps and undocumented ghosting", () => {
+    const report = createPassingFourGrayReport();
+    report.fourGrayPrototype.observations.refreshCompletion.observedAt =
+      "October 17, 2026";
+    report.fourGrayPrototype.observations.ghosting.notes = "";
+
+    expect(validateReport(report)).toEqual(
+      expect.arrayContaining([
+        "fourGrayPrototype refreshCompletion observedAt must be null or an ISO 8601 timestamp",
+        "fourGrayPrototype ghosting pass requires notes describing visible ghosting"
+      ])
+    );
+  });
+
+  test("a four-gray prototype pass accepts complete documented physical evidence", () => {
+    expect(validateReport(createPassingFourGrayReport())).toEqual([]);
   });
 
   test("a generated report explicitly leaves every hardware observation pending", () => {

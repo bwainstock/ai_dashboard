@@ -135,6 +135,37 @@
         "observedAt": { "type": ["string", "null"], "format": "date-time" },
         "notes": { "type": "string" }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": { "enum": ["pass", "fail"] }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "const": "fail" }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "notes": { "type": "string", "pattern": "\\S" }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "fourGrayPrototype": {
@@ -155,7 +186,10 @@
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{40}$"
         },
-        "panelMarking": { "type": ["string", "null"], "minLength": 1 },
+        "panelMarking": {
+          "type": ["string", "null"],
+          "pattern": "\\S"
+        },
         "refreshDurationMilliseconds": {
           "type": ["integer", "null"],
           "minimum": 1
@@ -202,7 +236,7 @@
                 "type": "string",
                 "pattern": "^[0-9a-f]{40}$"
               },
-              "panelMarking": { "type": "string", "minLength": 1 },
+              "panelMarking": { "type": "string", "pattern": "\\S" },
               "refreshDurationMilliseconds": {
                 "type": "integer",
                 "minimum": 1
@@ -227,7 +261,10 @@
                     "properties": { "status": { "const": "pass" } }
                   },
                   "ghosting": {
-                    "properties": { "status": { "const": "pass" } }
+                    "properties": {
+                      "status": { "const": "pass" },
+                      "notes": { "type": "string", "pattern": "\\S" }
+                    }
                   },
                   "controllerHealth": {
                     "properties": { "status": { "const": "pass" } }
