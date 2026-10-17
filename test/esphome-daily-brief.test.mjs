@@ -15,17 +15,34 @@ const acceptanceUrl = new URL(
   "../docs/acceptance/ticket-50-production-four-gray-device.md",
   import.meta.url,
 );
+const adapterProvenanceUrl = new URL(
+  "../esphome/vendor/parkghost-esphome-epaper/UPSTREAM.md",
+  import.meta.url,
+);
+const adapterLicenseUrl = new URL(
+  "../esphome/vendor/parkghost-esphome-epaper/LICENSE",
+  import.meta.url,
+);
 
-test("ESPHome Daily Brief uses the accepted four-gray adapter on the production hardware", async () => {
+test("ESPHome Daily Brief uses the repository-vendored accepted four-gray adapter", async () => {
   const config = await readFile(configUrl, "utf8");
+  const provenance = await readFile(adapterProvenanceUrl, "utf8");
+  const license = await readFile(adapterLicenseUrl, "utf8");
 
-  assert.match(config, /url:\s*https:\/\/github\.com\/parkghost\/esphome-epaper/);
   assert.match(
     config,
-    /ref:\s*cf145a72d835a5ef0b66576a5945bc7f16f232c0/,
+    /source:\s*\n\s+type:\s*local\s*\n\s+path:\s*vendor\/parkghost-esphome-epaper\/components/,
   );
+  assert.doesNotMatch(config, /https:\/\/github\.com\/parkghost\/esphome-epaper/);
+  assert.doesNotMatch(config, /ref:/);
+  assert.match(
+    provenance,
+    /https:\/\/github\.com\/parkghost\/esphome-epaper/,
+  );
+  assert.match(provenance, /cf145a72d835a5ef0b66576a5945bc7f16f232c0/);
+  assert.match(provenance, /components\/epaper_spi/);
+  assert.match(license, /Apache License[\s\S]*Version 2\.0/);
   assert.match(config, /components:\s*\[epaper_spi\]/);
-  assert.match(config, /refresh:\s*never/);
   assert.match(config, /board:\s*esp32-s3-devkitc-1/);
   assert.match(config, /clk_pin:\s*GPIO7/);
   assert.match(config, /mosi_pin:\s*GPIO9/);

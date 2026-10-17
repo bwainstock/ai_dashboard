@@ -23,6 +23,45 @@ function png(
   return PNG.sync.write(image);
 }
 
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function chunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = new TextEncoder().encode(type);
+  const result = new Uint8Array(12 + data.byteLength);
+  const view = new DataView(result.buffer);
+  view.setUint32(0, data.byteLength);
+  result.set(typeBytes, 4);
+  result.set(data, 8);
+  view.setUint32(8 + data.byteLength, crc32(result.slice(4, 8 + data.byteLength)));
+  return result;
+}
+
+function transparentGrayscalePng(): Uint8Array {
+  const image = new PNG({ width: 1, height: 1 });
+  image.data.set([0, 0, 0, 255]);
+  const opaque = PNG.sync.write(image, {
+    colorType: 0,
+    inputColorType: 6,
+    bitDepth: 8
+  });
+  const headerEnd = 8 + 12 + 13;
+  const transparency = chunk("tRNS", new Uint8Array([0, 0]));
+  const result = new Uint8Array(opaque.byteLength + transparency.byteLength);
+  result.set(opaque.slice(0, headerEnd));
+  result.set(transparency, headerEnd);
+  result.set(opaque.slice(headerEnd), headerEnd + transparency.byteLength);
+  return result;
+}
+
 describe("published PNG contract", () => {
   test("accepts an opaque native-size image using the exact four-gray palette", async () => {
     await expect(assertFourGrayPng(png(), 1_000_000)).resolves.toEqual({
@@ -41,5 +80,11 @@ describe("published PNG contract", () => {
     ["oversized output", png(), 10]
   ])("rejects %s", async (_label, bytes, maximumBytes = 1_000_000) => {
     await expect(assertFourGrayPng(bytes, maximumBytes)).rejects.toThrow();
+  });
+
+  test("rejects grayscale transparency encoded with a valid tRNS chunk", async () => {
+    await expect(
+      assertFourGrayPng(transparentGrayscalePng(), 1_000_000, 1, 1)
+    ).rejects.toThrow("transparency");
   });
 });

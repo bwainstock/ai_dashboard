@@ -1,21 +1,23 @@
 import type { Page } from "@cloudflare/puppeteer";
+import {
+  FOUR_GRAY_LUMINANCE_LEVELS,
+  FOUR_GRAY_PNG_CONTRACT,
+  FOUR_GRAY_QUANTIZED_LUMINANCE,
+  quantizeFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
 
-const DISPLAY_WIDTH = 800;
-const DISPLAY_HEIGHT = 480;
 const CAPTURE_SCALE = 1;
-const LUMINANCE_STEP = 85;
 
-export const EPAPER_LUMINANCE_LEVELS = [0, 85, 170, 255] as const;
+export const EPAPER_LUMINANCE_LEVELS = FOUR_GRAY_LUMINANCE_LEVELS;
 
 export function quantizeEpaperLuminance(luminance: number): number {
-  const bounded = Math.max(0, Math.min(255, luminance));
-  return Math.min(255, Math.round(bounded / LUMINANCE_STEP) * LUMINANCE_STEP);
+  return quantizeFourGrayLuminance(luminance);
 }
 
 export async function configureEpaperViewport(page: Page): Promise<void> {
   await page.setViewport({
-    width: DISPLAY_WIDTH,
-    height: DISPLAY_HEIGHT,
+    width: FOUR_GRAY_PNG_CONTRACT.width,
+    height: FOUR_GRAY_PNG_CONTRACT.height,
     deviceScaleFactor: CAPTURE_SCALE
   });
 }
@@ -29,12 +31,12 @@ export async function captureEpaperPng(page: Page): Promise<Uint8Array> {
   });
 
   await page.setViewport({
-    width: DISPLAY_WIDTH,
-    height: DISPLAY_HEIGHT,
+    width: FOUR_GRAY_PNG_CONTRACT.width,
+    height: FOUR_GRAY_PNG_CONTRACT.height,
     deviceScaleFactor: 1
   });
   await page.evaluate(
-    async ({ sourcePng, width, height, luminanceStep }) => {
+    async ({ sourcePng, width, height, quantizedLuminance }) => {
       const image = new Image();
       image.src = `data:image/png;base64,${sourcePng}`;
       await image.decode();
@@ -66,10 +68,7 @@ export async function captureEpaperPng(page: Page): Promise<Uint8Array> {
           const luminance =
             (0.2126 * red + 0.7152 * green + 0.0722 * blue) * alpha +
             255 * (1 - alpha);
-          const output = Math.min(
-            255,
-            Math.round(luminance / luminanceStep) * luminanceStep
-          );
+          const output = quantizedLuminance[Math.round(luminance)];
 
           pixels.data[offset] = output;
           pixels.data[offset + 1] = output;
@@ -87,9 +86,9 @@ export async function captureEpaperPng(page: Page): Promise<Uint8Array> {
     },
     {
       sourcePng: source,
-      width: DISPLAY_WIDTH,
-      height: DISPLAY_HEIGHT,
-      luminanceStep: LUMINANCE_STEP
+      width: FOUR_GRAY_PNG_CONTRACT.width,
+      height: FOUR_GRAY_PNG_CONTRACT.height,
+      quantizedLuminance: FOUR_GRAY_QUANTIZED_LUMINANCE
     }
   );
 

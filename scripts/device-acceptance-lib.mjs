@@ -1,4 +1,8 @@
 import { PNG } from "pngjs";
+import {
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
 
 export const HARDWARE_OBSERVATIONS = [
   "orientation",
@@ -35,8 +39,8 @@ export function validatePngArtifact(
   filename,
   expectedPrefix,
   maximumBytes,
-  expectedWidth = 800,
-  expectedHeight = 480
+  expectedWidth = FOUR_GRAY_PNG_CONTRACT.width,
+  expectedHeight = FOUR_GRAY_PNG_CONTRACT.height
 ) {
   if (bytes.byteLength > maximumBytes) {
     throw new Error(
@@ -65,10 +69,14 @@ export function validatePngArtifact(
     const green = png.data[offset + 1];
     const blue = png.data[offset + 2];
     const alpha = png.data[offset + 3];
-    if (red !== green || green !== blue || alpha !== 255) {
+    if (
+      red !== green ||
+      green !== blue ||
+      alpha !== FOUR_GRAY_PNG_CONTRACT.opaqueAlpha
+    ) {
       throw new Error(`${filename} contains color or transparency`);
     }
-    if (![0, 85, 170, 255].includes(red)) {
+    if (!isFourGrayLuminance(red)) {
       throw new Error(
         `${filename} contains pixels outside the four-gray palette`
       );

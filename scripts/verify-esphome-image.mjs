@@ -1,4 +1,8 @@
 import { PNG } from "pngjs";
+import {
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
 
 const [baseUrl] = process.argv.slice(2);
 const deviceId = process.env.DEVICE_ID;
@@ -43,16 +47,21 @@ async function validateView(view) {
     );
   }
   const png = PNG.sync.read(bytes);
-  if (png.width !== 800 || png.height !== 480) {
-    throw new Error(`${view} image is ${png.width}x${png.height}; expected 800x480`);
+  if (
+    png.width !== FOUR_GRAY_PNG_CONTRACT.width ||
+    png.height !== FOUR_GRAY_PNG_CONTRACT.height
+  ) {
+    throw new Error(
+      `${view} image is ${png.width}x${png.height}; expected ${FOUR_GRAY_PNG_CONTRACT.width}x${FOUR_GRAY_PNG_CONTRACT.height}`
+    );
   }
   for (let offset = 0; offset < png.data.length; offset += 4) {
     const value = png.data[offset];
     if (
       value !== png.data[offset + 1] ||
       value !== png.data[offset + 2] ||
-      ![0, 85, 170, 255].includes(value) ||
-      png.data[offset + 3] !== 255
+      !isFourGrayLuminance(value) ||
+      png.data[offset + 3] !== FOUR_GRAY_PNG_CONTRACT.opaqueAlpha
     ) {
       throw new Error(`${view} image is not an opaque four-gray PNG`);
     }

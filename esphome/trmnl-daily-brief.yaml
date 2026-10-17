@@ -3,11 +3,9 @@ substitutions:
 
 external_components:
   - source:
-      type: git
-      url: https://github.com/parkghost/esphome-epaper
-      ref: cf145a72d835a5ef0b66576a5945bc7f16f232c0
+      type: local
+      path: vendor/parkghost-esphome-epaper/components
     components: [epaper_spi]
-    refresh: never
 
 esphome:
   name: family-dashboard

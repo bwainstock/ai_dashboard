@@ -3,6 +3,8 @@
 Daily Brief and Calendar View share one native-scale rendering pipeline. Browser
 screenshots are quantized without spatial dithering to exact luminance values
 `0`, `85`, `170`, and `255`.
+`shared/four-gray-contract.mjs` is the single palette, dimension, opacity, and
+quantization source used by Worker rendering and Node acceptance scripts.
 
 Automated coverage verifies:
 

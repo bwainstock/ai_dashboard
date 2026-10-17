@@ -7,8 +7,12 @@ ETag, navigation, scheduling, failure-retention, or maintenance interfaces.
 ## Accepted adapter and hardware evidence
 
 - ESPHome toolchain: `2026.9.1`.
-- External component: `parkghost/esphome-epaper` at immutable revision
+- External component: repository-vendored `parkghost/esphome-epaper`
+  `components/epaper_spi`, copied without modification from immutable revision
   `cf145a72d835a5ef0b66576a5945bc7f16f232c0`.
+- Provenance and license: the accepted source/tree identifiers and preserved
+  Apache-2.0 license are in
+  `esphome/vendor/parkghost-esphome-epaper/UPSTREAM.md` and `LICENSE`.
 - Display model: LUT-backed `gdey075t7-gray4-lut`.
 - Target: Seeed/TRMNL 7.5-inch OG DIY Kit with the production XIAO ESP32-S3
   Plus pin assignments.
@@ -57,7 +61,8 @@ npm run esphome:compile:rollback
 ```
 
 `npm run esphome:compile` builds the production
-`gdey075t7-gray4-lut` client.
+`gdey075t7-gray4-lut` client entirely from the repository-owned vendored
+adapter; it does not fetch the upstream component.
 `npm run esphome:compile:rollback` builds the frozen
 `waveshare_epaper`/`7.50inv2` client. Both commands use the repository-pinned
 ESPHome release.
