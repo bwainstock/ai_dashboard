@@ -1,5 +1,9 @@
 import { PNG } from "pngjs";
 import {
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
+import {
   requestByosManifest,
   requestPrivatePng
 } from "./byos-manifest-lib.mjs";
@@ -35,16 +39,21 @@ if (bytes.byteLength > maximumBytes) {
 }
 
 const png = PNG.sync.read(bytes);
-if (png.width !== 800 || png.height !== 480) {
-  throw new Error(`Image is ${png.width}x${png.height}; expected 800x480`);
+if (
+  png.width !== FOUR_GRAY_PNG_CONTRACT.width ||
+  png.height !== FOUR_GRAY_PNG_CONTRACT.height
+) {
+  throw new Error(
+    `Image is ${png.width}x${png.height}; expected ${FOUR_GRAY_PNG_CONTRACT.width}x${FOUR_GRAY_PNG_CONTRACT.height}`
+  );
 }
 
 for (let offset = 0; offset < png.data.length; offset += 4) {
   if (
     png.data[offset] !== png.data[offset + 1] ||
     png.data[offset + 1] !== png.data[offset + 2] ||
-    ![0, 85, 170, 255].includes(png.data[offset]) ||
-    png.data[offset + 3] !== 255
+    !isFourGrayLuminance(png.data[offset]) ||
+    png.data[offset + 3] !== FOUR_GRAY_PNG_CONTRACT.opaqueAlpha
   ) {
     throw new Error(
       "Image contains color, transparency, or pixels outside the four-gray palette"

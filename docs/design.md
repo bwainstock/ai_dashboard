@@ -85,9 +85,11 @@ revalidation for both views, then pins both image downloads with
 mixed pair.
 
 - Production firmware uses the LUT-backed `gdey075t7-gray4-lut` model from
-  the immutable `parkghost/esphome-epaper` revision accepted on the installed
-  target. The adapter owns controller commands, waveform loading, grayscale
-  packing, active-low busy handling, and refresh timing.
+  the repository-vendored `parkghost/esphome-epaper` component accepted on the
+  installed target. `esphome/vendor/parkghost-esphome-epaper/UPSTREAM.md`
+  records the immutable upstream revision and Apache-2.0 provenance. The
+  adapter owns controller commands, waveform loading, grayscale packing,
+  active-low busy handling, and refresh timing.
 - Startup and scheduled refresh stage both views in the inactive PSRAM slot.
   All four active/staging slots decode as grayscale. The slot becomes active
   only after both images decode successfully.

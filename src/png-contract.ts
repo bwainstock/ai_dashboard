@@ -1,5 +1,9 @@
+import {
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
+
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
-const FOUR_GRAY_LEVELS = new Set([0, 85, 170, 255]);
 
 export interface FourGrayPngInspection {
   width: number;
@@ -79,8 +83,8 @@ async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
 export async function assertFourGrayPng(
   bytes: Uint8Array,
   maximumBytes: number,
-  expectedWidth = 800,
-  expectedHeight = 480
+  expectedWidth: number = FOUR_GRAY_PNG_CONTRACT.width,
+  expectedHeight: number = FOUR_GRAY_PNG_CONTRACT.height
 ): Promise<FourGrayPngInspection> {
   if (bytes.byteLength > maximumBytes) {
     throw new Error(`PNG exceeds the ${maximumBytes}-byte device limit`);
@@ -124,6 +128,8 @@ export async function assertFourGrayPng(
       interlace = bytes[dataOffset + 12];
     } else if (type === "IDAT") {
       imageData.push(bytes.slice(dataOffset, dataOffset + length));
+    } else if (type === "tRNS") {
+      throw new Error("PNG contains transparency");
     } else if (type === "IEND") {
       reachedEnd = true;
       break;
@@ -181,8 +187,10 @@ export async function assertFourGrayPng(
     if (red !== green || green !== blue) {
       throw new Error("PNG contains non-neutral RGB color");
     }
-    if (alpha !== 255) throw new Error("PNG contains transparency");
-    if (!FOUR_GRAY_LEVELS.has(red)) {
+    if (alpha !== FOUR_GRAY_PNG_CONTRACT.opaqueAlpha) {
+      throw new Error("PNG contains transparency");
+    }
+    if (!isFourGrayLuminance(red)) {
       throw new Error("PNG contains pixels outside the four-gray palette");
     }
     luminanceLevels.add(red);

@@ -1,3 +1,10 @@
+import {
+  FOUR_GRAY_LUMINANCE_LEVELS,
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
+import { DEVICE_LIMITS } from "./device-limits";
+
 export type DashboardViewName =
   | "Daily Brief"
   | "Calendar View"
@@ -21,7 +28,10 @@ export interface RenderInspection {
 }
 
 interface InspectablePage {
-  evaluate<Result>(callback: () => Result): Promise<Result>;
+  evaluate<Result>(
+    callback: (luminanceLevels: readonly number[]) => Result,
+    luminanceLevels: readonly number[]
+  ): Promise<Result>;
 }
 
 function isSupportedFourGray(value: string): boolean {
@@ -32,7 +42,7 @@ function isSupportedFourGray(value: string): boolean {
   return (
     channels[0] === channels[1] &&
     channels[1] === channels[2] &&
-    [0, 85, 170, 255].includes(channels[0])
+    isFourGrayLuminance(channels[0])
   );
 }
 
@@ -41,14 +51,14 @@ export function assertRenderInspection(
   inspection: RenderInspection
 ): void {
   if (
-    inspection.viewport.width !== 800 ||
-    inspection.viewport.height !== 480
+    inspection.viewport.width !== FOUR_GRAY_PNG_CONTRACT.width ||
+    inspection.viewport.height !== FOUR_GRAY_PNG_CONTRACT.height
   ) {
     throw new Error(`${view} renderer viewport must be 800x480`);
   }
   if (
-    inspection.document.width > 800 ||
-    inspection.document.height > 480 ||
+    inspection.document.width > FOUR_GRAY_PNG_CONTRACT.width ||
+    inspection.document.height > FOUR_GRAY_PNG_CONTRACT.height ||
     inspection.overflowingElements > 0
   ) {
     throw new Error(`${view} renderer content overflows 800x480`);
@@ -80,7 +90,7 @@ export async function validateRenderedPage(
   page: InspectablePage,
   view: DashboardViewName
 ): Promise<void> {
-  const inspection = await page.evaluate<RenderInspection>(() => {
+  const inspection = await page.evaluate<RenderInspection>((luminanceLevels) => {
     const MAX_VERTICAL_SCROLL_OVERFLOW_PIXELS = 4;
     const values = new Set<string>();
     const properties = [
@@ -162,17 +172,16 @@ export async function validateRenderedPage(
               return (
                 channels[0] === channels[1] &&
                 channels[1] === channels[2] &&
-                [0, 85, 170, 255].includes(channels[0])
+                luminanceLevels.includes(channels[0])
               );
             })()
           )
       ),
       missingStates
     };
-  });
+  }, FOUR_GRAY_LUMINANCE_LEVELS);
   inspection.nonMonochromeValues = inspection.nonMonochromeValues.filter(
     (value) => !isSupportedFourGray(value)
   );
   assertRenderInspection(view, inspection);
 }
-import { DEVICE_LIMITS } from "./device-limits";

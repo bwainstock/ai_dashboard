@@ -9,7 +9,8 @@ generation and delivery but does not require Home Assistant.
 - XIAO ESP32-S3 Plus, compiled as `esp32-s3-devkitc-1` with Arduino;
 - octal PSRAM at 80 MHz;
 - SPI clock GPIO7 and MOSI GPIO9;
-- pinned `parkghost/esphome-epaper` revision
+- repository-vendored `parkghost/esphome-epaper` component with immutable
+  upstream provenance and preserved Apache-2.0 license
   `cf145a72d835a5ef0b66576a5945bc7f16f232c0` with LUT-backed
   `gdey075t7-gray4-lut`, CS GPIO44, DC GPIO10, reset GPIO38, and active-low
   busy GPIO4 handled inside the adapter;

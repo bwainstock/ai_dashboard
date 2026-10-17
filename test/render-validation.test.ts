@@ -113,7 +113,10 @@ async function validateDescendant(
 
   await validateRenderedPage(
     {
-      evaluate: async <Result>(callback: () => Result) => callback()
+      evaluate: async <Result>(
+        callback: (luminanceLevels: readonly number[]) => Result,
+        luminanceLevels: readonly number[]
+      ) => callback(luminanceLevels)
     },
     "Daily Brief"
   );
