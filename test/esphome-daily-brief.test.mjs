@@ -6,19 +6,36 @@ const configUrl = new URL(
   "../esphome/trmnl-daily-brief.yaml",
   import.meta.url,
 );
+const rollbackConfigUrl = new URL(
+  "../esphome/trmnl-daily-brief-rollback.yaml",
+  import.meta.url,
+);
+const packageUrl = new URL("../package.json", import.meta.url);
+const acceptanceUrl = new URL(
+  "../docs/acceptance/ticket-50-production-four-gray-device.md",
+  import.meta.url,
+);
 
-test("ESPHome Daily Brief targets the Seeed TRMNL OG kit", async () => {
+test("ESPHome Daily Brief uses the accepted four-gray adapter on the production hardware", async () => {
   const config = await readFile(configUrl, "utf8");
 
+  assert.match(config, /url:\s*https:\/\/github\.com\/parkghost\/esphome-epaper/);
+  assert.match(
+    config,
+    /ref:\s*cf145a72d835a5ef0b66576a5945bc7f16f232c0/,
+  );
+  assert.match(config, /components:\s*\[epaper_spi\]/);
+  assert.match(config, /refresh:\s*never/);
   assert.match(config, /board:\s*esp32-s3-devkitc-1/);
   assert.match(config, /clk_pin:\s*GPIO7/);
   assert.match(config, /mosi_pin:\s*GPIO9/);
-  assert.match(config, /model:\s*7\.50inv2/);
+  assert.match(config, /platform:\s*epaper_spi/);
+  assert.match(config, /model:\s*gdey075t7-gray4-lut/);
   assert.match(config, /cs_pin:\s*GPIO44/);
   assert.match(config, /dc_pin:\s*GPIO10/);
   assert.match(config, /reset_pin:\s*GPIO38/);
-  assert.match(config, /number:\s*GPIO4/);
-  assert.match(config, /inverted:\s*true/);
+  assert.match(config, /busy_pin:\s*GPIO4/);
+  assert.doesNotMatch(config, /busy_pin:[\s\S]{0,80}inverted:\s*true/);
 });
 
 test("ESPHome stages an authenticated Daily Brief and Calendar View pair", async () => {
@@ -34,7 +51,8 @@ test("ESPHome stages an authenticated Daily Brief and Calendar View pair", async
   assert.match(config, /id:\s*slot_a_calendar/);
   assert.match(config, /id:\s*slot_b_daily_brief/);
   assert.match(config, /id:\s*slot_b_calendar/);
-  assert.match(config, /type:\s*BINARY/);
+  assert.equal(config.match(/type:\s*GRAYSCALE/g)?.length, 4);
+  assert.doesNotMatch(config, /type:\s*BINARY/);
   assert.match(config, /resize:\s*800x480/);
   assert.match(config, /id:\s*activate_staged_view_set/);
   assert.match(config, /id\(active_slot\)\s*=\s*id\(staging_slot\)/);
@@ -44,7 +62,7 @@ test("ESPHome stages an authenticated Daily Brief and Calendar View pair", async
   assert.doesNotMatch(config, /deep_sleep:/);
 });
 
-test("ESPHome maps bright PNG pixels to white e-paper pixels", async () => {
+test("ESPHome renders each active grayscale image without binary color mapping", async () => {
   const config = await readFile(configUrl, "utf8");
 
   for (const image of [
@@ -56,10 +74,11 @@ test("ESPHome maps bright PNG pixels to white e-paper pixels", async () => {
     assert.match(
       config,
       new RegExp(
-        `it\\.image\\(0,\\s*0,\\s*id\\(${image}\\),\\s*COLOR_OFF,\\s*COLOR_ON\\)`,
+        `it\\.image\\(0,\\s*0,\\s*id\\(${image}\\)\\)`,
       ),
     );
   }
+  assert.doesNotMatch(config, /COLOR_OFF|COLOR_ON/);
 });
 
 test("XIAO user LED reports download, refresh, error, and idle states", async () => {
@@ -155,4 +174,38 @@ test("Key 1 maintenance mode keeps the device available for serial logs and OTA"
   assert.match(config, /Maintenance mode activated; reset to resume image updates/);
   assert.match(config, /platform:\s*esphome/);
   assert.match(config, /password:\s*!secret ota_password/);
+});
+
+test("repository scripts compile production grayscale and the frozen monochrome rollback", async () => {
+  const packageJson = JSON.parse(await readFile(packageUrl, "utf8"));
+  const rollback = await readFile(rollbackConfigUrl, "utf8");
+
+  assert.equal(
+    packageJson.scripts["esphome:compile"],
+    "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief.yaml",
+  );
+  assert.equal(
+    packageJson.scripts["esphome:compile:rollback"],
+    "uvx --from esphome==2026.9.1 esphome compile esphome/trmnl-daily-brief-rollback.yaml",
+  );
+  assert.match(rollback, /platform:\s*waveshare_epaper/);
+  assert.match(rollback, /model:\s*7\.50inv2/);
+  assert.match(rollback, /type:\s*BINARY/);
+  assert.doesNotMatch(
+    rollback,
+    /external_components|epaper_spi|gdey075t7-gray4-lut|type:\s*GRAYSCALE/,
+  );
+});
+
+test("production device documentation records accepted hardware evidence and rollback", async () => {
+  const acceptance = await readFile(acceptanceUrl, "utf8");
+
+  assert.match(acceptance, /cf145a72d835a5ef0b66576a5945bc7f16f232c0/);
+  assert.match(acceptance, /gdey075t7-gray4-lut/);
+  assert.match(acceptance, /3437 ms/);
+  assert.match(acceptance, /8,289,824 bytes/);
+  assert.match(acceptance, /8,087,608 bytes/);
+  assert.match(acceptance, /4a8d526c4202095fe2abaf3e5a310199e23da589/);
+  assert.match(acceptance, /npm run esphome:compile/);
+  assert.match(acceptance, /npm run esphome:compile:rollback/);
 });

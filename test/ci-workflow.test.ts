@@ -18,7 +18,7 @@ describe("pull request validation workflow", () => {
     expect(workflow).toContain("run: npm run check");
   });
 
-  test("compiles the pinned four-gray diagnostic and monochrome rollback", async () => {
+  test("compiles production four-gray firmware and monochrome rollback", async () => {
     const workflow = await readFile(WORKFLOW_PATH, "utf8");
 
     expect(workflow).toContain("name: Compile firmware");
@@ -26,7 +26,7 @@ describe("pull request validation workflow", () => {
     expect(workflow).toContain(
       "cp esphome/secrets.example.yaml esphome/secrets.yaml"
     );
-    expect(workflow).toContain("run: npm run esphome:compile:gray4");
+    expect(workflow).toMatch(/\n\s+run: npm run esphome:compile\n/);
     expect(workflow).toContain("run: npm run esphome:compile:rollback");
   });
 });

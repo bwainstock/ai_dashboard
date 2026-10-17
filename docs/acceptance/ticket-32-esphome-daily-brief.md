@@ -9,11 +9,13 @@ generation and delivery but does not require Home Assistant.
 - XIAO ESP32-S3 Plus, compiled as `esp32-s3-devkitc-1` with Arduino;
 - octal PSRAM at 80 MHz;
 - SPI clock GPIO7 and MOSI GPIO9;
-- Waveshare `7.50inv2`, CS GPIO44, DC GPIO10, reset GPIO38, and inverted busy
-  GPIO4;
+- pinned `parkghost/esphome-epaper` revision
+  `cf145a72d835a5ef0b66576a5945bc7f16f232c0` with LUT-backed
+  `gdey075t7-gray4-lut`, CS GPIO44, DC GPIO10, reset GPIO38, and active-low
+  busy GPIO4 handled inside the adapter;
 - active-low XIAO user LED on GPIO21;
 - Key 1 on GPIO2 for maintenance boot and Key 3 on GPIO5 for navigation;
-- 800x480 binary image data and one unrotated full-panel refresh.
+- 800x480 grayscale image data and one unrotated full-panel refresh.
 
 Compile with the pinned ESPHome release:
 
@@ -39,9 +41,11 @@ then downloads both images when the published generation changed. SNTP applies
 
 These are two minutes after Cloudflare's generation slots so the complete
 atomic view set is available. Four `online_image` components provide active
-and staging slots for two decoded `BINARY` images. Both downloads are pinned
-to the generation returned by metadata; only two successful decodes activate
-the staging slot. One Key 3 press changes the selected active image locally.
+and staging slots for two decoded `GRAYSCALE` images. Both downloads are
+pinned to the generation returned by metadata; only two successful decodes
+activate the staging slot. One Key 3 press changes the selected active image
+locally. Adapter-level UC8179 commands, LUT loading, pixel packing, busy
+polarity, and refresh timing are not exposed to these scripts.
 Scheduled refresh resets selection to Daily Brief.
 
 When both metadata requests return `304`, ESPHome skips image downloads and the
@@ -98,3 +102,7 @@ Physical acceptance confirms:
 7. Serial logs record adequate PSRAM headroom after all four decoded buffers
    are allocated.
 8. The deployed direct-image verifier passes with preview credentials.
+
+The accepted adapter evidence and frozen monochrome rollback procedure are
+recorded in
+[`ticket-50-production-four-gray-device.md`](ticket-50-production-four-gray-device.md).

@@ -84,8 +84,13 @@ revalidation for both views, then pins both image downloads with
 `X-Dashboard-Generation` so a publication between requests cannot create a
 mixed pair.
 
+- Production firmware uses the LUT-backed `gdey075t7-gray4-lut` model from
+  the immutable `parkghost/esphome-epaper` revision accepted on the installed
+  target. The adapter owns controller commands, waveform loading, grayscale
+  packing, active-low busy handling, and refresh timing.
 - Startup and scheduled refresh stage both views in the inactive PSRAM slot.
-  The slot becomes active only after both images decode successfully.
+  All four active/staging slots decode as grayscale. The slot becomes active
+  only after both images decode successfully.
 - Scheduled refresh resets local selection to Daily Brief.
 - One Key 3 press switches between the two active decoded images locally;
   navigation does not require Wi-Fi or a Worker request.
@@ -99,6 +104,8 @@ mixed pair.
 - Pressing Key 1 while awake, or holding it during reset, latches maintenance
   mode until the next reset and suppresses scheduled image requests so serial
   diagnostics and password-protected OTA remain available.
+- The repository retains a separately compiled monochrome
+  `waveshare_epaper`/`7.50inv2` configuration for rollback.
 
 `/api/setup`, `/api/display`, and `/images/:filename` remain rollback-only
 TRMNL BYOS compatibility routes.

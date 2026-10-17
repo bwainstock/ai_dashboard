@@ -32,7 +32,8 @@ cp esphome/secrets.example.yaml esphome/secrets.yaml
 npm run esphome:compile:rollback
 ```
 
-The rollback command compiles the unchanged production monochrome
+The rollback command compiles the frozen monochrome
+`esphome/trmnl-daily-brief-rollback.yaml`
 `waveshare_epaper`/`7.50inv2` firmware. ESPHome build output and
 `esphome/secrets.yaml` are ignored and must not be committed.
 
@@ -72,7 +73,7 @@ not convert a successful compile into a physical result.
 
    ```sh
    uvx --from esphome==2026.9.1 esphome run \
-     esphome/trmnl-daily-brief.yaml \
+     esphome/trmnl-daily-brief-rollback.yaml \
      --device <serial-port>
    ```
 
