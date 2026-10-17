@@ -23,17 +23,15 @@ const AUTOMATED_PASS = {
   ]
 };
 
-function png(width = 800, height = 480, color = 0) {
+function png(width = 800, height = 480, colors = [0, 85, 170, 255]) {
   const image = new PNG({ width, height });
   for (let offset = 0; offset < image.data.length; offset += 4) {
+    const color = colors[(offset / 4) % colors.length];
     image.data[offset] = color;
     image.data[offset + 1] = color;
     image.data[offset + 2] = color;
     image.data[offset + 3] = 255;
   }
-  image.data[0] = 255;
-  image.data[1] = 255;
-  image.data[2] = 255;
   return PNG.sync.write(image);
 }
 
@@ -67,7 +65,7 @@ function createPassingFourGrayReport() {
 }
 
 describe("device acceptance artifacts", () => {
-  test("accepts a decodable monochrome 800x480 named PNG within tested limits", () => {
+  test("accepts a decodable four-gray 800x480 named PNG within tested limits", () => {
     expect(
       validatePngArtifact(
         png(),
@@ -77,7 +75,7 @@ describe("device acceptance artifacts", () => {
       )
     ).toMatchObject({
       dimensions: "800x480",
-      monochrome: true,
+      palette: "four-gray",
       nonBlank: true
     });
   });
@@ -86,7 +84,7 @@ describe("device acceptance artifacts", () => {
     ["wrong dimensions", png(799, 480), "daily-brief-1.png"],
     ["wrong view name", png(), "calendar-view-1.png"],
     ["oversize", png(), "daily-brief-1.png", 10],
-    ["non-1-bit grayscale", png(800, 480, 128), "daily-brief-1.png"]
+    ["a fifth gray", png(800, 480, [128, 255]), "daily-brief-1.png"]
   ])("rejects %s", (_label, bytes, filename, maximum = 1_000_000) => {
     expect(() =>
       validatePngArtifact(bytes, filename, "daily-brief", maximum)

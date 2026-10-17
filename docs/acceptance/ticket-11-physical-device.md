@@ -29,8 +29,9 @@ unset DEVICE_TOKEN DEVICE_ID DEVICE_ORIGIN
 ```
 
 The check authenticates both explicit `/api/image` views, decodes both PNGs,
-enforces 800x480 dimensions and an exact opaque black-and-white palette,
-validates one shared generation, and confirms per-view ETag revalidation.
+enforces the byte limit, 800x480 dimensions, and the exact opaque four-gray
+palette (`0`, `85`, `170`, and `255`), validates requested view identity and
+one shared generation, and confirms per-view ETag revalidation.
 
 ## 2. Physical image, navigation, and scheduling
 

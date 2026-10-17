@@ -33,6 +33,7 @@ import {
   type Publication,
   type ScheduledGenerationResult
 } from "./generation";
+import { assertFourGrayPng } from "./png-contract";
 import { fetchWeather, type WeatherSnapshot } from "./weather";
 import { runOperationalIncidentCheck } from "./incidents";
 import {
@@ -343,7 +344,16 @@ async function directImage(request: Request, env: Env): Promise<Response> {
     headers.delete("content-type");
     return new Response(null, { headers });
   }
-  return new Response(object.body, { headers });
+  try {
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    await assertFourGrayPng(
+      bytes,
+      effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES)
+    );
+    return new Response(bytes, { headers });
+  } catch {
+    return json({ error: "Image unavailable" }, 503);
+  }
 }
 
 async function image(
@@ -372,27 +382,24 @@ async function image(
     return json({ error: "Image unavailable" }, 503);
   }
 
-  return new Response(object.body, {
-    headers: {
-      "cache-control": "private, no-store",
-      "content-length": String(object.size),
-      "content-type": "image/png",
-      etag: object.httpEtag,
-      "x-content-type-options": "nosniff"
-    }
-  });
-}
-
-function readPngDimensions(bytes: Uint8Array): [number, number] | null {
-  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
-  if (
-    bytes.byteLength < 24 ||
-    !signature.every((value, index) => bytes[index] === value)
-  ) {
-    return null;
+  try {
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    await assertFourGrayPng(
+      bytes,
+      effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES)
+    );
+    return new Response(bytes, {
+      headers: {
+        "cache-control": "private, no-store",
+        "content-length": String(object.size),
+        "content-type": "image/png",
+        etag: object.httpEtag,
+        "x-content-type-options": "nosniff"
+      }
+    });
+  } catch {
+    return json({ error: "Image unavailable" }, 503);
   }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return [view.getUint32(16), view.getUint32(20)];
 }
 
 function isAdministrator(request: Request, env: Env): boolean {
@@ -1023,17 +1030,14 @@ async function generateFixture(request: Request, env: Env): Promise<Response> {
     await browser.close();
   }
 
-  const dimensions = readPngDimensions(screenshot);
   const maximumSize = effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES);
-  if (
-    dimensions?.[0] !== 800 ||
-    dimensions[1] !== 480 ||
-    screenshot.byteLength > maximumSize
-  ) {
+  try {
+    await assertFourGrayPng(screenshot, maximumSize);
+  } catch (error) {
     return json(
       {
         error: "Rendered fixture failed PNG validation",
-        dimensions,
+        detail: error instanceof Error ? error.message : "Invalid PNG",
         byte_size: screenshot.byteLength,
         maximum_byte_size: maximumSize
       },
@@ -1128,9 +1132,17 @@ async function publishGeneration(
 ) {
   await Promise.all(
     publication.views.map((view) =>
+      assertFourGrayPng(
+        view.image,
+        effectiveMaximumImageBytes(env.MAX_IMAGE_BYTES)
+      )
+    )
+  );
+  await Promise.all(
+    publication.views.map((view) =>
       env.IMAGES.put(view.objectKey, view.image, {
         httpMetadata: { contentType: "image/png" },
-        customMetadata: { width: "800", height: "480", palette: "monochrome" }
+        customMetadata: { width: "800", height: "480", palette: "four-gray" }
       })
     )
   );

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { PNG } from "pngjs";
 import {
   runScheduledWeatherGeneration,
   secondsUntilNextSlot,
@@ -26,13 +27,15 @@ const WEATHER: WeatherSnapshot = {
   }
 };
 
-function png(width = 800, height = 480): Uint8Array {
-  const bytes = new Uint8Array(24);
-  bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
-  const view = new DataView(bytes.buffer);
-  view.setUint32(16, width);
-  view.setUint32(20, height);
-  return bytes;
+function png(width = 800, height = 480, luminance = 0): Uint8Array {
+  const image = new PNG({ width, height });
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    image.data[offset] = luminance;
+    image.data[offset + 1] = luminance;
+    image.data[offset + 2] = luminance;
+    image.data[offset + 3] = 255;
+  }
+  return PNG.sync.write(image);
 }
 
 function ports(
@@ -343,6 +346,32 @@ describe("scheduled weather generation", () => {
       expect.any(String),
       "2026-10-07T17:45:00.000Z"
     );
+  });
+
+  test("a render containing a fifth gray does not advance publication", async () => {
+    const boundary = ports({
+      renderCalendarView: vi.fn().mockResolvedValue(png(800, 480, 128))
+    });
+
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["06:30", "10:30", "15:00", "19:00"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "RENDERED_IMAGE_INVALID"
+    });
+    expect(boundary.publish).not.toHaveBeenCalled();
   });
 
   test("a rendering failure preserves the previously published generation", async () => {

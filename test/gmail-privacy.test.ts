@@ -126,7 +126,7 @@ describe("Gmail privacy inspection", () => {
     const raw = fixture.candidate;
 
     expect(deviceWorker).toMatch(
-      /customMetadata: \{ width: "800", height: "480", palette: "monochrome" \}/
+      /customMetadata: \{ width: "800", height: "480", palette: "four-gray" \}/
     );
     expect(deviceWorker).toMatch(
       /\/images\/\$\{encodeURIComponent\(generation\.filename\)\}/

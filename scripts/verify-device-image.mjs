@@ -43,11 +43,11 @@ for (let offset = 0; offset < png.data.length; offset += 4) {
   if (
     png.data[offset] !== png.data[offset + 1] ||
     png.data[offset + 1] !== png.data[offset + 2] ||
-    (png.data[offset] !== 0 && png.data[offset] !== 255) ||
+    ![0, 85, 170, 255].includes(png.data[offset]) ||
     png.data[offset + 3] !== 255
   ) {
     throw new Error(
-      "Image contains color, transparency, or pixels outside the 1-bit palette"
+      "Image contains color, transparency, or pixels outside the four-gray palette"
     );
   }
 }
@@ -58,7 +58,7 @@ console.log(
       filename: display.filename,
       byte_size: bytes.byteLength,
       dimensions: `${png.width}x${png.height}`,
-      monochrome: true,
+      palette: "four-gray",
       media_type: imageResponse.headers.get("content-type")
     },
     null,

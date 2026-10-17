@@ -68,8 +68,10 @@ export function validatePngArtifact(
     if (red !== green || green !== blue || alpha !== 255) {
       throw new Error(`${filename} contains color or transparency`);
     }
-    if (red !== 0 && red !== 255) {
-      throw new Error(`${filename} contains pixels outside the 1-bit palette`);
+    if (![0, 85, 170, 255].includes(red)) {
+      throw new Error(
+        `${filename} contains pixels outside the four-gray palette`
+      );
     }
     tones.add(red);
   }
@@ -78,7 +80,7 @@ export function validatePngArtifact(
     filename,
     byteSize: bytes.byteLength,
     dimensions: `${png.width}x${png.height}`,
-    monochrome: true,
+    palette: "four-gray",
     nonBlank: true
   };
 }

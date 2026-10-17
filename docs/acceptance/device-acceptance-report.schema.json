@@ -115,14 +115,14 @@
         "filename",
         "byteSize",
         "dimensions",
-        "monochrome",
+        "palette",
         "nonBlank"
       ],
       "properties": {
         "filename": { "type": "string", "pattern": "\\.png$" },
         "byteSize": { "type": "integer", "minimum": 1 },
         "dimensions": { "const": "800x480" },
-        "monochrome": { "const": true },
+        "palette": { "const": "four-gray" },
         "nonBlank": { "const": true }
       },
       "additionalProperties": false

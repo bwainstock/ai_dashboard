@@ -5,6 +5,7 @@ import {
   isOperationalCode,
   type OperationalCode
 } from "./operational-codes";
+import { assertFourGrayPng } from "./png-contract";
 
 export interface DashboardConfiguration extends WeatherLocation {
   timezone: string;
@@ -176,18 +177,6 @@ function dueSlotKey(
   return minute ? `${minute}[${configuration.timezone}]` : null;
 }
 
-function pngDimensions(image: Uint8Array): [number, number] | null {
-  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
-  if (
-    image.byteLength < 24 ||
-    !signature.every((value, index) => image[index] === value)
-  ) {
-    return null;
-  }
-  const view = new DataView(image.buffer, image.byteOffset, image.byteLength);
-  return [view.getUint32(16), view.getUint32(20)];
-}
-
 function compactTimestamp(date: Date): string {
   return date.toISOString().replaceAll(/[-:]/g, "").replace(".000", "");
 }
@@ -355,19 +344,18 @@ export async function runScheduledWeatherGeneration(
   }
 
   const images = [image, calendarImage];
-  if (
-    images.some((candidate) => {
-      const dimensions = pngDimensions(candidate);
-      return (
-        dimensions?.[0] !== 800 ||
-        dimensions[1] !== 480 ||
-        candidate.byteLength > input.maximumImageBytes
-      );
-    })
-  ) {
+  try {
+    await Promise.all(
+      images.map((candidate) =>
+        assertFourGrayPng(candidate, input.maximumImageBytes)
+      )
+    );
+  } catch (error) {
     return fail(
       "RENDERED_IMAGE_INVALID",
-      "Every view must be an 800x480 PNG within the configured size limit"
+      error instanceof Error
+        ? error.message
+        : "Every view must satisfy the four-gray PNG contract"
     );
   }
 
