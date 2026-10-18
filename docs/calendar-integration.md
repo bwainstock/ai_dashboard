@@ -67,3 +67,26 @@ immutable cache filenames (`daily-brief-<timestamp>.png` and
 `calendar-view-<timestamp>.png`) that remain stable until the next complete
 generation is published. `/api/display` and its persisted cursor remain
 rollback-only compatibility.
+
+## Calendar Feed normalization contract
+
+The provider-neutral Calendar Feed path parses RFC 5545 `VCALENDAR` documents
+and normalizes all-day, UTC, floating local, and embedded `VTIMEZONE` date-times
+into the configured dashboard timezone. Floating local times use the dashboard
+timezone; named `TZID` values require an embedded definition rather than a
+guessed offset.
+
+Normalized snapshots retain only summary, start/end, all-day state, shortened
+location, event status, UID/occurrence identity, Calendar Label, Household
+Label, and the sanitized recurrence inputs required for later expansion.
+`CLASS:PRIVATE` and `CLASS:CONFIDENTIAL` become `Busy` without location.
+Descriptions, attendees, organizers, attachments, conferencing data, and
+provider extensions are discarded. Attendee RSVP never changes inclusion.
+Event-level cancellations are excluded; cancelled recurrence exceptions retain
+only UID and normalized occurrence identity for recurrence processing.
+
+A valid empty `VCALENDAR` is a successful empty snapshot. Document-level
+structural failure rejects normalization. An isolated malformed standalone
+event may be skipped only when its UID is unique and it has no recurrence
+relationship; diagnostics expose only a count and fixed reason code. Malformed
+recurrence members reject the feed so a partial series cannot be published.

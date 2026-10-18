@@ -23,6 +23,19 @@ describe("Calendar Feed management", () => {
   });
 
   test.each([
+    "https://calendar.google.com/calendar/ical/example%40group.calendar.google.com/public/basic.ics",
+    "https://calendar.google.com/calendar/ical/example%40group.calendar.google.com/private-secret/basic.ics",
+    "https://calendar.example.com/private/family.ics?token=secret"
+  ])("accepts provider-neutral public or bearer-secret iCalendar URL %s", (url) => {
+    expect(
+      normalizeCalendarFeedInput({
+        url,
+        calendarLabel: "Family"
+      })
+    ).toMatchObject({ url });
+  });
+
+  test.each([
     "http://calendar.example.com/family.ics",
     "https://user:secret@calendar.example.com/family.ics",
     "https://calendar.example.com:8443/family.ics",

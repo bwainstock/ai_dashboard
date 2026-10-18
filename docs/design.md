@@ -186,8 +186,8 @@ twelve events and reports `+N more`.
 
 Rules:
 
-- Include accepted and tentative timed events and useful all-day events from selected calendars.
-- Exclude declined events and unselected generated calendars.
+- Include timed and useful all-day events from enabled Calendar Feeds.
+- Ignore attendee RSVP state and exclude event-level `STATUS:CANCELLED` events.
 - Render private events as `Busy`.
 - Deduplicate copies with matching iCal UID and occurrence time.
 - Use configured `Mom` and `Dad` labels when ownership is useful.
