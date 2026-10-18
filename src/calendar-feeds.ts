@@ -9,6 +9,7 @@ import {
   type CalendarFeedNormalizationResult
 } from "./ical-normalization";
 import { expandAndMergeCalendarFeedEvents } from "./ical-recurrence";
+import { parseCalendarFeedUrl } from "./calendar-feed-url";
 
 const FEED_URL_CONTRACT = "calendar-feed-url";
 const FEED_URL_AAD = new TextEncoder().encode(`${FEED_URL_CONTRACT}:v1`);
@@ -20,7 +21,6 @@ export interface CalendarFeedEnvironment {
   CALENDAR_FEED_URL_ENCRYPTION_KEY?: string;
   CALENDAR_FEED_FETCHER?: typeof fetch;
   CALENDAR_FEED_RESOLVE_HOSTNAME?(hostname: string): Promise<string[]>;
-  CALENDAR_FEED_PARSE?(input: string): Promise<unknown>;
   CALENDAR_FEED_NOW?(): Date;
 }
 
@@ -137,26 +137,9 @@ function normalizeFeedUrl(value: unknown): Pick<
   CalendarFeedInput,
   "url" | "hostname"
 > | null {
-  if (typeof value !== "string" || value.length > 4096) return null;
-  const trimmed = value.trim();
-  if (/\s/u.test(trimmed)) return null;
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    return null;
-  }
-
-  if (
-    url.protocol !== "https:" ||
-    url.port !== "" ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.hash !== "" ||
-    !url.hostname
-  ) {
-    return null;
-  }
+  if (typeof value !== "string") return null;
+  const url = parseCalendarFeedUrl(value.trim());
+  if (!url || /\s/u.test(value.trim())) return null;
   return { url: url.toString(), hostname: url.hostname };
 }
 
@@ -185,18 +168,26 @@ async function resolveCalendarFeedHostname(
   return answers.flat();
 }
 
-export async function parseCalendarFeedEnvelope(
-  input: string
-): Promise<unknown[]> {
-  const lines = input
-    .replace(/^\uFEFF/, "")
-    .replaceAll("\r\n", "\n")
-    .trim()
-    .split("\n");
-  if (lines[0] !== "BEGIN:VCALENDAR" || lines.at(-1) !== "END:VCALENDAR") {
-    throw new CalendarFeedFetchError("invalid_response");
+async function dashboardTimezone(db: D1Database): Promise<string> {
+  const configuration = await db
+    .prepare("SELECT timezone FROM dashboard_configuration WHERE id = 1")
+    .first<{ timezone: string }>();
+  if (!configuration?.timezone) {
+    throw new Error("Dashboard timezone is unavailable");
   }
-  return [];
+  return configuration.timezone;
+}
+
+function productionFeedParser(
+  feed: Pick<CalendarFeedRow, "calendar_label" | "household_label">,
+  timezone: string
+): (input: string) => Promise<CalendarFeedNormalizationResult> {
+  return async (input) =>
+    normalizeICalendarFeed(input, {
+      timezone,
+      calendarLabel: feed.calendar_label,
+      householdLabel: feed.household_label
+    });
 }
 
 export function normalizeCalendarFeedInput(
@@ -487,11 +478,12 @@ async function testAndActivateFeed(
     ));
   let result;
   try {
+    const timezone = await dashboardTimezone(env.DB);
     result = await fetchCalendarFeed(url, {
       fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
       resolveHostname:
         env.CALENDAR_FEED_RESOLVE_HOSTNAME ?? resolveCalendarFeedHostname,
-      parse: env.CALENDAR_FEED_PARSE ?? parseCalendarFeedEnvelope
+      parse: productionFeedParser(existing, timezone)
     });
   } catch (error) {
     const code =
@@ -686,7 +678,7 @@ export async function refreshCalendarFeed(
       fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
       resolveHostname:
         env.CALENDAR_FEED_RESOLVE_HOSTNAME ?? resolveCalendarFeedHostname,
-      parse: env.CALENDAR_FEED_PARSE ?? parseCalendarFeedEnvelope,
+      parse: productionFeedParser(feed, await dashboardTimezone(env.DB)),
       etag: snapshot?.etag,
       lastModified: snapshot?.last_modified
     }

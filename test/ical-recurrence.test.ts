@@ -149,6 +149,71 @@ describe("iCalendar recurrence expansion and feed merging", () => {
     ]);
   });
 
+  test("a valid same-UID event cancellation removes the matching non-recurring occurrence", () => {
+    const snapshot = normalizeICalendarFeed(
+      calendar(
+        event(
+          "UID:appointment-cancelled",
+          "DTSTAMP:20261018T120000Z",
+          "DTSTART:20261020T180000Z",
+          "DTEND:20261020T190000Z",
+          "SUMMARY:Appointment"
+        ),
+        event(
+          "UID:appointment-cancelled",
+          "DTSTAMP:20261018T130000Z",
+          "DTSTART:20261020T180000Z",
+          "DTEND:20261020T190000Z",
+          "STATUS:CANCELLED"
+        )
+      ),
+      options
+    );
+
+    expect(
+      expandAndMergeCalendarFeedEvents([snapshot], {
+        now: new Date("2026-10-20T07:00:00Z"),
+        timezone: options.timezone,
+        days: 1
+      })
+    ).toEqual([]);
+  });
+
+  test("full snapshot replacement needs no cancellation state from an earlier snapshot", () => {
+    const active = normalizeICalendarFeed(
+      calendar(
+        event(
+          "UID:replacement-cancellation",
+          "DTSTAMP:20261018T120000Z",
+          "DTSTART:20261020T180000Z",
+          "DTEND:20261020T190000Z",
+          "SUMMARY:Appointment"
+        )
+      ),
+      options
+    );
+    const replacement = normalizeICalendarFeed(
+      calendar(
+        event(
+          "UID:replacement-cancellation",
+          "DTSTAMP:20261018T130000Z",
+          "DTSTART:20261020T180000Z",
+          "DTEND:20261020T190000Z",
+          "STATUS:CANCELLED"
+        )
+      ),
+      options
+    );
+    const window = {
+      now: new Date("2026-10-20T07:00:00Z"),
+      timezone: options.timezone,
+      days: 1
+    };
+
+    expect(expandAndMergeCalendarFeedEvents([active], window)).toHaveLength(1);
+    expect(expandAndMergeCalendarFeedEvents([replacement], window)).toEqual([]);
+  });
+
   test("keeps stable distinct occurrence identities across refreshes", () => {
     const document = calendar(
       event(
@@ -321,6 +386,38 @@ describe("iCalendar recurrence expansion and feed merging", () => {
         start: "2026-11-02T08:00:00-08:00",
         end: "2026-11-02T09:00:00-08:00"
       }
+    ]);
+  });
+
+  test.each([
+    ["MONTHLY", "RRULE:FREQ=MONTHLY"],
+    [
+      "YEARLY with multiple yearly candidates",
+      "RRULE:FREQ=YEARLY;BYMONTH=1,2,3,4,5,6,7,8,9,10,11,12"
+    ]
+  ])("fast-forwards a long-lived %s rule to the dashboard window", (_name, rule) => {
+    const snapshot = normalizeICalendarFeed(
+      calendar(
+        event(
+          "UID:long-lived-series",
+          "DTSTAMP:10000101T000000Z",
+          "DTSTART;VALUE=DATE:10000119",
+          "DTEND;VALUE=DATE:10000120",
+          "SUMMARY:Long-lived event",
+          rule
+        )
+      ),
+      options
+    );
+
+    const result = expandAndMergeCalendarFeedEvents([snapshot], {
+      now: new Date("2026-10-19T07:00:00Z"),
+      timezone: options.timezone,
+      days: 3
+    });
+
+    expect(result.map(({ occurrenceId }) => occurrenceId)).toEqual([
+      "2026-10-19"
     ]);
   });
 

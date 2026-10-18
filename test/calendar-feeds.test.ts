@@ -2,10 +2,59 @@ import { describe, expect, test } from "vitest";
 import {
   decryptCalendarFeedUrl,
   encryptCalendarFeedUrl,
+  handleCalendarFeedAdministration,
   normalizeCalendarFeedInput,
-  normalizeCalendarFeedUpdate,
-  parseCalendarFeedEnvelope
+  normalizeCalendarFeedUpdate
 } from "../src/calendar-feeds";
+
+class ActivationDatabase {
+  readonly snapshots: string[] = [];
+  batchCalled = false;
+
+  private readonly row = {
+    id: "feed-1",
+    encrypted_url: "",
+    hostname: "calendar.example.com",
+    url_fingerprint: "123456789abc",
+    calendar_label: "Family",
+    household_label: null,
+    enabled: 0,
+    health_state: null,
+    last_attempt_at: null,
+    last_success_at: null,
+    updated_at: "2026-10-18T12:00:00.000Z"
+  };
+
+  prepare(query: string) {
+    let parameters: unknown[] = [];
+    const statement = {
+      bind: (...values: unknown[]) => {
+        parameters = values;
+        return statement;
+      },
+      first: async <T>() => {
+        if (query.includes("FROM dashboard_configuration")) {
+          return { timezone: "America/Los_Angeles" } as T;
+        }
+        return this.row as T;
+      },
+      all: async <T>() => ({ results: [this.row as T] }),
+      run: async () => {
+        if (query.includes("SET enabled = 1")) this.row.enabled = 1;
+        if (query.includes("INSERT INTO calendar_feed_snapshots")) {
+          this.snapshots.push(String(parameters[2]));
+        }
+        return { success: true, meta: { changes: 1 } };
+      }
+    };
+    return statement;
+  }
+
+  async batch(statements: Array<{ run(): Promise<unknown> }>) {
+    this.batchCalled = true;
+    return Promise.all(statements.map((statement) => statement.run()));
+  }
+}
 
 describe("Calendar Feed management", () => {
   test("accepts a direct HTTPS iCalendar URL and normalizes privacy-safe labels", () => {
@@ -102,11 +151,64 @@ describe("Calendar Feed management", () => {
     ).rejects.toThrow();
   });
 
-  test("accepts a structurally complete iCalendar envelope at the parser seam", async () => {
-    await expect(
-      parseCalendarFeedEnvelope(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
-      )
-    ).resolves.toEqual([]);
+  test("does not activate a feed whose wrapper is present but calendar structure is invalid", async () => {
+    const database = new ActivationDatabase();
+    const response = await handleCalendarFeedAdministration(
+      new Request("https://admin.example.com/admin/calendar-feeds/feed-1/test", {
+        method: "POST",
+        body: JSON.stringify({
+          url: "https://calendar.example.com/replacement.ics"
+        })
+      }),
+      {
+        DB: database as unknown as D1Database,
+        CALENDAR_FEED_URL_ENCRYPTION_KEY: "feed-key",
+        CALENDAR_FEED_FETCHER: async () =>
+          new Response(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+          ),
+        CALENDAR_FEED_RESOLVE_HOSTNAME: async () => ["93.184.216.34"]
+      },
+      "administrator"
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: "Calendar Feed test failed",
+      code: "invalid_response"
+    });
+    expect(database.batchCalled).toBe(false);
+  });
+
+  test("activates and stores a production-normalized valid empty feed", async () => {
+    const database = new ActivationDatabase();
+    const response = await handleCalendarFeedAdministration(
+      new Request("https://admin.example.com/admin/calendar-feeds/feed-1/test", {
+        method: "POST",
+        body: JSON.stringify({
+          url: "https://calendar.example.com/replacement.ics"
+        })
+      }),
+      {
+        DB: database as unknown as D1Database,
+        CALENDAR_FEED_URL_ENCRYPTION_KEY: "feed-key",
+        CALENDAR_FEED_FETCHER: async () =>
+          new Response(
+            [
+              "BEGIN:VCALENDAR",
+              "VERSION:2.0",
+              "PRODID:-//Example//Calendar//EN",
+              "END:VCALENDAR"
+            ].join("\r\n")
+          ),
+        CALENDAR_FEED_RESOLVE_HOSTNAME: async () => ["93.184.216.34"]
+      },
+      "administrator"
+    );
+
+    expect(response.status).toBe(200);
+    expect(database.snapshots.map((snapshot) => JSON.parse(snapshot))).toEqual([
+      { events: [], skippedEventCount: 0, skipReasons: [] }
+    ]);
   });
 });

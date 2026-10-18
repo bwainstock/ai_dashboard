@@ -57,6 +57,19 @@ describe("safe Calendar Feed fetching", () => {
   });
 
   test.each([
+    " https://calendar.example.com/feed.ics",
+    "https://calendar.example.com/feed calendar.ics"
+  ])("uses the persisted URL shape rules at fetch time for %s", async (url) => {
+    await expect(
+      fetchCalendarFeed(url, {
+        fetcher: vi.fn(),
+        resolveHostname: vi.fn(),
+        parse: vi.fn()
+      })
+    ).rejects.toMatchObject({ code: "unsafe_url" });
+  });
+
+  test.each([
     "127.0.0.1",
     "10.10.0.1",
     "100.64.0.1",

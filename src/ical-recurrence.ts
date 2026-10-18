@@ -131,6 +131,49 @@ function occurrenceEnd(
   );
 }
 
+function recurrenceIteratorStart(
+  start: ICAL.Time,
+  rule: ICAL.Recur,
+  window: CalendarFeedDashboardWindow
+): ICAL.Time {
+  if (rule.count || (rule.freq !== "MONTHLY" && rule.freq !== "YEARLY")) {
+    return start;
+  }
+  const [windowYear, windowMonth] = localDate(window.now, window.timezone)
+    .split("-")
+    .map(Number);
+  const interval = rule.interval || 1;
+  let periods =
+    rule.freq === "MONTHLY"
+      ? Math.floor(
+          ((windowYear - start.year) * 12 + windowMonth - start.month) /
+            interval
+        ) - 2
+      : Math.floor((windowYear - start.year) / interval) - 2;
+  periods = Math.max(0, periods);
+  while (periods > 0) {
+    const totalMonths =
+      start.year * 12 +
+      (start.month - 1) +
+      periods * interval * (rule.freq === "MONTHLY" ? 1 : 12);
+    const year = Math.floor(totalMonths / 12);
+    const month = (totalMonths % 12) + 1;
+    if (start.day <= ICAL.Time.daysInMonth(month, year)) {
+      return ICAL.Time.fromData({
+        year,
+        month,
+        day: start.day,
+        hour: start.hour,
+        minute: start.minute,
+        second: start.second,
+        isDate: start.isDate
+      });
+    }
+    periods -= 1;
+  }
+  return start;
+}
+
 function expandMaster(
   event: NormalizedCalendarFeedEvent,
   window: CalendarFeedDashboardWindow
@@ -170,7 +213,7 @@ function expandMaster(
     ) {
       throw new Error("Recurrence expansion exceeded the fixed work limit");
     }
-    const iterator = rule.iterator(start);
+    const iterator = rule.iterator(recurrenceIteratorStart(start, rule, window));
     const dayAfterWindow = addDays(
       localDate(window.now, window.timezone),
       window.days
@@ -266,6 +309,11 @@ export function expandAndMergeCalendarFeedEvents(
       )
     )
   );
+  const cancelledUids = new Set(
+    feeds.flatMap((feed) =>
+      (feed.cancelledEventUids ?? []).map(normalizedUid)
+    )
+  );
   const merged = new Map<
     string,
     { event: ExpandedCalendarFeedEvent; explicitOverride: boolean }
@@ -306,7 +354,13 @@ export function expandAndMergeCalendarFeedEvents(
 
     for (const { event, explicitOverride } of candidates) {
       const key = `${normalizedUid(event.uid)}|${event.occurrenceId}`;
-      if (cancelled.has(key) || !inWindow(event, window)) continue;
+      if (
+        cancelledUids.has(normalizedUid(event.uid)) ||
+        cancelled.has(key) ||
+        !inWindow(event, window)
+      ) {
+        continue;
+      }
       const existing = merged.get(key);
       if (existing) {
         if (explicitOverride && !existing.explicitOverride) {

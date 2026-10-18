@@ -228,6 +228,12 @@ describe("iCalendar feed normalization", () => {
 
     expect(result).toEqual({
       events: [],
+      cancelledOccurrences: [
+        {
+          uid: "cancelled-1",
+          occurrenceId: "2026-10-20T11:00:00-07:00"
+        }
+      ],
       skippedEventCount: 0,
       skipReasons: []
     });

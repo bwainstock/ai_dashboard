@@ -12,7 +12,6 @@ export interface AdministrationEnv {
   CALENDAR_FEED_URL_ENCRYPTION_KEY?: string;
   CALENDAR_FEED_FETCHER?: typeof fetch;
   CALENDAR_FEED_RESOLVE_HOSTNAME?(hostname: string): Promise<string[]>;
-  CALENDAR_FEED_PARSE?(input: string): Promise<unknown>;
   CALENDAR_FEED_NOW?(): Date;
 }
 
