@@ -78,7 +78,9 @@ guessed offset.
 
 Normalized snapshots retain only summary, start/end, all-day state, shortened
 location, event status, UID/occurrence identity, Calendar Label, Household
-Label, and the sanitized recurrence inputs required for later expansion.
+Label, and the sanitized recurrence inputs required for later expansion. The
+recurrence source start and timezone contain timing data only and preserve
+source wall-clock behavior across dashboard timezone changes.
 `CLASS:PRIVATE` and `CLASS:CONFIDENTIAL` become `Busy` without location.
 Descriptions, attendees, organizers, attachments, conferencing data, and
 provider extensions are discarded. Attendee RSVP never changes inclusion.
@@ -90,3 +92,23 @@ structural failure rejects normalization. An isolated malformed standalone
 event may be skipped only when its UID is unique and it has no recurrence
 relationship; diagnostics expose only a count and fixed reason code. Malformed
 recurrence members reject the feed so a partial series cannot be published.
+
+## Calendar Feed recurrence and merge contract
+
+Recurrence expansion runs after normalization and before rendering. It evaluates
+`RRULE` and `RDATE`, removes `EXDATE`, and retains only occurrences whose actual
+start falls in the configured dashboard window. Expansion has a fixed work
+budget; a series that cannot reach the window within that budget fails instead
+of performing unbounded work.
+
+`RECURRENCE-ID` is the stable occurrence identity. An override replaces only
+that identity even when its actual start moves, and a cancellation removes only
+that identity. Expanded snapshots discard recurrence machinery and continue to
+contain only display-safe normalized fields.
+
+Configured feeds are merged in configuration order. Copies with the same
+trimmed, Unicode-normalized UID and occurrence identity become one event.
+Explicit overrides take precedence over generated copies. Distinct Calendar
+Labels and Household Labels are appended in configured-feed order without
+sorting or duplication; a cancellation from any copy removes the duplicated
+occurrence.

@@ -22,7 +22,9 @@ export interface NormalizedCalendarFeedEvent {
     dates?: string[];
     excludedDates?: string[];
     recurrenceId?: string;
+    sourceStart: string;
     sourceTimezone: string;
+    sourceTimezoneDefinition?: ICAL.Component["jCal"];
   };
 }
 
@@ -176,6 +178,19 @@ function normalizedRecurrence(
   ) {
     throw new CalendarFeedNormalizationError("unsafe-malformed-event");
   }
+  const sourceTimezone =
+    start.zone.tzid === "floating" ? timezone : start.zone.tzid;
+  const sourceTimezoneDefinition =
+    sourceTimezone === "UTC" ||
+    sourceTimezone === "GMT" ||
+    start.zone.tzid === "floating"
+      ? undefined
+      : component.parent
+          .getAllSubcomponents("vtimezone")
+          .find(
+            (timezoneComponent) =>
+              stringProperty(timezoneComponent, "tzid") === sourceTimezone
+          )?.jCal;
   return {
     ...(ruleValue ? { rule: ruleValue.toString() } : {}),
     ...(dates.length ? { dates } : {}),
@@ -183,8 +198,9 @@ function normalizedRecurrence(
     ...(recurrenceId
       ? { recurrenceId: normalizedTime(recurrenceId, timezone) }
       : {}),
-    sourceTimezone:
-      start.zone.tzid === "floating" ? timezone : start.zone.tzid
+    sourceStart: start.toString(),
+    sourceTimezone,
+    ...(sourceTimezoneDefinition ? { sourceTimezoneDefinition } : {})
   };
 }
 

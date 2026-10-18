@@ -189,7 +189,9 @@ Rules:
 - Include timed and useful all-day events from enabled Calendar Feeds.
 - Ignore attendee RSVP state and exclude event-level `STATUS:CANCELLED` events.
 - Render private events as `Busy`.
-- Deduplicate copies with matching iCal UID and occurrence time.
+- Deduplicate copies with matching normalized iCal UID and stable occurrence
+  identity. Merge distinct Calendar and Household Labels in configured-feed
+  order.
 - Use configured `Mom` and `Dad` labels when ownership is useful.
 - Show shortened location only on Calendar View.
 - Never show descriptions, attendees, conferencing links, organizer addresses, or personal email addresses.
