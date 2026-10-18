@@ -5,6 +5,10 @@ const MAXIMUM_FEEDS = 20;
 export interface CalendarFeedEnvironment {
   DB: D1Database;
   CALENDAR_FEED_URL_ENCRYPTION_KEY?: string;
+  CALENDAR_FEED_FETCHER?: typeof fetch;
+  CALENDAR_FEED_RESOLVE_HOSTNAME?(hostname: string): Promise<string[]>;
+  CALENDAR_FEED_PARSE?(input: string): Promise<unknown>;
+  CALENDAR_FEED_NOW?(): Date;
 }
 
 export interface CalendarFeedInput {
@@ -129,6 +133,7 @@ function normalizeFeedUrl(value: unknown): Pick<
   } catch {
     return null;
   }
+
   if (
     url.protocol !== "https:" ||
     url.port !== "" ||
@@ -140,6 +145,45 @@ function normalizeFeedUrl(value: unknown): Pick<
     return null;
   }
   return { url: url.toString(), hostname: url.hostname };
+}
+
+async function resolveCalendarFeedHostname(
+  hostname: string
+): Promise<string[]> {
+  const answers = await Promise.all(
+    ["A", "AAAA"].map(async (type) => {
+      const response = await fetch(
+        `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`,
+        {
+          headers: { accept: "application/dns-json" },
+          redirect: "error"
+        }
+      );
+      if (!response.ok) throw new Error("DNS resolution failed");
+      const body = (await response.json()) as {
+        Answer?: Array<{ type: number; data: string }>;
+      };
+      const expectedType = type === "A" ? 1 : 28;
+      return (body.Answer ?? [])
+        .filter((answer) => answer.type === expectedType)
+        .map((answer) => answer.data);
+    })
+  );
+  return answers.flat();
+}
+
+export async function parseCalendarFeedEnvelope(
+  input: string
+): Promise<unknown[]> {
+  const lines = input
+    .replace(/^\uFEFF/, "")
+    .replaceAll("\r\n", "\n")
+    .trim()
+    .split("\n");
+  if (lines[0] !== "BEGIN:VCALENDAR" || lines.at(-1) !== "END:VCALENDAR") {
+    throw new CalendarFeedFetchError("invalid_response");
+  }
+  return [];
 }
 
 export function normalizeCalendarFeedInput(
@@ -394,6 +438,131 @@ async function deleteFeed(
     : json({ error: "Calendar Feed not found" }, 404);
 }
 
+async function testAndActivateFeed(
+  request: Request,
+  env: CalendarFeedEnvironment,
+  id: string
+): Promise<Response> {
+  if (!env.CALENDAR_FEED_URL_ENCRYPTION_KEY) {
+    return json({ error: "Calendar Feed encryption is not configured" }, 503);
+  }
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return json({ error: "Invalid Calendar Feed test" }, 400);
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return json({ error: "Invalid Calendar Feed test" }, 400);
+  }
+  const body = raw as { url?: unknown };
+  if (Object.keys(body).some((key) => key !== "url")) {
+    return json({ error: "Invalid Calendar Feed test" }, 400);
+  }
+  const [existing] = await feedRows(env.DB, id);
+  if (!existing) return json({ error: "Calendar Feed not found" }, 404);
+  const replacement =
+    body.url === undefined ? null : normalizeFeedUrl(body.url);
+  if (body.url !== undefined && !replacement) {
+    return json({ error: "Invalid Calendar Feed test" }, 400);
+  }
+  const url =
+    replacement?.url ??
+    (await decryptCalendarFeedUrl(
+      existing.encrypted_url,
+      env.CALENDAR_FEED_URL_ENCRYPTION_KEY
+    ));
+  let result;
+  try {
+    result = await fetchCalendarFeed(url, {
+      fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
+      resolveHostname:
+        env.CALENDAR_FEED_RESOLVE_HOSTNAME ?? resolveCalendarFeedHostname,
+      parse: env.CALENDAR_FEED_PARSE ?? parseCalendarFeedEnvelope
+    });
+  } catch (error) {
+    const code =
+      error instanceof CalendarFeedFetchError ? error.code : "invalid_response";
+    return json({ error: "Calendar Feed test failed", code }, 422);
+  }
+  if (result.kind !== "updated") {
+    return json(
+      { error: "Calendar Feed test failed", code: "invalid_response" },
+      422
+    );
+  }
+  const now = (env.CALENDAR_FEED_NOW?.() ?? new Date()).toISOString();
+  const statements: D1PreparedStatement[] = [];
+  if (replacement) {
+    const identity = await urlIdentity(replacement.url);
+    statements.push(
+      env.DB.prepare(
+        `UPDATE calendar_feeds
+         SET encrypted_url = ?, hostname = ?, url_hash = ?,
+             url_fingerprint = ?, enabled = 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      ).bind(
+        await encryptCalendarFeedUrl(
+          replacement.url,
+          env.CALENDAR_FEED_URL_ENCRYPTION_KEY
+        ),
+        replacement.hostname,
+        identity.hash,
+        identity.fingerprint,
+        id
+      )
+    );
+  } else {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE calendar_feeds
+         SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).bind(id)
+    );
+  }
+  statements.push(
+    env.DB.prepare(
+      `INSERT INTO calendar_feed_snapshots
+         (feed_id, fetched_at, events_json, etag, last_modified)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(feed_id) DO UPDATE SET
+         fetched_at = excluded.fetched_at,
+         events_json = excluded.events_json,
+         etag = excluded.etag,
+         last_modified = excluded.last_modified`
+    ).bind(
+      id,
+      now,
+      JSON.stringify(result.snapshot),
+      result.etag,
+      result.lastModified
+    ),
+    env.DB.prepare(
+      `INSERT INTO calendar_feed_health
+         (feed_id, state, last_attempt_at, last_success_at, failure_code)
+       VALUES (?, 'healthy', ?, ?, NULL)
+       ON CONFLICT(feed_id) DO UPDATE SET
+         state = 'healthy',
+         last_attempt_at = excluded.last_attempt_at,
+         last_success_at = excluded.last_success_at,
+         failure_code = NULL,
+         updated_at = CURRENT_TIMESTAMP`
+    ).bind(id, now, now),
+    env.DB.prepare(
+      `INSERT INTO calendar_feed_health_history (feed_id, state, failure_code)
+       VALUES (?, 'healthy', NULL)`
+    ).bind(id)
+  );
+  try {
+    await env.DB.batch(statements);
+  } catch {
+    return json({ error: "Calendar Feed could not be activated" }, 503);
+  }
+  const [activated] = await feedRows(env.DB, id);
+  return json(publicFeed(activated));
+}
+
 export async function handleCalendarFeedAdministration(
   request: Request,
   env: CalendarFeedEnvironment,
@@ -423,6 +592,19 @@ export async function handleCalendarFeedAdministration(
     return request.method === "PATCH"
       ? updateFeed(request, env, id)
       : deleteFeed(env, id);
+  }
+  const testMatch = pathname.match(
+    /^\/admin\/calendar-feeds\/([^/]+)\/test$/
+  );
+  if (testMatch && request.method === "POST") {
+    if (role !== "administrator") {
+      return json({ error: "Administrator role required" }, 403);
+    }
+    return testAndActivateFeed(
+      request,
+      env,
+      decodeURIComponent(testMatch[1])
+    );
   }
   return json({ error: "Not found" }, 404);
 }
@@ -459,3 +641,120 @@ export async function listEnabledCalendarFeedSources(
     }))
   );
 }
+
+export async function refreshCalendarFeed(
+  env: CalendarFeedEnvironment,
+  id: string
+): Promise<{ kind: "updated" | "unchanged" }> {
+  if (!env.CALENDAR_FEED_URL_ENCRYPTION_KEY) {
+    throw new Error("Calendar Feed encryption is not configured");
+  }
+  const [feed] = await feedRows(env.DB, id);
+  if (!feed || feed.enabled !== 1) {
+    throw new Error("Enabled Calendar Feed not found");
+  }
+  const snapshot = await env.DB.prepare(
+    `SELECT fetched_at, events_json, etag, last_modified
+     FROM calendar_feed_snapshots WHERE feed_id = ?`
+  )
+    .bind(id)
+    .first<{
+      fetched_at: string;
+      events_json: string;
+      etag: string | null;
+      last_modified: string | null;
+    }>();
+  const result = await fetchCalendarFeed(
+    await decryptCalendarFeedUrl(
+      feed.encrypted_url,
+      env.CALENDAR_FEED_URL_ENCRYPTION_KEY
+    ),
+    {
+      fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
+      resolveHostname:
+        env.CALENDAR_FEED_RESOLVE_HOSTNAME ?? resolveCalendarFeedHostname,
+      parse: env.CALENDAR_FEED_PARSE ?? parseCalendarFeedEnvelope,
+      etag: snapshot?.etag,
+      lastModified: snapshot?.last_modified
+    }
+  );
+  const now = (env.CALENDAR_FEED_NOW?.() ?? new Date()).toISOString();
+  const statements: D1PreparedStatement[] = [];
+  if (result.kind === "updated") {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO calendar_feed_snapshots
+           (feed_id, fetched_at, events_json, etag, last_modified)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(feed_id) DO UPDATE SET
+           fetched_at = excluded.fetched_at,
+           events_json = excluded.events_json,
+           etag = excluded.etag,
+           last_modified = excluded.last_modified`
+      ).bind(
+        id,
+        now,
+        JSON.stringify(result.snapshot),
+        result.etag,
+        result.lastModified
+      )
+    );
+  }
+  statements.push(
+    env.DB.prepare(
+      `INSERT INTO calendar_feed_health
+         (feed_id, state, last_attempt_at, last_success_at, failure_code)
+       VALUES (?, 'healthy', ?, ?, NULL)
+       ON CONFLICT(feed_id) DO UPDATE SET
+         state = 'healthy',
+         last_attempt_at = excluded.last_attempt_at,
+         last_success_at = excluded.last_success_at,
+         failure_code = NULL,
+         updated_at = CURRENT_TIMESTAMP`
+    ).bind(id, now, now),
+    env.DB.prepare(
+      `INSERT INTO calendar_feed_health_history (feed_id, state, failure_code)
+       VALUES (?, 'healthy', NULL)`
+    ).bind(id)
+  );
+  await env.DB.batch(statements);
+  return { kind: result.kind };
+}
+
+export async function refreshEnabledCalendarFeeds(
+  env: CalendarFeedEnvironment,
+  concurrency = 4
+): Promise<
+  Array<
+    | { id: string; kind: "updated" | "unchanged" }
+    | { id: string; kind: "failed"; code: string }
+  >
+> {
+  const feeds = await env.DB.prepare(
+    `SELECT id FROM calendar_feeds
+     WHERE enabled = 1 ORDER BY created_at, id`
+  ).all<{ id: string }>();
+  return fetchCalendarFeedsBounded(
+    feeds.results,
+    async ({ id }) => {
+      try {
+        return { id, ...(await refreshCalendarFeed(env, id)) };
+      } catch (error) {
+        return {
+          id,
+          kind: "failed" as const,
+          code:
+            error instanceof CalendarFeedFetchError
+              ? error.code
+              : "invalid_response"
+        };
+      }
+    },
+    concurrency
+  );
+}
+import {
+  CalendarFeedFetchError,
+  fetchCalendarFeed,
+  fetchCalendarFeedsBounded
+} from "./calendar-feed-fetch";
