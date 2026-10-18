@@ -3,7 +3,8 @@ import {
   decryptCalendarFeedUrl,
   encryptCalendarFeedUrl,
   normalizeCalendarFeedInput,
-  normalizeCalendarFeedUpdate
+  normalizeCalendarFeedUpdate,
+  parseCalendarFeedEnvelope
 } from "../src/calendar-feeds";
 
 describe("Calendar Feed management", () => {
@@ -86,5 +87,13 @@ describe("Calendar Feed management", () => {
     await expect(
       decryptCalendarFeedUrl(stored, "wrong-key")
     ).rejects.toThrow();
+  });
+
+  test("accepts a structurally complete iCalendar envelope at the parser seam", async () => {
+    await expect(
+      parseCalendarFeedEnvelope(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+      )
+    ).resolves.toEqual([]);
   });
 });

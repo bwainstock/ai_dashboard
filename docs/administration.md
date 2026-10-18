@@ -50,7 +50,10 @@ secrets.
 - `GET /admin/calendar-feeds` returns redacted Calendar Feed metadata to both
   roles. `POST /admin/calendar-feeds`, `PATCH /admin/calendar-feeds/:id`, and
   `DELETE /admin/calendar-feeds/:id` are administrator-only. Creation stores a
-  disabled feed; secure testing and activation are a separate contract.
+  disabled feed. `POST /admin/calendar-feeds/:id/test` securely tests the
+  stored URL, or an optional replacement URL, and activates it only after a
+  successful fetch. A failed replacement preserves the prior URL, snapshot,
+  enabled state, and health.
 - `GET /admin/status` is available to reviewers and administrators.
 - `GET /admin/gmail-configuration` is available to reviewers and
   administrators. `PUT` is administrator-only and replaces the complete
@@ -99,11 +102,21 @@ ampersand, apostrophe, hyphen, and period. Feed URLs must be direct HTTPS URLs
 without credentials, fragments, or non-standard ports. At most 20 feeds may be
 stored.
 
-New feeds remain disabled for the future secure test-and-activation path.
+New feeds remain disabled until the secure test succeeds. The initial request
+and each of at most three redirects are restricted to HTTPS on port 443,
+reject credentials and fragments, and require every resolved address to be
+public. Fetching has one 10-second deadline, a 2 MiB compressed-body limit, a
+10 MiB decompressed/parser-input limit, and bounded multi-feed concurrency.
+Feed requests send no authorization header or cookie; bearer access remains
+only in the encrypted URL. Refreshes send stored `ETag` and `Last-Modified`
+validators, and `304 Not Modified` retains the existing snapshot.
+
 Relabeling does not replace or decrypt a URL. Disabling preserves retained
 snapshots and health records for later use, while deletion explicitly removes
 the URL, snapshot, current health, and health history. Internal source loading
-selects enabled feeds only.
+selects enabled feeds only. Administration reports only Healthy, Stale,
+Unavailable, or Disabled plus safe timestamps; fetch URLs and response details
+are never returned.
 
 The browser interface has independent Weather, household-account calendar, and
 Gmail Sender-Domain Allowlist saves. Saving one section does not reset another.
