@@ -33,6 +33,7 @@ export interface CalendarEvent {
   tentative: boolean;
   private: boolean;
   ownerLabels: string[];
+  calendarLabels?: string[];
   location?: string;
 }
 

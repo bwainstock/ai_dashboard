@@ -23,6 +23,12 @@ Automated coverage verifies:
 - Shortened locations appear only on Calendar View. Private events render as
   `Busy`, and normalized/rendered data excludes descriptions, attendees,
   meeting links, organizer addresses, and personal email addresses.
+- Scheduled and forced generations refresh enabled Calendar Feeds before
+  rendering. A failed feed contributes only its own last successful snapshot
+  for at most 72 hours; older snapshots and disabled feeds are omitted.
+- If no enabled Calendar Feed has a usable snapshot, Daily Brief and Calendar
+  View both show `Calendar unavailable` while the complete two-view generation
+  still publishes atomically.
 
 The schema migration added a rollback-compatible per-device cursor and a view
 type to immutable render generations. Production ESPHome navigation now uses

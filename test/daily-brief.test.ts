@@ -94,6 +94,20 @@ describe("Daily Brief", () => {
     expect(html).toContain("Updated 10:30 AM");
   });
 
+  test("limits Calendar Feed entries to today and tomorrow", () => {
+    const html = dailyBriefHtml(
+      model({
+        calendar: [
+          event("Tomorrow", "2026-10-08T20:00:00.000Z"),
+          event("Third day", "2026-10-09T20:00:00.000Z")
+        ]
+      })
+    );
+
+    expect(html).toContain("Tomorrow");
+    expect(html).not.toContain("Third day");
+  });
+
   test("never presents live-looking weather or clock details", () => {
     const html = dailyBriefHtml(model());
 

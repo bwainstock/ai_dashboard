@@ -245,6 +245,7 @@ class TestBucket {
 
 class ScheduledTestDatabase {
   readonly publishedViewTypes: string[] = [];
+  calendarFeedGenerationQueries = 0;
 
   constructor(private readonly hasSourceIncident = false) {}
 
@@ -274,6 +275,13 @@ class ScheduledTestDatabase {
         return null;
       },
       all: async <T>() => {
+        if (
+          query.includes("FROM calendar_feeds AS feed") &&
+          query.includes("WHERE feed.enabled = 1")
+        ) {
+          this.calendarFeedGenerationQueries += 1;
+          return { results: [] as T[] };
+        }
         if (query.includes("FROM source_status")) {
           return {
             results: [
@@ -471,6 +479,7 @@ describe("TRMNL BYOS device service", () => {
       "daily_brief",
       "calendar"
     ]);
+    expect(database.calendarFeedGenerationQueries).toBe(1);
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -537,6 +546,7 @@ describe("TRMNL BYOS device service", () => {
       status: "published"
     });
     expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
+    expect(database.calendarFeedGenerationQueries).toBe(1);
   });
 
   test("incident email failure does not mask a forced generation result", async () => {

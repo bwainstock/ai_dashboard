@@ -17,6 +17,13 @@ export interface Snapshot<T> {
   fetchedAt: string;
 }
 
+export interface CalendarFeedGenerationResult {
+  calendar: CalendarEvent[];
+  unavailable: boolean;
+  staleAgeMinutes?: number;
+  failures: Array<{ id: string; code: string }>;
+}
+
 export interface DailyBriefWeatherModel {
   weather: WeatherSnapshot;
   calendar?: CalendarEvent[];
@@ -60,6 +67,7 @@ export interface ScheduledGenerationPorts {
   fetchCalendar?(): Promise<CalendarEvent[]>;
   loadLatestCalendar?(): Promise<Snapshot<CalendarEvent[]> | null>;
   saveCalendar?(events: CalendarEvent[], fetchedAt: string): Promise<void>;
+  refreshCalendarFeeds?(): Promise<CalendarFeedGenerationResult>;
   renderDailyBrief(model: DailyBriefWeatherModel): Promise<Uint8Array>;
   renderCalendarView(model: CalendarViewModel): Promise<Uint8Array>;
   publish(publication: Publication): Promise<void>;
@@ -273,7 +281,34 @@ export async function runScheduledWeatherGeneration(
   let calendar: CalendarEvent[] = [];
   let calendarAge: number | undefined;
   let calendarUnavailable = false;
-  if (ports.fetchCalendar && ports.loadLatestCalendar && ports.saveCalendar) {
+  if (ports.refreshCalendarFeeds) {
+    try {
+      const result = await ports.refreshCalendarFeeds();
+      calendar = result.calendar;
+      calendarUnavailable = result.unavailable;
+      calendarAge = result.staleAgeMinutes;
+      if (result.failures.length > 0) {
+        await ports.recordSourceFailure(
+          slotKey,
+          "calendar",
+          "CALENDAR_FETCH_FAILED",
+          "One or more Calendar Feeds failed"
+        );
+      }
+    } catch (error) {
+      calendarUnavailable = true;
+      await ports.recordSourceFailure(
+        slotKey,
+        "calendar",
+        "CALENDAR_FETCH_FAILED",
+        error instanceof Error ? error.message : "Calendar Feed refresh failed"
+      );
+    }
+  } else if (
+    ports.fetchCalendar &&
+    ports.loadLatestCalendar &&
+    ports.saveCalendar
+  ) {
     try {
       calendar = await ports.fetchCalendar();
       await ports.saveCalendar(calendar, input.now.toISOString());
