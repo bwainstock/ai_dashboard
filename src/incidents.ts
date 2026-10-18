@@ -6,15 +6,10 @@ import {
 export type { IncidentCode } from "./operational-codes";
 
 export interface IncidentSnapshot {
-  oauth: Array<{
-    accountId: "mom" | "dad";
-    state: "connected" | "disconnected" | "revoked" | "expired";
-  }>;
   sources: Array<{
-    source: "weather" | "calendar" | "lunch" | "gmail";
+    source: "weather" | "calendar" | "lunch";
     consecutiveFailures: number;
   }>;
-  aiQuota: "available" | "exhausted" | "not_applicable";
   latestGeneration: {
     state: "running" | "published" | "failed" | null;
     errorCode: string | null;
@@ -73,27 +68,13 @@ function desiredIncidents(
   now: Date
 ): Array<{ key: string; code: IncidentCode }> {
   const desired: Array<{ key: string; code: IncidentCode }> = [];
-  for (const account of snapshot.oauth) {
-    if (account.state === "revoked" || account.state === "expired") {
-      desired.push({
-        key: `oauth:${account.accountId}`,
-        code: "OAUTH_REVOKED_OR_EXPIRED"
-      });
-    }
-  }
   for (const source of snapshot.sources) {
     if (source.consecutiveFailures >= 2) {
       desired.push({
         key: `source:${source.source}`,
-        code:
-          source.source === "gmail"
-            ? "GMAIL_PROCESSING_REPEATED_FAILURE"
-            : "SOURCE_SCHEDULED_FAILURE"
+        code: "SOURCE_SCHEDULED_FAILURE"
       });
     }
-  }
-  if (snapshot.aiQuota === "exhausted") {
-    desired.push({ key: "ai:quota", code: "AI_QUOTA_EXHAUSTED" });
   }
   if (
     snapshot.latestGeneration.state === "failed" &&
@@ -170,17 +151,8 @@ class D1IncidentRepository implements IncidentRepository {
   constructor(private readonly database: D1Database) {}
 
   async loadSnapshot(): Promise<IncidentSnapshot> {
-    const [oauth, sources, quota, latestGeneration, device, authentication] =
+    const [sources, latestGeneration, device, authentication] =
       await Promise.all([
-        this.database
-          .prepare(
-            `SELECT account_id, oauth_status
-             FROM calendar_accounts ORDER BY account_id`
-          )
-          .all<{
-            account_id: "mom" | "dad";
-            oauth_status: "connected" | "disconnected" | "revoked";
-          }>(),
         this.database
           .prepare(
             `SELECT source, consecutive_failures
@@ -189,16 +161,8 @@ class D1IncidentRepository implements IncidentRepository {
              ORDER BY source`
           )
           .all<{
-            source: "weather" | "calendar" | "lunch" | "gmail";
+            source: "weather" | "calendar" | "lunch";
             consecutive_failures: number;
-          }>(),
-        this.database
-          .prepare(
-            `SELECT status_value FROM operational_status
-             WHERE status_key = 'ai_quota'`
-          )
-          .first<{
-            status_value: "available" | "exhausted" | "not_applicable";
           }>(),
         this.database
           .prepare(
@@ -229,15 +193,10 @@ class D1IncidentRepository implements IncidentRepository {
           .first<{ active: number }>()
       ]);
     return {
-      oauth: oauth.results.map((account) => ({
-        accountId: account.account_id,
-        state: account.oauth_status
-      })),
       sources: sources.results.map((source) => ({
         source: source.source,
         consecutiveFailures: source.consecutive_failures
       })),
-      aiQuota: quota?.status_value ?? "not_applicable",
       latestGeneration: {
         state: latestGeneration?.status ?? null,
         errorCode: latestGeneration?.error_code ?? null

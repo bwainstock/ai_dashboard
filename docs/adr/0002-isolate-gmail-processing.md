@@ -1,3 +1,12 @@
 # Isolate Gmail processing and retain only validated notices
 
-Phase 2 will process Gmail-derived content in a dedicated Worker that calls Workers AI directly, emits no content-bearing logs, and never persists raw message bodies. The rest of the system receives only validated Household Notice fields or an account-specific Private Notice Marker; this separation limits exposure of restricted Gmail data while still allowing the shared display and protected review workflow to use the extracted result.
+## Status
+
+Superseded by ADR 0004. Retained as architecture history only.
+
+## Historical decision
+
+The earlier plan isolated Gmail processing in a dedicated Worker and retained
+only validated notice fields. Ticket #59 retired that capability before it
+became part of the active product and migration `0016` purged its data and
+schema.

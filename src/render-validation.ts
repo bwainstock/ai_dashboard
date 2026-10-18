@@ -8,8 +8,7 @@ import { DEVICE_LIMITS } from "./device-limits";
 export type DashboardViewName =
   | "Daily Brief"
   | "Calendar View"
-  | "Lunch View"
-  | "Notices View";
+  | "Lunch View";
 
 export interface RenderInspection {
   viewport: { width: number; height: number };

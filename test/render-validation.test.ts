@@ -9,8 +9,7 @@ import {
 const VIEWS: DashboardViewName[] = [
   "Daily Brief",
   "Calendar View",
-  "Lunch View",
-  "Notices View"
+  "Lunch View"
 ];
 
 afterEach(() => {

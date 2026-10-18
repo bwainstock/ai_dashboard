@@ -35,14 +35,6 @@ export interface DailyBriefWeatherModel {
   updatedAt: string;
 }
 
-export interface DailyBriefNotice {
-  category: "school" | "childcare" | "activity" | "household";
-  summary: string;
-  relevantDate: string | null;
-  action: string | null;
-  senderOrganization: string;
-}
-
 export interface Publication {
   generationId: string;
   slotKey: string;
