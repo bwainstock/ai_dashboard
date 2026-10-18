@@ -159,6 +159,14 @@ async function isAuthenticated(request: Request, env: Env): Promise<boolean> {
   return authenticated;
 }
 
+async function checkOperationalIncidents(env: Env, now: Date): Promise<void> {
+  try {
+    await runOperationalIncidentCheck(env, now);
+  } catch (error) {
+    console.error("Operational incident check failed", error);
+  }
+}
+
 async function recordDeviceAuthentication(
   env: Env,
   authenticated: boolean
@@ -177,7 +185,7 @@ async function recordDeviceAuthentication(
     env.OPERATIONAL_EMAIL_FROM &&
     env.OPERATIONAL_EMAIL_TO
   ) {
-    await runOperationalIncidentCheck(env, new Date()).catch(() => undefined);
+    await checkOperationalIncidents(env, new Date());
   }
 }
 
@@ -1364,7 +1372,7 @@ async function forceGeneration(request: Request, env: Env): Promise<Response> {
   try {
     result = await runScheduled(env, now, slotKey);
   } finally {
-    await runOperationalIncidentCheck(env, now);
+    await checkOperationalIncidents(env, now);
   }
   return json(result, result.status === "published" ? 201 : 422);
 }
@@ -1491,7 +1499,7 @@ export default {
     try {
       await runScheduled(env, now);
     } finally {
-      await runOperationalIncidentCheck(env, now);
+      await checkOperationalIncidents(env, now);
     }
   }
 };

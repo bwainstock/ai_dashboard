@@ -246,6 +246,8 @@ class TestBucket {
 class ScheduledTestDatabase {
   readonly publishedViewTypes: string[] = [];
 
+  constructor(private readonly hasSourceIncident = false) {}
+
   prepare(query: string) {
     let parameters: unknown[] = [];
     const statement = {
@@ -275,7 +277,10 @@ class ScheduledTestDatabase {
         if (query.includes("FROM source_status")) {
           return {
             results: [
-              { source: "weather", consecutive_failures: 0 },
+              {
+                source: "weather",
+                consecutive_failures: this.hasSourceIncident ? 2 : 0
+              },
               { source: "calendar", consecutive_failures: 0 },
               { source: "lunch", consecutive_failures: 0 },
               { source: "gmail", consecutive_failures: 0 }
@@ -532,6 +537,50 @@ describe("TRMNL BYOS device service", () => {
       status: "published"
     });
     expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
+  });
+
+  test("incident email failure does not mask a forced generation result", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase(true);
+    const send = vi.fn(async () => {
+      throw new Error("Incident email delivery failed");
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => VALID_FOUR_GRAY_PNG)
+      })),
+      close: vi.fn()
+    });
+    const env = {
+      ...scheduledEnv(database),
+      INCIDENT_EMAIL: { send } as unknown as SendEmail,
+      OPERATIONAL_EMAIL_FROM: "dashboard@example.com",
+      OPERATIONAL_EMAIL_TO: "operator@example.com"
+    };
+
+    const response = await worker.fetch(
+      new Request("https://device.test/admin/generations", {
+        method: "POST",
+        headers: { Authorization: "generation-secret" }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json<{ status: string }>()).toMatchObject({
+      status: "published"
+    });
+    expect(send).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Operational incident check failed",
+      expect.any(Error)
+    );
   });
 
   test("setup exchanges a device MAC address for a high-entropy per-device token", async () => {
