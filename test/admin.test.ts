@@ -5,8 +5,10 @@ import { noticesViewHtml } from "../src/notices-view";
 import type { DailyBriefNotice } from "../src/generation";
 import { encryptRefreshToken } from "../src/calendar-oauth";
 import {
+  decryptCalendarFeedUrl,
   encryptCalendarFeedUrl,
-  listEnabledCalendarFeedSources
+  listEnabledCalendarFeedSources,
+  refreshCalendarFeed
 } from "../src/calendar-feeds";
 
 type Role = "administrator" | "reviewer";
@@ -78,6 +80,15 @@ class AdminDatabase {
     updated_at: string;
     created_at: string;
   }> = [];
+  calendarFeedSnapshots = new Map<
+    string,
+    {
+      fetched_at: string;
+      events_json: string;
+      etag: string | null;
+      last_modified: string | null;
+    }
+  >();
   deletedFeedArtifacts: string[] = [];
   disconnectStates = new Map<
     string,
@@ -165,6 +176,10 @@ class AdminDatabase {
           return (this.calendarFeeds.find(
             ({ id }) => id === String(parameters[0])
           ) ?? null) as T | null;
+        }
+        if (query.includes("FROM calendar_feed_snapshots")) {
+          return (this.calendarFeedSnapshots.get(String(parameters[0])) ??
+            null) as T | null;
         }
         return null;
       },
@@ -283,7 +298,10 @@ class AdminDatabase {
             changes = 1;
           }
         }
-        if (query.startsWith("UPDATE calendar_feeds SET")) {
+        if (
+          query.startsWith("UPDATE calendar_feeds SET") ||
+          query.startsWith("UPDATE calendar_feeds\n")
+        ) {
           const feed = this.calendarFeeds.find(
             ({ id }) => id === String(parameters.at(-1))
           );
@@ -298,8 +316,33 @@ class AdminDatabase {
                 | null;
             }
             if (query.includes("enabled = 0")) feed.enabled = 0;
+            if (query.includes("encrypted_url = ?")) {
+              feed.encrypted_url = String(parameters[parameterIndex++]);
+              feed.hostname = String(parameters[parameterIndex++]);
+              feed.url_hash = String(parameters[parameterIndex++]);
+              feed.url_fingerprint = String(parameters[parameterIndex++]);
+            }
+            if (query.includes("enabled = 1")) {
+              feed.enabled = 1;
+              feed.health_state = "healthy";
+              feed.last_attempt_at = "2026-10-18T20:45:00.000Z";
+              feed.last_success_at = "2026-10-18T20:45:00.000Z";
+            }
             changes = 1;
           }
+        }
+        if (query.includes("INSERT INTO calendar_feed_snapshots")) {
+          this.calendarFeedSnapshots.set(String(parameters[0]), {
+            fetched_at: String(parameters[1]),
+            events_json: String(parameters[2]),
+            etag: parameters[3] as string | null,
+            last_modified: parameters[4] as string | null
+          });
+          changes = 1;
+        }
+        if (query.includes("INSERT INTO calendar_feed_health")) changes = 1;
+        if (query.includes("INSERT INTO calendar_feed_health_history")) {
+          changes = 1;
         }
         if (query.includes("DELETE FROM calendar_feed_health_history")) {
           this.deletedFeedArtifacts.push("health_history");
@@ -309,6 +352,7 @@ class AdminDatabase {
         }
         if (query.includes("DELETE FROM calendar_feed_snapshots")) {
           this.deletedFeedArtifacts.push("snapshot");
+          this.calendarFeedSnapshots.delete(String(parameters[0]));
         }
         if (query.includes("DELETE FROM calendar_feeds WHERE id = ?")) {
           const originalLength = this.calendarFeeds.length;
@@ -883,6 +927,128 @@ describe("Access-protected browser administration", () => {
     expect(enable.status).toBe(400);
   });
 
+  test("tests before activation and preserves a working feed when replacement fails", async () => {
+    const database = new AdminDatabase();
+    const fetchedUrls: string[] = [];
+    const environment = env(database, {
+      CALENDAR_FEED_FETCHER: async (input) => {
+        fetchedUrls.push(String(input));
+        return new Response(
+          "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n",
+          {
+            headers: {
+              etag: '"working-v1"',
+              "last-modified": "Sun, 18 Oct 2026 20:40:00 GMT"
+            }
+          }
+        );
+      },
+      CALENDAR_FEED_RESOLVE_HOSTNAME: async (hostname) =>
+        hostname === "private.example.com"
+          ? ["10.0.0.8"]
+          : ["93.184.216.34"],
+      CALENDAR_FEED_NOW: () => new Date("2026-10-18T20:45:00.000Z")
+    });
+    const headers = {
+      ...accessHeaders("admin@example.com"),
+      "content-type": "application/json"
+    };
+    const created = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/calendar-feeds", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          url: "https://calendar.example.com/working.ics?token=secret",
+          calendarLabel: "Family"
+        })
+      }),
+      environment
+    );
+    const feed = (await created.json()) as { id: string };
+    expect(database.calendarFeeds[0].enabled).toBe(0);
+
+    const activated = await worker.fetch(
+      new Request(
+        `https://dashboard-admin.example.com/admin/calendar-feeds/${feed.id}/test`,
+        { method: "POST", headers, body: "{}" }
+      ),
+      environment
+    );
+    const activatedText = await activated.text();
+    expect(activated.status, activatedText).toBe(200);
+    expect(JSON.parse(activatedText)).toMatchObject({
+      id: feed.id,
+      enabled: true,
+      status: "Healthy"
+    });
+    expect(fetchedUrls).toEqual([
+      "https://calendar.example.com/working.ics?token=secret"
+    ]);
+    expect(database.calendarFeedSnapshots.get(feed.id)).toEqual({
+      fetched_at: "2026-10-18T20:45:00.000Z",
+      events_json: "[]",
+      etag: '"working-v1"',
+      last_modified: "Sun, 18 Oct 2026 20:40:00 GMT"
+    });
+
+    const encryptedUrl = database.calendarFeeds[0].encrypted_url;
+    const snapshot = database.calendarFeedSnapshots.get(feed.id);
+    const failedReplacement = await worker.fetch(
+      new Request(
+        `https://dashboard-admin.example.com/admin/calendar-feeds/${feed.id}/test`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            url: "https://private.example.com/replacement.ics"
+          })
+        }
+      ),
+      environment
+    );
+    expect(failedReplacement.status).toBe(422);
+    const failedReplacementText = await failedReplacement.text();
+    expect(JSON.parse(failedReplacementText)).toEqual({
+      error: "Calendar Feed test failed",
+      code: "unsafe_address"
+    });
+    expect(database.calendarFeeds[0].encrypted_url).toBe(encryptedUrl);
+    expect(database.calendarFeeds[0].enabled).toBe(1);
+    expect(database.calendarFeedSnapshots.get(feed.id)).toEqual(snapshot);
+    expect(failedReplacementText).not.toContain("private.example.com");
+
+    const replaced = await worker.fetch(
+      new Request(
+        `https://dashboard-admin.example.com/admin/calendar-feeds/${feed.id}/test`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            url: "https://replacement.example.com/new.ics?token=new-secret"
+          })
+        }
+      ),
+      environment
+    );
+    const replacedText = await replaced.text();
+    expect(replaced.status, replacedText).toBe(200);
+    expect(JSON.parse(replacedText)).toMatchObject({
+      id: feed.id,
+      hostname: "replacement.example.com",
+      enabled: true,
+      status: "Healthy"
+    });
+    expect(replacedText).not.toContain("new-secret");
+    await expect(
+      decryptCalendarFeedUrl(
+        database.calendarFeeds[0].encrypted_url,
+        "calendar-feed-test-key"
+      )
+    ).resolves.toBe(
+      "https://replacement.example.com/new.ics?token=new-secret"
+    );
+  });
+
   test("dashboard source loading decrypts enabled feeds only", async () => {
     const database = new AdminDatabase();
     const encryptionKey = "calendar-feed-test-key";
@@ -925,6 +1091,63 @@ describe("Access-protected browser administration", () => {
         householdLabel: "Family"
       }
     ]);
+  });
+
+  test("refresh revalidates with stored validators and preserves snapshots on 304", async () => {
+    const database = new AdminDatabase();
+    const encryptionKey = "calendar-feed-test-key";
+    database.calendarFeeds = [
+      {
+        id: "feed-1",
+        encrypted_url: await encryptCalendarFeedUrl(
+          "https://calendar.example.com/feed.ics?token=secret",
+          encryptionKey
+        ),
+        hostname: "calendar.example.com",
+        url_hash: "a".repeat(64),
+        url_fingerprint: "a".repeat(12),
+        calendar_label: "Family",
+        household_label: null,
+        enabled: 1,
+        health_state: "healthy",
+        last_attempt_at: "2026-10-18T19:00:00.000Z",
+        last_success_at: "2026-10-18T19:00:00.000Z",
+        updated_at: "2026-10-18T19:00:00.000Z",
+        created_at: "2026-10-18T19:00:00.000Z"
+      }
+    ];
+    const originalSnapshot = {
+      fetched_at: "2026-10-18T19:00:00.000Z",
+      events_json: '[{"uid":"kept"}]',
+      etag: '"feed-v1"',
+      last_modified: "Sun, 18 Oct 2026 19:00:00 GMT"
+    };
+    database.calendarFeedSnapshots.set("feed-1", originalSnapshot);
+    const fetcher = vi.fn<typeof fetch>(
+      async () => new Response(null, { status: 304 })
+    );
+
+    await expect(
+      refreshCalendarFeed(
+        env(database, {
+          CALENDAR_FEED_FETCHER: fetcher,
+          CALENDAR_FEED_RESOLVE_HOSTNAME: async () => ["93.184.216.34"],
+          CALENDAR_FEED_PARSE: async () => {
+            throw new Error("304 must not parse");
+          },
+          CALENDAR_FEED_NOW: () => new Date("2026-10-18T20:45:00.000Z")
+        }),
+        "feed-1"
+      )
+    ).resolves.toEqual({ kind: "unchanged" });
+    const requestHeaders = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(requestHeaders.get("if-none-match")).toBe('"feed-v1"');
+    expect(requestHeaders.get("if-modified-since")).toBe(
+      "Sun, 18 Oct 2026 19:00:00 GMT"
+    );
+    expect(database.calendarFeedSnapshots.get("feed-1")).toEqual(
+      originalSnapshot
+    );
   });
 
   test("authorized users receive a browser administration surface", async () => {
