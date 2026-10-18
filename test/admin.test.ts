@@ -4,6 +4,10 @@ import worker, { type Env } from "../src/index";
 import { noticesViewHtml } from "../src/notices-view";
 import type { DailyBriefNotice } from "../src/generation";
 import { encryptRefreshToken } from "../src/calendar-oauth";
+import {
+  encryptCalendarFeedUrl,
+  listEnabledCalendarFeedSources
+} from "../src/calendar-feeds";
 
 type Role = "administrator" | "reviewer";
 
@@ -59,6 +63,22 @@ class AdminDatabase {
     domain: string;
     kind: "school" | "childcare";
   }> = [];
+  calendarFeeds: Array<{
+    id: string;
+    encrypted_url: string;
+    hostname: string;
+    url_hash: string;
+    url_fingerprint: string;
+    calendar_label: string;
+    household_label: string | null;
+    enabled: number;
+    health_state: "healthy" | "stale" | "unavailable" | null;
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    updated_at: string;
+    created_at: string;
+  }> = [];
+  deletedFeedArtifacts: string[] = [];
   disconnectStates = new Map<
     string,
     "revocation_pending" | "cleanup_pending"
@@ -138,6 +158,14 @@ class AdminDatabase {
             ({ id }) => id === Number(parameters[0])
           ) ?? null) as T | null;
         }
+        if (
+          query.includes("FROM calendar_feeds AS feed") &&
+          query.includes("WHERE feed.id = ?")
+        ) {
+          return (this.calendarFeeds.find(
+            ({ id }) => id === String(parameters[0])
+          ) ?? null) as T | null;
+        }
         return null;
       },
       all: async <T>() => {
@@ -204,9 +232,92 @@ class AdminDatabase {
             ]
           } as D1Result<T>;
         }
+        if (query.includes("FROM calendar_feeds AS feed")) {
+          return {
+            results: [...this.calendarFeeds].sort((a, b) =>
+              a.created_at.localeCompare(b.created_at)
+            ) as unknown as T[]
+          } as D1Result<T>;
+        }
+        if (
+          query.includes("FROM calendar_feeds WHERE enabled = 1")
+        ) {
+          return {
+            results: this.calendarFeeds.filter(({ enabled }) => enabled === 1)
+              .map(
+                ({
+                  id,
+                  encrypted_url,
+                  calendar_label,
+                  household_label
+                }) => ({
+                  id,
+                  encrypted_url,
+                  calendar_label,
+                  household_label
+                })
+              ) as unknown as T[]
+          } as D1Result<T>;
+        }
         return { results: [] } as unknown as D1Result<T>;
       },
       run: async () => {
+        let changes = 0;
+        if (query.includes("INSERT INTO calendar_feeds")) {
+          if (this.calendarFeeds.length < Number(parameters[7])) {
+            this.calendarFeeds.push({
+              id: String(parameters[0]),
+              encrypted_url: String(parameters[1]),
+              hostname: String(parameters[2]),
+              url_hash: String(parameters[3]),
+              url_fingerprint: String(parameters[4]),
+              calendar_label: String(parameters[5]),
+              household_label: parameters[6] as string | null,
+              enabled: 0,
+              health_state: null,
+              last_attempt_at: null,
+              last_success_at: null,
+              updated_at: "2026-10-18T20:30:45.000Z",
+              created_at: "2026-10-18T20:30:45.000Z"
+            });
+            changes = 1;
+          }
+        }
+        if (query.startsWith("UPDATE calendar_feeds SET")) {
+          const feed = this.calendarFeeds.find(
+            ({ id }) => id === String(parameters.at(-1))
+          );
+          if (feed) {
+            let parameterIndex = 0;
+            if (query.includes("calendar_label = ?")) {
+              feed.calendar_label = String(parameters[parameterIndex++]);
+            }
+            if (query.includes("household_label = ?")) {
+              feed.household_label = parameters[parameterIndex++] as
+                | string
+                | null;
+            }
+            if (query.includes("enabled = 0")) feed.enabled = 0;
+            changes = 1;
+          }
+        }
+        if (query.includes("DELETE FROM calendar_feed_health_history")) {
+          this.deletedFeedArtifacts.push("health_history");
+        }
+        if (query.includes("DELETE FROM calendar_feed_health ")) {
+          this.deletedFeedArtifacts.push("health");
+        }
+        if (query.includes("DELETE FROM calendar_feed_snapshots")) {
+          this.deletedFeedArtifacts.push("snapshot");
+        }
+        if (query.includes("DELETE FROM calendar_feeds WHERE id = ?")) {
+          const originalLength = this.calendarFeeds.length;
+          this.calendarFeeds = this.calendarFeeds.filter(
+            ({ id }) => id !== String(parameters[0])
+          );
+          changes = originalLength - this.calendarFeeds.length;
+          if (changes) this.deletedFeedArtifacts.push("url");
+        }
         if (query.includes("UPDATE dashboard_configuration")) {
           this.configuration.latitude = Number(parameters[0]);
           this.configuration.longitude = Number(parameters[1]);
@@ -318,7 +429,7 @@ class AdminDatabase {
         ) {
           this.disconnectStates.delete(String(parameters[0]));
         }
-        return { success: true };
+        return { success: true, meta: { changes } };
       }
     };
     return statement;
@@ -350,6 +461,7 @@ function env(
     BROWSER: {} as Fetcher,
     GENERATION_SECRET: "generation-secret",
     ADMIN_ORIGIN: "https://dashboard-admin.example.com",
+    CALENDAR_FEED_URL_ENCRYPTION_KEY: "calendar-feed-test-key",
     ...overrides
   };
 }
@@ -600,6 +712,221 @@ async function loadAdministrationDocument(
 }
 
 describe("Access-protected browser administration", () => {
+  test("administrators manage encrypted Calendar Feeds without URL disclosure", async () => {
+    const database = new AdminDatabase();
+    const environment = env(database);
+    const headers = {
+      ...accessHeaders("admin@example.com"),
+      "content-type": "application/json"
+    };
+    const plaintextUrl =
+      "https://calendar.example.com/private/family.ics?token=secret";
+
+    const created = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/calendar-feeds", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          url: plaintextUrl,
+          calendarLabel: "  School   calendar ",
+          householdLabel: " Family "
+        })
+      }),
+      environment
+    );
+
+    expect(created.status).toBe(201);
+    const createdBody = await created.json<{
+      id: string;
+      hostname: string;
+      fingerprint: string;
+      enabled: boolean;
+      status: string;
+    }>();
+    expect(createdBody).toMatchObject({
+      hostname: "calendar.example.com",
+      enabled: false,
+      status: "Disabled"
+    });
+    expect(createdBody.fingerprint).toMatch(/^[a-f0-9]{12}$/);
+    expect(JSON.stringify(createdBody)).not.toContain(plaintextUrl);
+    expect(database.calendarFeeds[0].encrypted_url).not.toContain(plaintextUrl);
+
+    const updated = await worker.fetch(
+      new Request(
+        `https://dashboard-admin.example.com/admin/calendar-feeds/${createdBody.id}`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            calendarLabel: "Activities",
+            householdLabel: null,
+            enabled: false
+          })
+        }
+      ),
+      environment
+    );
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      calendarLabel: "Activities",
+      householdLabel: null,
+      enabled: false
+    });
+
+    const listed = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/calendar-feeds", {
+        headers: accessHeaders("reviewer@example.com")
+      }),
+      environment
+    );
+    expect(listed.status).toBe(200);
+    const listedText = await listed.text();
+    expect(listedText).not.toContain(plaintextUrl);
+    expect(JSON.parse(listedText)).toMatchObject({
+      limit: 20,
+      feeds: [{ id: createdBody.id, calendarLabel: "Activities" }]
+    });
+
+    const deleted = await worker.fetch(
+      new Request(
+        `https://dashboard-admin.example.com/admin/calendar-feeds/${createdBody.id}`,
+        { method: "DELETE", headers }
+      ),
+      environment
+    );
+    expect(deleted.status).toBe(204);
+    expect(database.calendarFeeds).toHaveLength(0);
+    expect(database.deletedFeedArtifacts).toEqual([
+      "health_history",
+      "health",
+      "snapshot",
+      "url"
+    ]);
+  });
+
+  test("Calendar Feed administration enforces safe URLs, activation seam, roles, and the feed limit", async () => {
+    const database = new AdminDatabase();
+    const environment = env(database);
+    const administratorHeaders = {
+      ...accessHeaders("admin@example.com"),
+      "content-type": "application/json"
+    };
+    const invalid = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/calendar-feeds", {
+        method: "POST",
+        headers: administratorHeaders,
+        body: JSON.stringify({
+          url: "https://user:secret@calendar.example.com/family.ics",
+          calendarLabel: "Family"
+        })
+      }),
+      environment
+    );
+    expect(invalid.status).toBe(400);
+
+    const reviewerMutation = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/calendar-feeds", {
+        method: "POST",
+        headers: {
+          ...accessHeaders("reviewer@example.com"),
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          url: "https://calendar.example.com/family.ics",
+          calendarLabel: "Family"
+        })
+      }),
+      environment
+    );
+    expect(reviewerMutation.status).toBe(403);
+
+    database.calendarFeeds = Array.from({ length: 20 }, (_, index) => ({
+      id: `feed-${index}`,
+      encrypted_url: "encrypted",
+      hostname: `calendar-${index}.example.com`,
+      url_hash: index.toString(16).padStart(64, "0"),
+      url_fingerprint: index.toString(16).padStart(12, "0"),
+      calendar_label: `Feed ${index}`,
+      household_label: null,
+      enabled: 0,
+      health_state: null,
+      last_attempt_at: null,
+      last_success_at: null,
+      updated_at: "2026-10-18T20:30:45.000Z",
+      created_at: `2026-10-18T20:30:${String(index).padStart(2, "0")}.000Z`
+    }));
+    const overLimit = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/admin/calendar-feeds", {
+        method: "POST",
+        headers: administratorHeaders,
+        body: JSON.stringify({
+          url: "https://calendar.example.com/extra.ics",
+          calendarLabel: "Extra"
+        })
+      }),
+      environment
+    );
+    expect(overLimit.status).toBe(409);
+
+    const enable = await worker.fetch(
+      new Request(
+        "https://dashboard-admin.example.com/admin/calendar-feeds/feed-0",
+        {
+          method: "PATCH",
+          headers: administratorHeaders,
+          body: JSON.stringify({ enabled: true })
+        }
+      ),
+      environment
+    );
+    expect(enable.status).toBe(400);
+  });
+
+  test("dashboard source loading decrypts enabled feeds only", async () => {
+    const database = new AdminDatabase();
+    const encryptionKey = "calendar-feed-test-key";
+    database.calendarFeeds = await Promise.all(
+      [
+        {
+          id: "enabled-feed",
+          url: "https://calendar.example.com/enabled.ics",
+          enabled: 1
+        },
+        {
+          id: "disabled-feed",
+          url: "https://calendar.example.com/disabled.ics",
+          enabled: 0
+        }
+      ].map(async (feed, index) => ({
+        id: feed.id,
+        encrypted_url: await encryptCalendarFeedUrl(feed.url, encryptionKey),
+        hostname: "calendar.example.com",
+        url_hash: index.toString(16).padStart(64, "0"),
+        url_fingerprint: index.toString(16).padStart(12, "0"),
+        calendar_label: index === 0 ? "Enabled" : "Disabled",
+        household_label: "Family",
+        enabled: feed.enabled,
+        health_state: null,
+        last_attempt_at: null,
+        last_success_at: null,
+        updated_at: "2026-10-18T20:30:45.000Z",
+        created_at: `2026-10-18T20:30:4${index}.000Z`
+      }))
+    );
+
+    await expect(
+      listEnabledCalendarFeedSources(env(database))
+    ).resolves.toEqual([
+      {
+        id: "enabled-feed",
+        url: "https://calendar.example.com/enabled.ics",
+        calendarLabel: "Enabled",
+        householdLabel: "Family"
+      }
+    ]);
+  });
+
   test("authorized users receive a browser administration surface", async () => {
     const response = await worker.fetch(
       new Request("https://dashboard-admin.example.com/admin", {
@@ -649,6 +976,8 @@ describe("Access-protected browser administration", () => {
 
     const administratorHtml = await administrator.text();
     expect(administratorHtml).toContain("Weather");
+    expect(administratorHtml).toContain("Calendar Feeds");
+    expect(administratorHtml).toContain("Add Calendar Feed");
     expect(administratorHtml).toContain("Household Label");
     expect(administratorHtml).toContain("Calendar Label");
     expect(administratorHtml).toContain("Sender-Domain Allowlist");

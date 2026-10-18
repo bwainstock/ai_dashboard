@@ -13,12 +13,14 @@ import {
   statusSafeOperationalCode,
   type OperationalCode
 } from "./operational-codes";
+import { handleCalendarFeedAdministration } from "./calendar-feeds";
 
 export type AdministrationRole = "administrator" | "reviewer";
 
 export interface AdministrationEnv {
   DB: D1Database;
   ADMIN_ORIGIN?: string;
+  CALENDAR_FEED_URL_ENCRYPTION_KEY?: string;
   NOTICE_GRACE_DAYS?: string;
   validateCalendarSelection?(
     accounts: CalendarConfigurationAccount[]
@@ -479,6 +481,14 @@ function administrationPage(role: AdministrationRole): Response {
 <label>Refresh times <input name="slots" required${disabled}></label>
 <button type="submit"${disabled}>Save weather</button> <output></output>
 </form></section>
+<section><h2>Calendar Feeds</h2>
+<p class="muted">Feed URLs are encrypted and are never displayed after saving. New feeds remain disabled until they pass the separate secure feed test.</p>
+<form id="calendar-feed-form">
+<label>Feed URL <input name="url" type="url" maxlength="4096" autocomplete="off" required${disabled}></label>
+<label>Calendar Label <input name="calendarLabel" maxlength="40" required${disabled}></label>
+<label>Household Label (optional) <input name="householdLabel" maxlength="20"${disabled}></label>
+<button type="submit"${disabled}>Add Calendar Feed</button> <output></output>
+</form><div id="calendar-feeds"></div></section>
 <section><h2>Household accounts and calendars</h2>
 <p class="muted">Household Label is device-visible. Calendar Label is administrator-only.</p>
 ${(["mom", "dad"] as const)
@@ -518,6 +528,8 @@ ${administratorControls}</section>
 function administrationScript(): Response {
   const script = `const weatherForm=document.querySelector("#weather-form");
 const gmailForm=document.querySelector("#gmail-form");
+const calendarFeedForm=document.querySelector("#calendar-feed-form");
+const calendarFeedsBox=document.querySelector("#calendar-feeds");
 const statusBox=document.querySelector("#status");
 const reviewBox=document.querySelector("#gmail-review");
 const role=document.body.dataset.role;
@@ -530,6 +542,8 @@ function safeNavigate(message){return dirty.size===0||confirm(message)}
 function markDirty(event){dirty.add(event.currentTarget.id||event.currentTarget.dataset.account)}
 function senderRow(sender={domain:"",kind:"school"}){const row=document.createElement("div");row.className="sender-row";row.innerHTML='<button type="button" data-remove aria-label="Remove domain">Remove</button><input name="domain" placeholder="school.example.org" value="'+sender.domain+'"><select name="kind"><option value="school">school</option><option value="childcare">childcare</option></select>';row.querySelector("select").value=sender.kind;if(role!=="administrator")for(const control of row.querySelectorAll("input,select,button"))control.disabled=true;row.querySelector("[data-remove]").addEventListener("click",()=>{row.remove();dirty.add("gmail-form")});return row}
 function renderSenders(senders){const box=document.querySelector("#senders");box.replaceChildren(...senders.map(senderRow))}
+function calendarFeedRow(feed){const row=document.createElement("form");row.className="feed-row";row.dataset.feedId=feed.id;row.innerHTML='<p><strong data-feed-host></strong> · <span data-feed-fingerprint></span> · <span data-feed-status></span></p><label>Calendar Label <input name="calendarLabel" maxlength="40" required></label><label>Household Label (optional) <input name="householdLabel" maxlength="20"></label><button type="submit">Save labels</button> <button type="button" data-disable>Disable</button> <button type="button" data-delete>Delete</button> <output></output>';row.querySelector("[data-feed-host]").textContent=feed.hostname;row.querySelector("[data-feed-fingerprint]").textContent=feed.fingerprint;row.querySelector("[data-feed-status]").textContent=feed.status;row.querySelector('[name="calendarLabel"]').value=feed.calendarLabel;row.querySelector('[name="householdLabel"]').value=feed.householdLabel??"";row.querySelector("[data-disable]").disabled=!feed.enabled||role!=="administrator";if(role!=="administrator")for(const control of row.querySelectorAll("input,button"))control.disabled=true;row.addEventListener("submit",async event=>{event.preventDefault();const output=row.querySelector("output");output.textContent="Saving…";try{const response=await fetch("/admin/calendar-feeds/"+encodeURIComponent(feed.id),{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({calendarLabel:row.querySelector('[name="calendarLabel"]').value,householdLabel:row.querySelector('[name="householdLabel"]').value})});if(!response.ok)throw new Error();await loadCalendarFeeds();output.textContent="Saved"}catch{output.textContent="Calendar Feed was not saved"}});row.querySelector("[data-disable]").addEventListener("click",async()=>{if(!confirm("Disable this Calendar Feed?"))return;const response=await fetch("/admin/calendar-feeds/"+encodeURIComponent(feed.id),{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({enabled:false})});if(response.ok)await loadCalendarFeeds()});row.querySelector("[data-delete]").addEventListener("click",async()=>{if(!confirm("Permanently delete this Calendar Feed and all of its retained data?"))return;const response=await fetch("/admin/calendar-feeds/"+encodeURIComponent(feed.id),{method:"DELETE"});if(response.ok)await loadCalendarFeeds()});return row}
+async function loadCalendarFeeds(){if(!calendarFeedsBox)return;const value=await read("/admin/calendar-feeds");calendarFeedsBox.replaceChildren(...value.feeds.map(calendarFeedRow))}
 function renderCalendars(accountId){const form=document.querySelector('[data-account="'+accountId+'"]');const filter=form.filter.value.toLocaleLowerCase();const draft=calendarDraft[accountId];const byId=new Map(discovered[accountId].map(item=>[item.id,item]));for(const [id,item] of draft)if(item.selected&&!byId.has(id))byId.set(id,{id,label:item.label,unavailable:discoveryState[accountId]==="succeeded"});const rows=[...byId.values()].filter(item=>item.label.toLocaleLowerCase().includes(filter)).sort((a,b)=>Number(draft.get(b.id)?.selected)-Number(draft.get(a.id)?.selected)||a.label.localeCompare(b.label,undefined,{sensitivity:"base"}));const box=form.querySelector("[data-calendars]");box.replaceChildren(...rows.map(item=>{const row=document.createElement("div");row.className="calendar-row";const state=draft.get(item.id)??{selected:false,label:item.label};row.innerHTML='<input type="checkbox" name="calendar" value="'+item.id+'"><span>'+item.label+(item.unavailable?" — Unavailable":"")+'</span><label>Calendar Label <input name="calendarLabel" maxlength="40" value="'+state.label+'"></label>';const checkbox=row.querySelector('[name="calendar"]');const label=row.querySelector('[name="calendarLabel"]');checkbox.checked=state.selected;checkbox.addEventListener("input",()=>{draft.set(item.id,{selected:checkbox.checked,label:label.value});dirty.add(accountId)});label.addEventListener("input",()=>{draft.set(item.id,{selected:checkbox.checked,label:label.value});dirty.add(accountId)});if(role!=="administrator"){checkbox.disabled=true;label.disabled=true}return row}));}
 async function loadWeatherConfiguration(){const weather=await read("/admin/weather-configuration");weatherForm.latitude.value=weather.latitude;weatherForm.longitude.value=weather.longitude;weatherForm.slots.value=weather.slots.join(", ")}
 async function loadCalendarConfiguration(accountId){const calendar=await read("/admin/calendar-configuration");for(const account of calendar.accounts){if(accountId&&account.accountId!==accountId)continue;const form=document.querySelector('[data-account="'+account.accountId+'"]');form.householdLabel.value=account.displayLabel;form.querySelector("[data-account-status]").textContent=account.cleanupPending?"Cleanup pending":account.reconnectRequired?"Reconnect required":account.connected?"Connected":"Disconnected";calendarDraft[account.accountId]=new Map(account.calendars.map(item=>[item.id,{selected:true,label:item.label}]));renderCalendars(account.accountId)}}
@@ -537,6 +551,7 @@ async function loadGmailConfiguration(){const gmail=await read("/admin/gmail-con
 async function loadConfiguration(){await Promise.all([loadWeatherConfiguration(),loadCalendarConfiguration(),loadGmailConfiguration()]);dirty.clear()}
 async function refreshDiscovery(accountId){const form=document.querySelector('[data-account="'+accountId+'"]');const output=form.querySelector("[data-discovery-status]");if(!safeNavigate("Discard unsaved configuration changes and refresh Discovered Calendars?"))return;discoveryState[accountId]="loading";output.textContent="Loading Discovered Calendars…";renderCalendars(accountId);try{const body=await read("/admin/calendar/discovery?account="+accountId);discovered[accountId]=body.calendars;discoveryState[accountId]="succeeded";output.textContent="Discovered Calendars refreshed";renderCalendars(accountId)}catch{discoveryState[accountId]="failed";output.textContent="Calendar discovery failed";renderCalendars(accountId)}}
 weatherForm.addEventListener("input",markDirty);weatherForm.addEventListener("submit",async event=>{event.preventDefault();const output=weatherForm.querySelector("output");output.textContent="Saving…";try{const response=await fetch("/admin/weather-configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({latitude:Number(weatherForm.latitude.value),longitude:Number(weatherForm.longitude.value),slots:weatherForm.slots.value.split(",").map(value=>value.trim()).filter(Boolean)})});if(!response.ok)throw new Error();await loadWeatherConfiguration();output.textContent="Saved";dirty.delete("weather-form")}catch{output.textContent="Weather was not saved"}});
+calendarFeedForm?.addEventListener("submit",async event=>{event.preventDefault();const output=calendarFeedForm.querySelector("output");output.textContent="Saving…";try{const response=await fetch("/admin/calendar-feeds",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({url:calendarFeedForm.url.value,calendarLabel:calendarFeedForm.calendarLabel.value,householdLabel:calendarFeedForm.householdLabel.value})});if(!response.ok)throw new Error();calendarFeedForm.reset();await loadCalendarFeeds();output.textContent="Saved — feed is disabled until securely tested"}catch{output.textContent="Calendar Feed was not saved"}});
 for(const form of document.querySelectorAll(".calendar-form")){form.addEventListener("input",event=>{if(event.target.name!=="filter")dirty.add(form.dataset.account)});form.filter.addEventListener("input",()=>renderCalendars(form.dataset.account));form.addEventListener("submit",async event=>{event.preventDefault();const calendars=[...calendarDraft[form.dataset.account]].filter(([,item])=>item.selected).map(([id,item])=>({id,label:item.label}));const output=form.querySelector("output");output.textContent="Saving…";try{const current=await read("/admin/calendar-configuration");const accounts=current.accounts.map(account=>account.accountId===form.dataset.account?{accountId:account.accountId,displayLabel:form.householdLabel.value,calendars}:{accountId:account.accountId,displayLabel:account.displayLabel,calendars:account.calendars});const response=await fetch("/admin/calendar-configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({accounts})});if(!response.ok)throw new Error();await loadCalendarConfiguration(form.dataset.account);output.textContent="Saved";dirty.delete(form.dataset.account)}catch{output.textContent="Calendar configuration was not saved"}})}
 gmailForm.addEventListener("input",markDirty);gmailForm.addEventListener("submit",async event=>{event.preventDefault();const senders=[...document.querySelectorAll(".sender-row")].map(row=>({domain:row.querySelector('[name="domain"]').value,kind:row.querySelector('[name="kind"]').value}));const output=gmailForm.querySelector("output");output.textContent="Saving…";try{const response=await fetch("/admin/gmail-configuration",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({senders})});if(!response.ok)throw new Error();await loadGmailConfiguration();output.textContent=senders.length?"Saved":"Saved — Sender-Domain Allowlist is empty";dirty.delete("gmail-form")}catch{output.textContent="Sender-Domain Allowlist was not saved"}});
 document.querySelector("#add-sender")?.addEventListener("click",()=>{document.querySelector("#senders").append(senderRow());dirty.add("gmail-form")});
@@ -545,7 +560,7 @@ for(const button of document.querySelectorAll("[data-connect]"))button.addEventL
 for(const button of document.querySelectorAll("[data-disconnect]"))button.addEventListener("click",async()=>{if(!safeNavigate("Discard unsaved configuration changes and disconnect this account?")||!confirm("Revoke Google access and permanently delete retained account data?"))return;try{const response=await fetch("/admin/gmail-accounts/"+button.dataset.disconnect+"/disconnect",{method:"POST"});if(!response.ok)throw new Error();await loadConfiguration()}catch{button.closest("section").querySelector("output").textContent="Google account was not disconnected"}});
 addEventListener("beforeunload",event=>{if(dirty.size){event.preventDefault();event.returnValue=""}});
 const oauthStatus=new URL(location.href).searchParams.get("calendar");if(oauthStatus){const banner=document.querySelector("#oauth-banner");banner.hidden=false;banner.textContent=oauthStatus.endsWith("-connected")?"Google account connected":"Google account connection failed";history.replaceState(null,"",location.pathname);const account=oauthStatus.startsWith("mom-")?"mom":oauthStatus.startsWith("dad-")?"dad":null;if(account)queueMicrotask(()=>refreshDiscovery(account))}
-Promise.all([loadConfiguration(),read("/admin/status").then(value=>statusBox.textContent=JSON.stringify(value,null,2)),read("/admin/gmail-review").then(value=>reviewBox.textContent=JSON.stringify(value,null,2))]).catch(()=>{statusBox.textContent="Status unavailable"});`;
+Promise.all([loadConfiguration(),loadCalendarFeeds(),read("/admin/status").then(value=>statusBox.textContent=JSON.stringify(value,null,2)),read("/admin/gmail-review").then(value=>reviewBox.textContent=JSON.stringify(value,null,2))]).catch(()=>{statusBox.textContent="Status unavailable"});`;
   return new Response(script, {
     headers: {
       "cache-control": "no-store",
@@ -575,6 +590,12 @@ export async function handleAuthorizedAdministration(
   }
   if (request.method === "GET" && pathname === "/admin/status") {
     return operationalStatus(env);
+  }
+  if (
+    pathname === "/admin/calendar-feeds" ||
+    pathname.startsWith("/admin/calendar-feeds/")
+  ) {
+    return handleCalendarFeedAdministration(request, env, identity.role);
   }
   if (pathname === "/admin/gmail-review" || pathname.startsWith("/admin/gmail-review/")) {
     return protectedGmailReview(request, env, identity.role);

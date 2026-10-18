@@ -21,6 +21,11 @@ A Discovered Calendar designated as a source of household events and assigned a 
 **Calendar Label**:
 A privacy-safe, administrator-facing name for a Selected Calendar. It is not shown on the shared display.
 
+**Calendar Feed**:
+An administrator-configured direct HTTPS iCalendar source. Its URL is a bearer
+credential encrypted at rest and is never returned by administration
+interfaces.
+
 **Household Label**:
 A short, non-identifying name for a connected household account that may be shown on the shared display.
 

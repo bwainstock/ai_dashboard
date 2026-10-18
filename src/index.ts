@@ -67,6 +67,7 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   CALENDAR_TOKEN_ENCRYPTION_KEY?: string;
+  CALENDAR_FEED_URL_ENCRYPTION_KEY?: string;
   MAX_IMAGE_BYTES?: string;
   GENERATION_RETRY_MINUTES?: string;
   INCIDENT_EMAIL?: SendEmail;
@@ -1406,6 +1407,8 @@ export default {
         url.pathname === "/admin/app.js" ||
         url.pathname === "/admin/configuration" ||
         url.pathname === "/admin/status" ||
+        url.pathname === "/admin/calendar-feeds" ||
+        url.pathname.startsWith("/admin/calendar-feeds/") ||
         url.pathname === "/admin/gmail-review" ||
         url.pathname.startsWith("/admin/gmail-review/")
       ) {

@@ -31,8 +31,9 @@ MAX_IMAGE_BYTES = "1000000"
 GENERATION_RETRY_MINUTES = "15"
 NOTICE_GRACE_DAYS = "3"
 
-# Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and CALENDAR_TOKEN_ENCRYPTION_KEY
-# with `wrangler secret put`; never place OAuth credentials in this file.
+# Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, CALENDAR_TOKEN_ENCRYPTION_KEY,
+# and CALENDAR_FEED_URL_ENCRYPTION_KEY with `wrangler secret put`; never place
+# credentials or encryption keys in this file.
 # Replace the operational email placeholders with Email Routing-verified
 # addresses before deployment.
 # Route ADMIN_ORIGIN through a Cloudflare Access application. Route the device

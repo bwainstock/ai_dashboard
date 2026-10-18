@@ -17,10 +17,10 @@ The Worker requires both Access identity headers:
 
 Access must validate the assertion before forwarding the request. The Worker
 then looks up the normalized email in D1 `administration_users`. An
-`administrator` may mutate configuration and start Google OAuth; a `reviewer`
-may read weather, safe calendar configuration, Sender-Domain Allowlist
-configuration, and status in the structured read-only interface. Anonymous,
-unknown, inactive, and
+`administrator` may mutate configuration and Calendar Feeds; a `reviewer`
+may read weather, safe calendar configuration, Calendar Feed metadata,
+Sender-Domain Allowlist configuration, and status in the structured read-only
+interface. Anonymous, unknown, inactive, and
 device-token-only requests are denied.
 
 After applying migrations, bootstrap the household roles with parameterized D1
@@ -47,6 +47,10 @@ secrets.
 - `GET /admin/calendar/oauth/start`, OAuth callback, calendar discovery, and
   calendar mutations are administrator-only. Reviewers may read
   `GET /admin/calendar-configuration`.
+- `GET /admin/calendar-feeds` returns redacted Calendar Feed metadata to both
+  roles. `POST /admin/calendar-feeds`, `PATCH /admin/calendar-feeds/:id`, and
+  `DELETE /admin/calendar-feeds/:id` are administrator-only. Creation stores a
+  disabled feed; secure testing and activation are a separate contract.
 - `GET /admin/status` is available to reviewers and administrators.
 - `GET /admin/gmail-configuration` is available to reviewers and
   administrators. `PUT` is administrator-only and replaces the complete
@@ -83,6 +87,23 @@ source-failure records.
 Google client credentials, the OAuth token-encryption key, and other deployment
 secrets remain Wrangler secrets. OAuth refresh tokens remain encrypted in D1
 and are never returned by administration contracts.
+
+Calendar Feed URLs use the separate `CALENDAR_FEED_URL_ENCRYPTION_KEY` secret
+and authenticated `calendar-feed-url` encryption contract. Administration
+responses expose only the feed ID, hostname, 12-character stable fingerprint,
+privacy-safe labels, enabled state, and non-sensitive health timestamps/state.
+They never expose plaintext or encrypted URLs. Calendar Label is required and
+limited to 40 characters; Household Label is optional and limited to 20. Both
+trim and collapse whitespace and accept only letters, numbers, spaces,
+ampersand, apostrophe, hyphen, and period. Feed URLs must be direct HTTPS URLs
+without credentials, fragments, or non-standard ports. At most 20 feeds may be
+stored.
+
+New feeds remain disabled for the future secure test-and-activation path.
+Relabeling does not replace or decrypt a URL. Disabling preserves retained
+snapshots and health records for later use, while deletion explicitly removes
+the URL, snapshot, current health, and health history. Internal source loading
+selects enabled feeds only.
 
 The browser interface has independent Weather, household-account calendar, and
 Gmail Sender-Domain Allowlist saves. Saving one section does not reset another.
