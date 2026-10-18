@@ -202,12 +202,12 @@ export function lunchViewHtml(model: LunchViewModel): string {
     .rail .day-number { font-size: 70px; line-height: 1.08; }
     .rail .date { margin-top: 9px; font-size: 18px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
     .rail .meal-icon { width: 60px; height: 60px; margin-top: 26px; }
-    .rail .week { margin-top: 10px; font-size: 12px; font-weight: 900; line-height: 1.3; text-transform: uppercase; }
-    .rail .updated { margin-top: auto; font-size: 12px; font-weight: 900; letter-spacing: .07em; line-height: 1.35; text-transform: uppercase; }
+    .rail .week { margin-top: 10px; font-size: 14px; font-weight: 900; line-height: 1.25; text-transform: uppercase; }
+    .rail .updated { margin-top: auto; font-size: 14px; font-weight: 900; letter-spacing: .04em; line-height: 1.25; text-transform: uppercase; }
     .content { min-width: 0; padding: 15px 18px 12px; }
     header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 9px; border-bottom: 4px solid var(--ink); }
     h1 { margin: 0; font-size: 35px; line-height: 1; }
-    header span { font-size: 12px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    header span { font-size: 14px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
     .missing { border: 3px solid var(--ink); margin-top: 11px; padding: 8px 12px; font-size: 18px; font-weight: 900; text-align: center; }
     main { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; height: ${globalState ? "306" : "348"}px; padding-top: 11px; }
     main section { min-width: 0; padding-right: 7px; border-right: 2px solid var(--ink); overflow: hidden; }
@@ -217,7 +217,7 @@ export function lunchViewHtml(model: LunchViewModel): string {
     .entree:first-of-type { color: var(--paper); background: var(--ink); }
     .entree svg { width: 42px; height: 42px; flex: none; }
     .day-state { min-height: 64px; border: 2px solid var(--ink); border-radius: 10px; padding: 9px 5px; font-size: 15px; font-weight: 900; line-height: 1.15; }
-    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    footer { display: flex; justify-content: space-between; border-top: 3px solid var(--ink); padding-top: 5px; font-size: 14px; font-weight: 900; text-transform: uppercase; }
     .stale { border: 2px solid var(--ink); padding: 1px 5px; }
   </style>
 </head>

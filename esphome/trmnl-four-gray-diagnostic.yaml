@@ -1,0 +1,63 @@
+external_components:
+  - source:
+      type: git
+      url: https://github.com/parkghost/esphome-epaper
+      ref: cf145a72d835a5ef0b66576a5945bc7f16f232c0
+    components: [epaper_spi]
+    refresh: never
+
+esphome:
+  name: family-dashboard-gray4
+  friendly_name: Family Dashboard Four-Gray Diagnostic
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            ESP_LOGI(
+                "gray4",
+                "Four-gray diagnostic PSRAM headroom before refresh: %u bytes",
+                static_cast<unsigned int>(ESP.getFreePsram()));
+        - component.update: diagnostic_display
+        - delay: 15s
+        - lambda: |-
+            ESP_LOGI(
+                "gray4",
+                "Four-gray diagnostic PSRAM headroom after refresh: %u bytes",
+                static_cast<unsigned int>(ESP.getFreePsram()));
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+display:
+  - platform: epaper_spi
+    id: diagnostic_display
+    model: gdey075t7-gray4-lut
+    cs_pin: GPIO44
+    dc_pin: GPIO10
+    reset_pin: GPIO38
+    busy_pin: GPIO4
+    rotation: 0
+    update_interval: never
+    lambda: |-
+      const auto black = Color(0, 0, 0);
+      const auto dark_gray = Color(85, 85, 85);
+      const auto light_gray = Color(170, 170, 170);
+      const auto white = Color(255, 255, 255);
+
+      it.filled_rectangle(0, 0, 200, 480, black);
+      it.filled_rectangle(200, 0, 200, 480, dark_gray);
+      it.filled_rectangle(400, 0, 200, 480, light_gray);
+      it.filled_rectangle(600, 0, 200, 480, white);

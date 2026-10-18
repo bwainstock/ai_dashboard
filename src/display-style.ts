@@ -5,20 +5,20 @@ export const DISPLAY_BASE_CSS = `
   body {
     color: var(--ink);
     background: var(--paper);
-    font-family: "Arial Narrow", Arial, Helvetica, sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
   }
   .label {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 900;
     letter-spacing: .11em;
     line-height: 1;
     text-transform: uppercase;
   }
   .serif {
-    font-family: Georgia, "Times New Roman", serif;
-    font-style: italic;
-    font-weight: 700;
-    letter-spacing: -.035em;
+    font-family: Arial, Helvetica, sans-serif;
+    font-style: normal;
+    font-weight: 900;
+    letter-spacing: -.025em;
   }
   .number {
     font-stretch: condensed;

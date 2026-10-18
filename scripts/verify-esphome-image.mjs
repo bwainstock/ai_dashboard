@@ -1,8 +1,13 @@
 import { PNG } from "pngjs";
+import {
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
 
-const [baseUrl, wakeSource = "timer"] = process.argv.slice(2);
+const [baseUrl] = process.argv.slice(2);
 const deviceId = process.env.DEVICE_ID;
 const accessToken = process.env.DEVICE_TOKEN;
+const maximumBytes = Number(process.env.MAX_IMAGE_BYTES ?? 1_000_000);
 
 if (!baseUrl || !deviceId || !accessToken) {
   console.error(
@@ -12,61 +17,93 @@ if (!baseUrl || !deviceId || !accessToken) {
 }
 
 const imageUrl = new URL("/api/image", baseUrl);
-const headers = {
+const authenticationHeaders = {
   ID: deviceId,
   "Access-Token": accessToken,
-  "Update-Source": wakeSource,
   Accept: "image/png"
 };
-const response = await fetch(imageUrl, {
-  headers,
-  redirect: "manual"
-});
-if (!response.ok || response.headers.get("content-type") !== "image/png") {
-  throw new Error(`Direct image request failed with HTTP ${response.status}`);
-}
 
-const bytes = Buffer.from(await response.arrayBuffer());
-const png = PNG.sync.read(bytes);
-if (png.width !== 800 || png.height !== 480) {
-  throw new Error(`Image is ${png.width}x${png.height}; expected 800x480`);
-}
-for (let offset = 0; offset < png.data.length; offset += 4) {
-  const value = png.data[offset];
-  if (
-    value !== png.data[offset + 1] ||
-    value !== png.data[offset + 2] ||
-    (value !== 0 && value !== 255) ||
-    png.data[offset + 3] !== 255
-  ) {
-    throw new Error("Image is not an opaque 1-bit black-and-white PNG");
-  }
-}
-
-const etag = response.headers.get("etag");
-if (!etag) throw new Error("Direct image response is missing an ETag");
-let etagRevalidation = false;
-if (wakeSource === "timer") {
-  const cached = await fetch(imageUrl, {
-    headers: { ...headers, "If-None-Match": etag },
+async function requestView(view, extraHeaders = {}) {
+  return fetch(imageUrl, {
+    headers: {
+      ...authenticationHeaders,
+      "X-Dashboard-View": view,
+      ...extraHeaders
+    },
     redirect: "manual"
   });
-  if (cached.status !== 304) {
-    throw new Error(`ETag revalidation returned HTTP ${cached.status}`);
+}
+
+async function validateView(view) {
+  const response = await requestView(view);
+  if (!response.ok || response.headers.get("content-type") !== "image/png") {
+    throw new Error(`${view} image request failed with HTTP ${response.status}`);
   }
-  etagRevalidation = true;
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > maximumBytes) {
+    throw new Error(
+      `${view} image is ${bytes.byteLength} bytes; limit is ${maximumBytes}`
+    );
+  }
+  const png = PNG.sync.read(bytes);
+  if (
+    png.width !== FOUR_GRAY_PNG_CONTRACT.width ||
+    png.height !== FOUR_GRAY_PNG_CONTRACT.height
+  ) {
+    throw new Error(
+      `${view} image is ${png.width}x${png.height}; expected ${FOUR_GRAY_PNG_CONTRACT.width}x${FOUR_GRAY_PNG_CONTRACT.height}`
+    );
+  }
+  for (let offset = 0; offset < png.data.length; offset += 4) {
+    const value = png.data[offset];
+    if (
+      value !== png.data[offset + 1] ||
+      value !== png.data[offset + 2] ||
+      !isFourGrayLuminance(value) ||
+      png.data[offset + 3] !== FOUR_GRAY_PNG_CONTRACT.opaqueAlpha
+    ) {
+      throw new Error(`${view} image is not an opaque four-gray PNG`);
+    }
+  }
+
+  const etag = response.headers.get("etag");
+  const generation = response.headers.get("x-dashboard-generation");
+  const deliveredView = response.headers.get("x-dashboard-view");
+  if (!etag || !generation || deliveredView !== view) {
+    throw new Error(`${view} response is missing cache or generation headers`);
+  }
+  const cached = await requestView(view, {
+    "X-Dashboard-Metadata": "true",
+    "If-None-Match": etag
+  });
+  if (cached.status !== 304) {
+    throw new Error(`${view} ETag revalidation returned HTTP ${cached.status}`);
+  }
+  return {
+    filename: response.headers.get("x-dashboard-filename"),
+    generation,
+    view: deliveredView,
+    image_bytes: bytes.byteLength,
+    dimensions: `${png.width}x${png.height}`,
+    palette: "four-gray",
+    etag_revalidation: true
+  };
+}
+
+const views = await Promise.all([
+  validateView("daily_brief"),
+  validateView("calendar")
+]);
+if (views[0].generation !== views[1].generation) {
+  throw new Error("Daily Brief and Calendar View belong to different generations");
 }
 
 console.log(
   JSON.stringify(
     {
-      filename: response.headers.get("x-dashboard-filename"),
-      generation: response.headers.get("x-dashboard-generation"),
-      view: response.headers.get("x-dashboard-view"),
-      image_bytes: bytes.byteLength,
-      dimensions: `${png.width}x${png.height}`,
-      palette: "1-bit",
-      etag_revalidation: etagRevalidation
+      generation: views[0].generation,
+      views
     },
     null,
     2

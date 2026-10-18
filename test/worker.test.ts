@@ -9,6 +9,28 @@ vi.mock("@cloudflare/puppeteer", () => ({
 
 import worker, { type Env } from "../src/index";
 
+function fourGrayPng(
+  colors: Array<[number, number, number, number]> = [
+    [0, 0, 0, 255],
+    [85, 85, 85, 255],
+    [170, 170, 170, 255],
+    [255, 255, 255, 255]
+  ]
+): Uint8Array {
+  const image = new PNG({ width: 800, height: 480 });
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    const color = colors[(offset / 4) % colors.length];
+    image.data[offset] = color[0];
+    image.data[offset + 1] = color[1];
+    image.data[offset + 2] = color[2];
+    image.data[offset + 3] = color[3];
+  }
+  return PNG.sync.write(image);
+}
+
+const VALID_FOUR_GRAY_PNG = fourGrayPng([[0, 0, 0, 255]]);
+const DARK_GRAY_PNG = fourGrayPng([[85, 85, 85, 255]]);
+
 class TestDatabase {
   readonly preparedQueries: string[] = [];
   readonly devices = new Map<
@@ -54,6 +76,15 @@ class TestDatabase {
         viewType: "notices";
       }
     | undefined;
+  readonly historicalGenerations = new Map<
+    string,
+    {
+      filename: string;
+      objectKey: string;
+      byteSize: number;
+      viewType: "daily_brief" | "calendar";
+    }
+  >();
   configuration = {
     latitude: 37.3382,
     longitude: -121.8863,
@@ -99,8 +130,15 @@ class TestDatabase {
           const requestedView = query.includes("view_type = ?")
             ? String(parameters()[0])
             : "daily_brief";
+          const requestedGeneration = query.includes("generation_id = ?")
+            ? String(parameters()[1])
+            : undefined;
           const pointedGeneration =
-            requestedView === "calendar"
+            requestedGeneration
+              ? this.historicalGenerations.get(
+                  `${requestedGeneration}:${requestedView}`
+                )
+              : requestedView === "calendar"
               ? this.calendarGeneration
               : requestedView === "lunch"
                 ? this.lunchGeneration
@@ -175,6 +213,7 @@ class TestDatabase {
 
 class TestBucket {
   readonly objects = new Map<string, Uint8Array>();
+  readonly metadata = new Map<string, Record<string, string>>();
 
   async get(key: string) {
     const value = this.objects.get(key);
@@ -183,21 +222,31 @@ class TestBucket {
       body: value,
       size: value.byteLength,
       httpEtag: '"test"',
+      arrayBuffer: async () => Uint8Array.from(value).buffer,
       writeHttpMetadata() {}
     };
   }
 
-  async put(key: string, value: ArrayBuffer | Uint8Array) {
+  async put(
+    key: string,
+    value: ArrayBuffer | Uint8Array,
+    options?: { customMetadata?: Record<string, string> }
+  ) {
     this.objects.set(
       key,
       value instanceof Uint8Array ? value : new Uint8Array(value)
     );
+    if (options?.customMetadata) {
+      this.metadata.set(key, options.customMetadata);
+    }
     return {};
   }
 }
 
 class ScheduledTestDatabase {
   readonly publishedViewTypes: string[] = [];
+
+  constructor(private readonly hasSourceIncident = false) {}
 
   prepare(query: string) {
     let parameters: unknown[] = [];
@@ -228,7 +277,10 @@ class ScheduledTestDatabase {
         if (query.includes("FROM source_status")) {
           return {
             results: [
-              { source: "weather", consecutive_failures: 0 },
+              {
+                source: "weather",
+                consecutive_failures: this.hasSourceIncident ? 2 : 0
+              },
               { source: "calendar", consecutive_failures: 0 },
               { source: "lunch", consecutive_failures: 0 },
               { source: "gmail", consecutive_failures: 0 }
@@ -395,10 +447,6 @@ describe("TRMNL BYOS device service", () => {
     const database = new ScheduledTestDatabase();
     const close = vi.fn();
     const renderedHtml: string[] = [];
-    const screenshot = new Uint8Array(24);
-    screenshot.set([137, 80, 78, 71, 13, 10, 26, 10]);
-    new DataView(screenshot.buffer).setUint32(16, 800);
-    new DataView(screenshot.buffer).setUint32(20, 480);
     launchBrowser.mockResolvedValue({
       newPage: vi.fn(async () => ({
         setViewport: vi.fn(),
@@ -406,7 +454,7 @@ describe("TRMNL BYOS device service", () => {
           renderedHtml.push(html);
         }),
         evaluate: vi.fn(async () => validRenderInspection()),
-        screenshot: vi.fn(async () => screenshot)
+        screenshot: vi.fn(async () => VALID_FOUR_GRAY_PNG)
       })),
       close
     });
@@ -466,16 +514,12 @@ describe("TRMNL BYOS device service", () => {
   test("an authenticated administrator can force a two-view generation", async () => {
     vi.stubGlobal("fetch", vi.fn(scheduledFetch));
     const database = new ScheduledTestDatabase();
-    const screenshot = new Uint8Array(24);
-    screenshot.set([137, 80, 78, 71, 13, 10, 26, 10]);
-    new DataView(screenshot.buffer).setUint32(16, 800);
-    new DataView(screenshot.buffer).setUint32(20, 480);
     launchBrowser.mockResolvedValue({
       newPage: vi.fn(async () => ({
         setViewport: vi.fn(),
         setContent: vi.fn(),
         evaluate: vi.fn(async () => validRenderInspection()),
-        screenshot: vi.fn(async () => screenshot)
+        screenshot: vi.fn(async () => VALID_FOUR_GRAY_PNG)
       })),
       close: vi.fn()
     });
@@ -493,6 +537,50 @@ describe("TRMNL BYOS device service", () => {
       status: "published"
     });
     expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
+  });
+
+  test("incident email failure does not mask a forced generation result", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase(true);
+    const send = vi.fn(async () => {
+      throw new Error("Incident email delivery failed");
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => VALID_FOUR_GRAY_PNG)
+      })),
+      close: vi.fn()
+    });
+    const env = {
+      ...scheduledEnv(database),
+      INCIDENT_EMAIL: { send } as unknown as SendEmail,
+      OPERATIONAL_EMAIL_FROM: "dashboard@example.com",
+      OPERATIONAL_EMAIL_TO: "operator@example.com"
+    };
+
+    const response = await worker.fetch(
+      new Request("https://device.test/admin/generations", {
+        method: "POST",
+        headers: { Authorization: "generation-secret" }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json<{ status: string }>()).toMatchObject({
+      status: "published"
+    });
+    expect(send).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Operational incident check failed",
+      expect.any(Error)
+    );
   });
 
   test("setup exchanges a device MAC address for a high-entropy per-device token", async () => {
@@ -587,13 +675,13 @@ describe("TRMNL BYOS device service", () => {
     database.publishedGeneration = {
       filename: "daily-brief-20261007T170000Z.png",
       objectKey: "generations/20261007T170000Z/daily-brief.png",
-      byteSize: 4,
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength,
       viewType: "daily_brief"
     };
     const bucket = new TestBucket();
     bucket.objects.set(
       "generations/20261007T170000Z/daily-brief.png",
-      new Uint8Array([137, 80, 78, 71])
+      VALID_FOUR_GRAY_PNG
     );
     const env = testEnv(database, bucket);
     const setupResponse = await worker.fetch(
@@ -624,8 +712,139 @@ describe("TRMNL BYOS device service", () => {
     );
     expect(response.headers.get("x-dashboard-view")).toBe("daily_brief");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(
-      new Uint8Array([137, 80, 78, 71])
+      Uint8Array.from(VALID_FOUR_GRAY_PNG)
     );
+    expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
+  });
+
+  test("explicit view downloads stay pinned when publication advances between requests", async () => {
+    const database = new TestDatabase();
+    const oldDaily = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength,
+      viewType: "daily_brief" as const
+    };
+    const oldCalendar = {
+      filename: CALENDAR_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      byteSize: DARK_GRAY_PNG.byteLength,
+      viewType: "calendar" as const
+    };
+    database.publishedGeneration = oldDaily;
+    database.calendarGeneration = oldCalendar;
+    database.historicalGenerations.set(
+      `${NAVIGATION_GENERATION}:daily_brief`,
+      oldDaily
+    );
+    database.historicalGenerations.set(
+      `${NAVIGATION_GENERATION}:calendar`,
+      oldCalendar
+    );
+    const bucket = new TestBucket();
+    bucket.objects.set(oldDaily.objectKey, VALID_FOUR_GRAY_PNG);
+    bucket.objects.set(oldCalendar.objectKey, DARK_GRAY_PNG);
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    database.publishedGeneration = {
+      filename: "daily-brief-new.png",
+      objectKey: "generations/new/daily-brief.png",
+      byteSize: 4,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: "calendar-view-new.png",
+      objectKey: "generations/new/calendar-view.png",
+      byteSize: 4,
+      viewType: "calendar"
+    };
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image", {
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token,
+          "X-Dashboard-View": "calendar",
+          "X-Dashboard-Generation": NAVIGATION_GENERATION
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-dashboard-filename")).toBe(
+      CALENDAR_FILENAME
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      Uint8Array.from(DARK_GRAY_PNG)
+    );
+  });
+
+  test("direct image metadata explicitly selects both views from one published generation", async () => {
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength,
+      viewType: "daily_brief"
+    };
+    database.calendarGeneration = {
+      filename: CALENDAR_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength,
+      viewType: "calendar"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(
+      database.publishedGeneration.objectKey,
+      VALID_FOUR_GRAY_PNG
+    );
+    bucket.objects.set(
+      database.calendarGeneration.objectKey,
+      VALID_FOUR_GRAY_PNG
+    );
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+    const metadata = (view: "daily_brief" | "calendar") =>
+      worker.fetch(
+        new Request("https://device.test/api/image", {
+          headers: {
+            ID: DEVICE_ID,
+            "Access-Token": token,
+            "X-Dashboard-View": view,
+            "X-Dashboard-Metadata": "true"
+          }
+        }),
+        env
+      );
+
+    const dailyBrief = await metadata("daily_brief");
+    const calendar = await metadata("calendar");
+
+    expect(dailyBrief.status).toBe(200);
+    expect(calendar.status).toBe(200);
+    expect(dailyBrief.headers.get("x-dashboard-view")).toBe("daily_brief");
+    expect(calendar.headers.get("x-dashboard-view")).toBe("calendar");
+    expect(dailyBrief.headers.get("x-dashboard-generation")).toBe(
+      NAVIGATION_GENERATION
+    );
+    expect(calendar.headers.get("x-dashboard-generation")).toBe(
+      NAVIGATION_GENERATION
+    );
+    expect((await dailyBrief.arrayBuffer()).byteLength).toBe(0);
+    expect((await calendar.arrayBuffer()).byteLength).toBe(0);
     expect(database.devices.get(DEVICE_ID)?.viewCursor).toBe(0);
   });
 
@@ -645,23 +864,23 @@ describe("TRMNL BYOS device service", () => {
     database.publishedGeneration = {
       filename: DAILY_BRIEF_FILENAME,
       objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
-      byteSize: 4,
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength,
       viewType: "daily_brief"
     };
     database.calendarGeneration = {
       filename: CALENDAR_FILENAME,
       objectKey: `generations/${NAVIGATION_GENERATION}/calendar-view.png`,
-      byteSize: 4,
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength,
       viewType: "calendar"
     };
     const bucket = new TestBucket();
     bucket.objects.set(
       database.publishedGeneration.objectKey,
-      new Uint8Array([137, 80, 78, 71])
+      VALID_FOUR_GRAY_PNG
     );
     bucket.objects.set(
       database.calendarGeneration.objectKey,
-      new Uint8Array([137, 80, 78, 71])
+      VALID_FOUR_GRAY_PNG
     );
     const env = testEnv(database, bucket);
     const setupResponse = await worker.fetch(
@@ -728,6 +947,41 @@ describe("TRMNL BYOS device service", () => {
     expect(response.status).toBe(304);
     expect(response.headers.get("etag")).toBe('"test"');
     expect((await response.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  test("direct image delivery rejects a stored image outside the four-gray contract", async () => {
+    const image = fourGrayPng([[128, 128, 128, 255]]);
+    const database = new TestDatabase();
+    database.publishedGeneration = {
+      filename: DAILY_BRIEF_FILENAME,
+      objectKey: `generations/${NAVIGATION_GENERATION}/daily-brief.png`,
+      byteSize: image.byteLength,
+      viewType: "daily_brief"
+    };
+    const bucket = new TestBucket();
+    bucket.objects.set(database.publishedGeneration.objectKey, image);
+    const env = testEnv(database, bucket);
+    const setupResponse = await worker.fetch(
+      new Request("https://device.test/api/setup", {
+        headers: { ID: DEVICE_ID }
+      }),
+      env
+    );
+    const { api_key: token } = await setupResponse.json<{ api_key: string }>();
+
+    const response = await worker.fetch(
+      new Request("https://device.test/api/image", {
+        headers: {
+          ID: DEVICE_ID,
+          "Access-Token": token,
+          "Update-Source": "timer"
+        }
+      }),
+      env
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Image unavailable" });
   });
 
   test("display schedules the next wake for the next Los Angeles slot", async () => {
@@ -843,12 +1097,12 @@ describe("TRMNL BYOS device service", () => {
     database.publishedGeneration = {
       filename: "daily-brief-20261007T170000Z.png",
       objectKey: "generations/20261007T170000Z/daily-brief.png",
-      byteSize: 4
+      byteSize: VALID_FOUR_GRAY_PNG.byteLength
     };
     const bucket = new TestBucket();
     bucket.objects.set(
       "generations/20261007T170000Z/daily-brief.png",
-      new Uint8Array([137, 80, 78, 71])
+      VALID_FOUR_GRAY_PNG
     );
     const env = testEnv(database, bucket);
     const setupResponse = await worker.fetch(
@@ -876,7 +1130,7 @@ describe("TRMNL BYOS device service", () => {
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(
-      new Uint8Array([137, 80, 78, 71])
+      Uint8Array.from(VALID_FOUR_GRAY_PNG)
     );
   });
 
@@ -926,16 +1180,8 @@ describe("TRMNL BYOS device service", () => {
     expect(response.status).toBe(404);
   });
 
-  test("fixture generation publishes a decodable 800x480 monochrome PNG", async () => {
-    const png = new PNG({ width: 800, height: 480 });
-    for (let offset = 0; offset < png.data.length; offset += 4) {
-      const black = offset < 800 * 4 * 80;
-      png.data[offset] = black ? 0 : 255;
-      png.data[offset + 1] = black ? 0 : 255;
-      png.data[offset + 2] = black ? 0 : 255;
-      png.data[offset + 3] = 255;
-    }
-    const screenshot = PNG.sync.write(png);
+  test("fixture generation publishes a decodable 800x480 four-gray PNG", async () => {
+    const screenshot = fourGrayPng();
     const screenshotBase64 = Buffer.from(screenshot).toString("base64");
     const close = vi.fn();
     const setViewport = vi.fn();
@@ -968,7 +1214,7 @@ describe("TRMNL BYOS device service", () => {
     expect(setViewport).toHaveBeenNthCalledWith(1, {
       width: 800,
       height: 480,
-      deviceScaleFactor: 2
+      deviceScaleFactor: 1
     });
     expect(setViewport).toHaveBeenNthCalledWith(2, {
       width: 800,
@@ -984,18 +1230,26 @@ describe("TRMNL BYOS device service", () => {
     expect(generation).toBeDefined();
     const stored = bucket.objects.get(generation!.objectKey);
     expect(stored).toBeDefined();
+    expect(bucket.metadata.get(generation!.objectKey)).toEqual({
+      width: "800",
+      height: "480",
+      palette: "four-gray"
+    });
     const decoded = PNG.sync.read(Buffer.from(stored!));
     expect([decoded.width, decoded.height]).toEqual([800, 480]);
-    let isMonochrome = true;
+    const luminanceLevels = new Set<number>();
     for (let offset = 0; offset < decoded.data.length; offset += 4) {
       const red = decoded.data[offset];
-      isMonochrome &&=
+      expect(
         red === decoded.data[offset + 1] &&
         red === decoded.data[offset + 2] &&
-        (red === 0 || red === 255) &&
-        decoded.data[offset + 3] === 255;
+        decoded.data[offset + 3] === 255
+      ).toBe(true);
+      luminanceLevels.add(red);
     }
-    expect(isMonochrome).toBe(true);
+    expect([...luminanceLevels].sort((left, right) => left - right)).toEqual([
+      0, 85, 170, 255
+    ]);
   });
 
   test("an administrator can manage weather coordinates without changing deployment secrets", async () => {

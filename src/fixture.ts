@@ -37,7 +37,7 @@ export function fixtureHtml(): string {
   <main>
     <section>
       <h2>Daily Brief fixture</h2>
-      <p class="strong">800 × 480 monochrome PNG</p>
+      <p class="strong">800 × 480 four-gray PNG</p>
       <p>Bundled icon and text only.</p>
     </section>
     <section>

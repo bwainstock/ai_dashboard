@@ -128,28 +128,28 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     body { display: grid; grid-template-rows: 72px 112px 256px 40px; }
     header { display: grid; grid-template-columns: 235px 1fr 190px; align-items: center; margin: 0 18px; border-bottom: 4px solid var(--ink); }
     .date strong { font-size: 28px; line-height: 1; }
-    .date span { margin-left: 8px; font-family: "Arial Narrow", Arial, sans-serif; font-size: 15px; font-style: normal; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+    .date span { margin-left: 8px; font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-style: normal; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
     h1 { margin: 0; font-size: 25px; text-align: center; }
     .brand { text-align: right; }
     .brand strong { display: block; font-size: 19px; }
-    .brand span { display: block; margin-top: 3px; font-size: 12px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+    .brand span { display: block; margin-top: 3px; font-size: 14px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
     .weather-band { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px 18px; }
     .forecast { min-width: 0; display: grid; grid-template-columns: 54px 1fr; align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 13px; padding: 8px 10px; }
     .forecast svg { width: 50px; height: 50px; }
     .forecast .label { display: block; margin-bottom: 5px; }
     .forecast strong { display: block; font-size: 25px; line-height: .95; }
-    .forecast p { margin: 6px 0 0; font-size: 12px; font-weight: 900; line-height: 1.15; }
+    .forecast p { margin: 6px 0 0; font-size: 14px; font-weight: 900; line-height: 1.15; }
     main { padding: 2px 18px 8px; }
     .agenda-head { display: flex; justify-content: space-between; align-items: baseline; height: 24px; }
-    .agenda-head span:last-child { font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .agenda-head span:last-child { font-size: 14px; font-weight: 900; text-transform: uppercase; }
     .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); gap: 7px 10px; height: 222px; }
-    .agenda-item { min-width: 0; display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 11px; padding: 6px 9px; overflow: hidden; }
-    .agenda-item time { font-size: 13px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
-    .agenda-item time small { display: block; margin-bottom: 3px; font-size: 12px; letter-spacing: .05em; }
+    .agenda-item { min-width: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 8px; border: 2px solid var(--ink); border-radius: 11px; padding: 6px 9px; overflow: hidden; }
+    .agenda-item time { font-size: 14px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+    .agenda-item time small { display: block; margin-bottom: 3px; font-size: 14px; letter-spacing: .03em; }
     .agenda-item strong { display: block; font-size: 19px; line-height: .95; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .agenda-item span { display: block; margin-top: 4px; font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .agenda-empty { grid-column: 1 / -1; grid-row: 1 / -1; display: flex; align-items: center; border: 2px solid var(--ink); border-radius: 11px; padding: 18px; font-family: Georgia, "Times New Roman", serif; font-size: 30px; font-style: italic; font-weight: 700; }
-    footer { display: flex; justify-content: space-between; align-items: center; margin: 0 18px; border-top: 2px solid var(--ink); font-size: 12px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+    .agenda-item span { display: block; margin-top: 4px; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agenda-empty { grid-column: 1 / -1; grid-row: 1 / -1; display: flex; align-items: center; border: 2px solid var(--ink); border-radius: 11px; padding: 18px; font-family: Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 900; }
+    footer { display: flex; justify-content: space-between; align-items: center; margin: 0 18px; border-top: 2px solid var(--ink); font-size: 14px; font-weight: 900; letter-spacing: .02em; text-transform: uppercase; }
     .stale { border: 2px solid var(--ink); padding: 2px 5px; }
   </style>
 </head>

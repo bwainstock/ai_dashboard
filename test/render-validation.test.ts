@@ -113,7 +113,10 @@ async function validateDescendant(
 
   await validateRenderedPage(
     {
-      evaluate: async <Result>(callback: () => Result) => callback()
+      evaluate: async <Result>(
+        callback: (luminanceLevels: readonly number[]) => Result,
+        luminanceLevels: readonly number[]
+      ) => callback(luminanceLevels)
     },
     "Daily Brief"
   );
@@ -133,6 +136,12 @@ test("accepts intentionally clipped text overflow", async () => {
   ).resolves.toBeUndefined();
 });
 
+test("accepts supported neutral gray styling before PNG quantization", async () => {
+  await expect(
+    validateDescendant({}, {}, { color: "rgb(85, 85, 85)" })
+  ).resolves.toBeUndefined();
+});
+
 test.each([
   [
     "outside viewport bounds",
@@ -149,7 +158,7 @@ test.each([
 });
 
 describe.each(VIEWS)("%s renderer validation", (view) => {
-  test("accepts an 800x480 monochrome render with icons, text, and readable missing states", () => {
+  test("accepts an 800x480 four-gray render with icons, text, and readable missing states", () => {
     expect(() => assertRenderInspection(view, inspection())).not.toThrow();
   });
 
@@ -157,6 +166,7 @@ describe.each(VIEWS)("%s renderer validation", (view) => {
     ["overflow", { overflowingElements: 1 }],
     ["missing icon", { iconCount: 0 }],
     ["text below the tested device limit", { minimumVisibleTextSize: 11 }],
+    ["a fifth gray", { nonMonochromeValues: ["rgb(128, 128, 128)"] }],
     ["color", { nonMonochromeValues: ["rgb(255, 0, 0)"] }],
     [
       "unreadable missing state",

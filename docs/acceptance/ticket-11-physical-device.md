@@ -23,35 +23,40 @@ export DEVICE_TOKEN="$(printf '%s' "$SETUP_JSON" | jq -er .api_key)"
 unset SETUP_JSON
 
 DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" \
-  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN" timer
+  npm run acceptance:esphome-image -- "$DEVICE_ORIGIN"
 
 unset DEVICE_TOKEN DEVICE_ID DEVICE_ORIGIN
 ```
 
-The check authenticates one `/api/image` request, decodes the PNG, enforces
-800x480 dimensions and an exact opaque black-and-white palette, validates
-non-sensitive generation headers, and confirms ETag revalidation.
+The check authenticates both explicit `/api/image` views, decodes both PNGs,
+enforces the byte limit, 800x480 dimensions, and the exact opaque four-gray
+palette (`0`, `85`, `170`, and `255`), validates requested view identity and
+one shared generation, and confirms per-view ETag revalidation.
 
 ## 2. Physical image, navigation, and scheduling
 
-1. Reset normally. Confirm the GPIO21 user LED blinks rapidly during one image
-   download, the Daily Brief refreshes once, and the LED returns steady.
+1. Reset normally. Confirm the GPIO21 user LED blinks rapidly while both images
+   stage, the Daily Brief refreshes once only after both complete, and the LED
+   returns steady.
 2. Confirm landscape orientation, readable typography at the agreed viewing
    distance, recognizable labeled icons, and no failed-decode screen.
-3. Double-click Key 3. Confirm one Calendar View request and one panel refresh.
+3. Disable Wi-Fi after startup, press Key 3 once, and confirm Calendar View
+   appears with one panel refresh and no device request.
 4. Double-click Key 3 again. Confirm the cycle returns to Daily Brief.
 5. Observe automatic local refreshes at 06:32, 10:32, 15:02, and 19:02. Each
    must select Daily Brief and fetch the complete generation produced two
    minutes earlier.
-6. Repeat a timer refresh without a new generation and confirm ETag caching
-   avoids a visible e-paper refresh.
-7. During a controlled test, make Wi-Fi unavailable for one request and restore
-   it. Confirm the previous image remains and the next scheduled request
-   recovers without reflashing.
+6. Repeat a timer refresh without a new generation and confirm both ETag checks
+   avoid image downloads and a visible e-paper refresh.
+7. During controlled tests, fail the second view download and then a decode.
+   Confirm both previously active views remain navigable, with no mixed pair,
+   and the next scheduled refresh recovers.
 8. Press Key 1 while awake. Confirm maintenance mode remains idle without
    scheduled image requests and permits serial logs and password-protected OTA.
    Reset to resume normal operation.
-9. Confirm missing or invalid device credentials cannot retrieve `/api/image`.
+9. Record the `Activated generation ... PSRAM headroom` serial log after four
+   decoded image buffers are allocated.
+10. Confirm missing or invalid device credentials cannot retrieve `/api/image`.
 
 Record firmware version, generation ID, filename, observed times, and
 non-sensitive symptoms. Never retain tokens or household source data.

@@ -71,6 +71,9 @@
             "namedImageCaching",
             "buttonCycle",
             "timerReset",
+            "viewSetMemoryHeadroom",
+            "partialFailurePreservation",
+            "offlineNavigation",
             "wifiReconnection",
             "scheduledWakes",
             "authenticatedPrivacy"
@@ -100,6 +103,9 @@
         "notes": { "type": "string" }
       },
       "additionalProperties": false
+    },
+    "fourGrayPrototype": {
+      "$ref": "#/$defs/fourGrayPrototype"
     }
   },
   "$defs": {
@@ -109,14 +115,14 @@
         "filename",
         "byteSize",
         "dimensions",
-        "monochrome",
+        "palette",
         "nonBlank"
       ],
       "properties": {
         "filename": { "type": "string", "pattern": "\\.png$" },
         "byteSize": { "type": "integer", "minimum": 1 },
         "dimensions": { "const": "800x480" },
-        "monochrome": { "const": true },
+        "palette": { "const": "four-gray" },
         "nonBlank": { "const": true }
       },
       "additionalProperties": false
@@ -129,6 +135,138 @@
         "observedAt": { "type": ["string", "null"], "format": "date-time" },
         "notes": { "type": "string" }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": { "enum": ["pass", "fail"] }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "const": "fail" }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "notes": { "type": "string", "pattern": "\\S" }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "fourGrayPrototype": {
+      "type": "object",
+      "required": [
+        "status",
+        "firmwareCommit",
+        "refreshDurationMilliseconds",
+        "psramHeadroomBeforeBytes",
+        "psramHeadroomAfterBytes",
+        "observations",
+        "notes"
+      ],
+      "properties": {
+        "status": { "enum": ["pending", "pass", "fail"] },
+        "firmwareCommit": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "refreshDurationMilliseconds": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "psramHeadroomBeforeBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "psramHeadroomAfterBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "observations": {
+          "type": "object",
+          "required": [
+            "distinctGrayLevels",
+            "refreshCompletion",
+            "ghosting",
+            "controllerHealth",
+            "monochromeRollback"
+          ],
+          "properties": {
+            "distinctGrayLevels": { "$ref": "#/$defs/observation" },
+            "refreshCompletion": { "$ref": "#/$defs/observation" },
+            "ghosting": { "$ref": "#/$defs/observation" },
+            "controllerHealth": { "$ref": "#/$defs/observation" },
+            "monochromeRollback": { "$ref": "#/$defs/observation" }
+          },
+          "additionalProperties": false
+        },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "pass" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "firmwareCommit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "refreshDurationMilliseconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "psramHeadroomBeforeBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "psramHeadroomAfterBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "observations": {
+                "properties": {
+                  "distinctGrayLevels": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "refreshCompletion": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "ghosting": {
+                    "properties": {
+                      "status": { "const": "pass" },
+                      "notes": { "type": "string", "pattern": "\\S" }
+                    }
+                  },
+                  "controllerHealth": {
+                    "properties": { "status": { "const": "pass" } }
+                  },
+                  "monochromeRollback": {
+                    "properties": { "status": { "const": "pass" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "battery": {

@@ -1,4 +1,8 @@
 import { PNG } from "pngjs";
+import {
+  FOUR_GRAY_PNG_CONTRACT,
+  isFourGrayLuminance
+} from "../shared/four-gray-contract.mjs";
 
 export const HARDWARE_OBSERVATIONS = [
   "orientation",
@@ -8,9 +12,20 @@ export const HARDWARE_OBSERVATIONS = [
   "namedImageCaching",
   "buttonCycle",
   "timerReset",
+  "viewSetMemoryHeadroom",
+  "partialFailurePreservation",
+  "offlineNavigation",
   "wifiReconnection",
   "scheduledWakes",
   "authenticatedPrivacy"
+];
+
+export const FOUR_GRAY_OBSERVATIONS = [
+  "distinctGrayLevels",
+  "refreshCompletion",
+  "ghosting",
+  "controllerHealth",
+  "monochromeRollback"
 ];
 
 function generationFrom(filename, prefix) {
@@ -24,8 +39,8 @@ export function validatePngArtifact(
   filename,
   expectedPrefix,
   maximumBytes,
-  expectedWidth = 800,
-  expectedHeight = 480
+  expectedWidth = FOUR_GRAY_PNG_CONTRACT.width,
+  expectedHeight = FOUR_GRAY_PNG_CONTRACT.height
 ) {
   if (bytes.byteLength > maximumBytes) {
     throw new Error(
@@ -54,11 +69,17 @@ export function validatePngArtifact(
     const green = png.data[offset + 1];
     const blue = png.data[offset + 2];
     const alpha = png.data[offset + 3];
-    if (red !== green || green !== blue || alpha !== 255) {
+    if (
+      red !== green ||
+      green !== blue ||
+      alpha !== FOUR_GRAY_PNG_CONTRACT.opaqueAlpha
+    ) {
       throw new Error(`${filename} contains color or transparency`);
     }
-    if (red !== 0 && red !== 255) {
-      throw new Error(`${filename} contains pixels outside the 1-bit palette`);
+    if (!isFourGrayLuminance(red)) {
+      throw new Error(
+        `${filename} contains pixels outside the four-gray palette`
+      );
     }
     tones.add(red);
   }
@@ -67,7 +88,7 @@ export function validatePngArtifact(
     filename,
     byteSize: bytes.byteLength,
     dimensions: `${png.width}x${png.height}`,
-    monochrome: true,
+    palette: "four-gray",
     nonBlank: true
   };
 }
@@ -161,8 +182,69 @@ export function createPendingReport({
   };
 }
 
+export function createPendingFourGrayPrototype() {
+  return {
+    status: "pending",
+    firmwareCommit: null,
+    refreshDurationMilliseconds: null,
+    psramHeadroomBeforeBytes: null,
+    psramHeadroomAfterBytes: null,
+    observations: Object.fromEntries(
+      FOUR_GRAY_OBSERVATIONS.map((name) => [
+        name,
+        { status: "pending", observedAt: null, notes: "" }
+      ])
+    ),
+    notes: "Physical hardware acceptance has not yet been performed."
+  };
+}
+
 function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isIsoDateTime(value) {
+  if (typeof value !== "string") return false;
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/
+  );
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour =
+    match[7] === undefined ? undefined : Number(match[7]);
+  const offsetMinute =
+    match[8] === undefined ? undefined : Number(match[8]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31
+  ];
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth[month - 1] &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    (offsetHour === undefined ||
+      (offsetHour <= 23 && offsetMinute <= 59))
+  );
 }
 
 export function validateReport(report, configuredLimits) {
@@ -205,6 +287,100 @@ export function validateReport(report, configuredLimits) {
       !nonEmpty(observation.observedAt)
     ) {
       errors.push(`hardware ${name} result requires observedAt`);
+    }
+  }
+  const fourGray = report?.fourGrayPrototype;
+  if (fourGray !== undefined) {
+    if (!["pending", "pass", "fail"].includes(fourGray?.status)) {
+      errors.push("fourGrayPrototype status is invalid");
+    }
+    if (
+      fourGray?.firmwareCommit !== null &&
+      !/^[0-9a-f]{40}$/.test(fourGray?.firmwareCommit ?? "")
+    ) {
+      errors.push(
+        "fourGrayPrototype firmwareCommit must be null or a 40-character lowercase hexadecimal commit"
+      );
+    }
+    for (const [field, minimum] of [
+      ["refreshDurationMilliseconds", 1],
+      ["psramHeadroomBeforeBytes", 0],
+      ["psramHeadroomAfterBytes", 0]
+    ]) {
+      const value = fourGray?.[field];
+      if (
+        value !== null &&
+        (!Number.isInteger(value) || value < minimum)
+      ) {
+        errors.push(
+          `fourGrayPrototype ${field} must be null or a valid integer`
+        );
+      }
+    }
+    for (const name of FOUR_GRAY_OBSERVATIONS) {
+      const observation = fourGray?.observations?.[name];
+      if (!["pending", "pass", "fail"].includes(observation?.status)) {
+        errors.push(`fourGrayPrototype ${name} status is invalid`);
+      }
+      if (
+        observation?.observedAt !== null &&
+        observation?.observedAt !== undefined &&
+        !isIsoDateTime(observation.observedAt)
+      ) {
+        errors.push(
+          `fourGrayPrototype ${name} observedAt must be null or an ISO 8601 timestamp`
+        );
+      }
+      if (observation?.status === "fail" && !nonEmpty(observation.notes)) {
+        errors.push(`fourGrayPrototype ${name} failure requires notes`);
+      }
+      if (
+        name === "ghosting" &&
+        observation?.status === "pass" &&
+        !nonEmpty(observation.notes)
+      ) {
+        errors.push(
+          "fourGrayPrototype ghosting pass requires notes describing visible ghosting"
+        );
+      }
+      if (
+        observation?.status !== "pending" &&
+        !nonEmpty(observation?.observedAt)
+      ) {
+        errors.push(`fourGrayPrototype ${name} result requires observedAt`);
+      }
+    }
+    if (fourGray?.status === "pass") {
+      if (!/^[0-9a-f]{40}$/.test(fourGray.firmwareCommit ?? "")) {
+        errors.push(
+          "fourGrayPrototype pass requires a 40-character firmwareCommit"
+        );
+      }
+      if (
+        !Number.isFinite(fourGray.refreshDurationMilliseconds) ||
+        fourGray.refreshDurationMilliseconds <= 0
+      ) {
+        errors.push(
+          "fourGrayPrototype pass requires refreshDurationMilliseconds"
+        );
+      }
+      for (const field of [
+        "psramHeadroomBeforeBytes",
+        "psramHeadroomAfterBytes"
+      ]) {
+        if (!Number.isFinite(fourGray[field]) || fourGray[field] < 0) {
+          errors.push(`fourGrayPrototype pass requires ${field}`);
+        }
+      }
+      if (
+        FOUR_GRAY_OBSERVATIONS.some(
+          (name) => fourGray.observations?.[name]?.status !== "pass"
+        )
+      ) {
+        errors.push(
+          "fourGrayPrototype pass requires passing physical observations"
+        );
+      }
     }
   }
   const battery = report?.battery;

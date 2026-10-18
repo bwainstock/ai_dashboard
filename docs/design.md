@@ -77,23 +77,37 @@ device identifier and generation metadata are not credentials.
 
 ## Device protocol and navigation
 
-The production device interface is one authenticated `GET /api/image` request.
-`ID`, `Access-Token`, and `Update-Source` remain headers. The Worker selects the
-current atomically published view and returns the opaque 800x480 PNG directly
-with private cache validators and non-sensitive generation headers.
+The production device interface is authenticated `GET /api/image` requests.
+`ID` and `Access-Token` remain headers. ESPHome explicitly selects Daily Brief
+or Calendar View with `X-Dashboard-View`. It first performs bodyless metadata
+revalidation for both views, then pins both image downloads with
+`X-Dashboard-Generation` so a publication between requests cannot create a
+mixed pair.
 
-- Scheduled refresh: ESPHome sends `Update-Source: timer`, which selects Daily
-  Brief and resets the server-managed cursor.
-- Key 3 double-click: ESPHome sends `Update-Source: button`, which advances the
-  cursor through Daily Brief and Calendar View.
-- ESPHome uses `ETag` revalidation and skips the physical panel refresh for an
-  unchanged image.
+- Production firmware uses the LUT-backed `gdey075t7-gray4-lut` model from
+  the repository-vendored `parkghost/esphome-epaper` component accepted on the
+  installed target. `esphome/vendor/parkghost-esphome-epaper/UPSTREAM.md`
+  records the immutable upstream revision and Apache-2.0 provenance. The
+  adapter owns controller commands, waveform loading, grayscale packing,
+  active-low busy handling, and refresh timing.
+- Startup and scheduled refresh stage both views in the inactive PSRAM slot.
+  All four active/staging slots decode as grayscale. The slot becomes active
+  only after both images decode successfully.
+- Scheduled refresh resets local selection to Daily Brief.
+- One Key 3 press switches between the two active decoded images locally;
+  navigation does not require Wi-Fi or a Worker request.
+- Per-view `ETag` revalidation skips both downloads and the physical panel
+  refresh when the published generation is unchanged.
+- A request, authentication, download, decode, or mixed-generation failure
+  leaves the previous complete slot active.
 - The device remains awake in the initial production cutover. It refreshes at
   06:32, 10:32, 15:02, and 19:02 local time, two minutes after Cloudflare's
   generation slots. Deep sleep is deferred to #36.
 - Pressing Key 1 while awake, or holding it during reset, latches maintenance
   mode until the next reset and suppresses scheduled image requests so serial
   diagnostics and password-protected OTA remain available.
+- The repository retains a separately compiled monochrome
+  `waveshare_epaper`/`7.50inv2` configuration for rollback.
 
 `/api/setup`, `/api/display`, and `/images/:filename` remain rollback-only
 TRMNL BYOS compatibility routes.
@@ -113,14 +127,14 @@ For each slot:
 
 1. Refresh due sources in parallel.
 2. Preserve the newest valid normalized snapshot for any failed source.
-3. Render all active views using a self-contained HTML document at 2x device
-   scale, downsample once with high-quality filtering, and apply restrained
-   4x4 ordered dithering to an exact 1-bit black-and-white palette. This keeps
-   typography and line art crisp while representing any remaining edge
-   antialiasing with stable e-paper-safe patterns; photo-oriented error
-   diffusion is not used for these UI-heavy views.
-4. Validate each screenshot as an 800x480 1-bit-palette PNG within the device
-   model's tested size limit.
+3. Render all active views using a self-contained HTML document at the native
+   800x480 device scale and quantize each pixel to the nearest exact luminance
+   level in `0`, `85`, `170`, and `255`. Native-scale rasterization preserves
+   browser font hinting and antialiased text-edge coverage. Supersampling,
+   downsampling, and spatial dithering are avoided because they make small
+   glyphs irregular or speckled.
+4. Validate each screenshot as an opaque, neutral 800x480 four-gray PNG within
+   the device model's tested size limit.
 5. Write immutable R2 objects.
 6. In one D1 batch, record the complete generation set and atomically advance
    the singleton current-generation pointer only after every required image is
@@ -134,7 +148,7 @@ last-good section with its snapshot age.
 
 ## Screen design
 
-Both active views are fixed 800x480 monochrome compositions. They share condensed
+Both active views are fixed 800x480 four-gray compositions. They share condensed
 sans-serif labels and numbers, editorial serif headings, inversion, spacing,
 and rule styles. Use bundled, open-licensed SVG assets rendered inline and pair
 every icon with text; do not depend on remote assets.
@@ -180,7 +194,7 @@ Rules:
 - Show shortened location only on Calendar View.
 - Never show descriptions, attendees, conferencing links, organizer addresses, or personal email addresses.
 - Use compact 12-hour local time; all-day events precede timed events.
-- Distinguish calendar ownership with deterministic monochrome edge patterns,
+- Distinguish calendar ownership with deterministic edge patterns,
   not color alone.
 
 ### Deferred: Lunch
