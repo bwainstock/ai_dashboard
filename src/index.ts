@@ -13,11 +13,6 @@ import {
 } from "./epaper-rendering";
 import { effectiveMaximumImageBytes } from "./device-limits";
 import {
-  normalizeCalendarEvents,
-  type CalendarEvent,
-  type CalendarSourceEvent
-} from "./calendar";
-import {
   buildCalendarAuthorizationUrl,
   createCalendarOAuthState,
   decryptRefreshToken,
@@ -43,7 +38,6 @@ import {
 } from "./gmail-controls";
 import {
   exchangeCalendarAuthorizationCode,
-  fetchGoogleCalendarEvents,
   listGoogleCalendars,
   refreshCalendarAccessToken,
   revokeGoogleAccess
@@ -57,6 +51,7 @@ import {
   replaceCalendarConfiguration,
   replaceWeatherConfiguration
 } from "./administration-configuration";
+import { refreshCalendarFeedsForGeneration } from "./calendar-feeds";
 
 export interface Env {
   DB: D1Database;
@@ -965,43 +960,6 @@ async function discoverCalendars(
     }
   }
 
-async function fetchCalendarSnapshot(
-    env: Env,
-    now: Date,
-    timezone: string
-  ): Promise<CalendarEvent[]> {
-    const accounts = await env.DB.prepare(
-      `SELECT account_id, display_label, encrypted_refresh_token, oauth_status
-       FROM calendar_accounts
-       WHERE oauth_status = 'connected'
-       ORDER BY account_id`
-    ).all<CalendarAccountRow>();
-    const selected = await env.DB.prepare(
-      `SELECT account_id, calendar_id, display_label
-       FROM selected_calendars ORDER BY account_id, calendar_id`
-    ).all<SelectedCalendarRow>();
-    const source: CalendarSourceEvent[] = [];
-    const pageBudget = { remaining: 100 };
-    for (const account of accounts.results) {
-      const calendarIds = selected.results
-        .filter(({ account_id }) => account_id === account.account_id)
-        .map(({ calendar_id }) => calendar_id);
-      if (calendarIds.length === 0) continue;
-      source.push(
-        ...(await fetchGoogleCalendarEvents({
-          accessToken: await accessTokenForAccount(env, account),
-          accountId: account.account_id,
-          ownerLabel: account.display_label,
-          calendarIds,
-          timeMin: now.toISOString(),
-          timeMax: new Date(now.getTime() + 4 * 86_400_000).toISOString(),
-          pageBudget
-        }))
-      );
-    }
-    return normalizeCalendarEvents(source, { now, timezone, days: 3 });
-  }
-
 async function weatherConfigurationAuthorized(
   request: Request,
   env: Env
@@ -1294,37 +1252,12 @@ async function runScheduled(
           .bind(fetchedAt)
           .run();
       },
-      fetchCalendar: () =>
-        fetchCalendarSnapshot(env, now, configuration.timezone),
-      async loadLatestCalendar() {
-        const row = await env.DB.prepare(
-          `SELECT events_json, fetched_at FROM calendar_snapshots
-           ORDER BY fetched_at DESC, id DESC LIMIT 1`
-        ).first<{ events_json: string; fetched_at: string }>();
-        return row
-          ? {
-              snapshot: JSON.parse(row.events_json) as CalendarEvent[],
-              fetchedAt: row.fetched_at
-            }
-          : null;
-      },
-      async saveCalendar(events, fetchedAt) {
-        await env.DB.prepare(
-          `INSERT INTO calendar_snapshots (fetched_at, events_json)
-           VALUES (?, ?)`
-        )
-          .bind(fetchedAt, JSON.stringify(events))
-          .run();
-        await env.DB.prepare(
-          `UPDATE source_status SET state = 'fresh', last_success_at = ?,
-             error_code = NULL, consecutive_failures = 0,
-             last_failure_slot_key = NULL,
-             updated_at = CURRENT_TIMESTAMP
-           WHERE source = 'calendar'`
-        )
-          .bind(fetchedAt)
-          .run();
-      },
+      refreshCalendarFeeds: () =>
+        refreshCalendarFeedsForGeneration(
+          env,
+          now,
+          configuration.timezone
+        ),
       renderDailyBrief: async (model) =>
         renderDailyBrief(await scheduledBrowser(), model),
       renderCalendarView: async (model) =>

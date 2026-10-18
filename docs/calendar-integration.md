@@ -112,3 +112,23 @@ Explicit overrides take precedence over generated copies. Distinct Calendar
 Labels and Household Labels are appended in configured-feed order without
 sorting or duplication; a cancellation from any copy removes the duplicated
 occurrence.
+
+## Calendar Feed generation contract
+
+Scheduled and forced generations refresh enabled feeds first with at most four
+requests in flight. Each request uses that feed's stored `ETag` and
+`Last-Modified` validators. Refresh, parsing, snapshot, and health updates are
+independent per feed, so one failure does not discard healthy feed results.
+
+A failed feed may contribute only its own last successful snapshot through 72
+hours after its last successful refresh. It is marked Stale during that window;
+afterward it is marked Unavailable and omitted. Disabled feeds are excluded
+immediately without deleting their encrypted URL, snapshot, or health history.
+A valid empty feed remains usable and renders the normal empty state. When no
+enabled feed is usable, both active views render `Calendar unavailable`.
+
+The resulting feed snapshots pass through recurrence expansion and configured
+order merging before the existing Daily Brief and Calendar View limits,
+windows, privacy rules, freshness markers, and global update timestamp are
+applied. Both PNGs are still written as immutable objects before one D1 batch
+publishes the complete generation pointer.

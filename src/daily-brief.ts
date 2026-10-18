@@ -96,7 +96,13 @@ export function dailyBriefHtml(model: DailyBriefWeatherModel): string {
     minute: "2-digit"
   }).format(renderedAt);
   const firstDay = localDate(renderedAt, model.timezone);
-  const events = (model.calendar ?? []).slice(0, 6);
+  const dayAfterTomorrow = addDays(firstDay, 2);
+  const events = (model.calendar ?? [])
+    .filter((event) => {
+      const date = eventDate(event, model.timezone);
+      return date >= firstDay && date < dayAfterTomorrow;
+    })
+    .slice(0, 6);
   const agenda = model.calendarUnavailable
     ? `<div class="agenda-empty" data-missing-state>Calendar unavailable</div>`
     : events.length === 0

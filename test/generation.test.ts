@@ -262,6 +262,136 @@ describe("scheduled weather generation", () => {
     });
   });
 
+  test("independent Calendar Feed failures publish healthy events with a stale warning", async () => {
+    const calendar: CalendarEvent[] = [
+      {
+        occurrenceId: "school|2026-10-07",
+        title: "School holiday",
+        start: "2026-10-07",
+        end: "2026-10-08",
+        allDay: true,
+        tentative: false,
+        private: false,
+        ownerLabels: ["Family"]
+      }
+    ];
+    const boundary = ports({
+      refreshCalendarFeeds: vi.fn().mockResolvedValue({
+        calendar,
+        staleAgeMinutes: 180,
+        unavailable: false,
+        failures: [{ id: "activities", code: "timeout" }]
+      })
+    });
+
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(result.status).toBe("published");
+    expect(boundary.renderDailyBrief).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar,
+        calendarStaleAgeMinutes: 180
+      })
+    );
+    expect(boundary.renderCalendarView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar,
+        stale: true,
+        staleAgeMinutes: 180
+      })
+    );
+    expect(boundary.recordSourceFailure).toHaveBeenCalledWith(
+      "2026-10-07T10:30[America/Los_Angeles]",
+      "calendar",
+      "CALENDAR_FETCH_FAILED",
+      "One or more Calendar Feeds failed"
+    );
+  });
+
+  test("no usable enabled Calendar Feed publishes Calendar unavailable in both views", async () => {
+    const boundary = ports({
+      refreshCalendarFeeds: vi.fn().mockResolvedValue({
+        calendar: [],
+        unavailable: true,
+        failures: [{ id: "school", code: "http_error" }]
+      })
+    });
+
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000,
+        forcedSlotKey: "manual-calendar-unavailable"
+      },
+      boundary
+    );
+
+    expect(result.status).toBe("published");
+    expect(boundary.renderDailyBrief).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar: [],
+        calendarUnavailable: true
+      })
+    );
+    expect(boundary.renderCalendarView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar: [],
+        unavailable: true
+      })
+    );
+  });
+
+  test("a Calendar Feed refresh boundary failure publishes an unavailable calendar", async () => {
+    const boundary = ports({
+      refreshCalendarFeeds: vi
+        .fn()
+        .mockRejectedValue(new Error("Calendar Feed storage unavailable"))
+    });
+
+    const result = await runScheduledWeatherGeneration(
+      {
+        now: new Date("2026-10-07T17:30:00Z"),
+        configuration: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+          timezone: "America/Los_Angeles",
+          slots: ["10:30"]
+        },
+        maximumImageBytes: 1_000_000
+      },
+      boundary
+    );
+
+    expect(result.status).toBe("published");
+    expect(boundary.renderDailyBrief).toHaveBeenCalledWith(
+      expect.objectContaining({ calendarUnavailable: true })
+    );
+    expect(boundary.recordSourceFailure).toHaveBeenCalledWith(
+      "2026-10-07T10:30[America/Los_Angeles]",
+      "calendar",
+      "CALENDAR_FETCH_FAILED",
+      "Calendar Feed storage unavailable"
+    );
+  });
+
   test("an upstream failure without a last valid snapshot fails explicitly", async () => {
     const boundary = ports({
       fetchWeather: vi.fn().mockRejectedValue(

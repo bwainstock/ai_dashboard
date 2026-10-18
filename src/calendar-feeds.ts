@@ -1,6 +1,19 @@
+import type { CalendarEvent } from "./calendar";
+import {
+  CalendarFeedFetchError,
+  fetchCalendarFeed,
+  fetchCalendarFeedsBounded
+} from "./calendar-feed-fetch";
+import {
+  normalizeICalendarFeed,
+  type CalendarFeedNormalizationResult
+} from "./ical-normalization";
+import { expandAndMergeCalendarFeedEvents } from "./ical-recurrence";
+
 const FEED_URL_CONTRACT = "calendar-feed-url";
 const FEED_URL_AAD = new TextEncoder().encode(`${FEED_URL_CONTRACT}:v1`);
 const MAXIMUM_FEEDS = 20;
+const MAXIMUM_STALE_AGE_MS = 72 * 60 * 60 * 1000;
 
 export interface CalendarFeedEnvironment {
   DB: D1Database;
@@ -753,8 +766,258 @@ export async function refreshEnabledCalendarFeeds(
     concurrency
   );
 }
-import {
-  CalendarFeedFetchError,
-  fetchCalendarFeed,
-  fetchCalendarFeedsBounded
-} from "./calendar-feed-fetch";
+
+interface GenerationFeedRow {
+  id: string;
+  encrypted_url: string;
+  calendar_label: string;
+  household_label: string | null;
+  fetched_at: string | null;
+  events_json: string | null;
+  etag: string | null;
+  last_modified: string | null;
+  last_success_at: string | null;
+}
+
+export interface CalendarFeedGenerationSnapshot {
+  calendar: CalendarEvent[];
+  unavailable: boolean;
+  staleAgeMinutes?: number;
+  failures: Array<{ id: string; code: string }>;
+}
+
+function snapshotWithCurrentLabels(
+  value: string,
+  calendarLabel: string,
+  householdLabel: string | null
+): CalendarFeedNormalizationResult | null {
+  try {
+    const snapshot = JSON.parse(value) as CalendarFeedNormalizationResult;
+    if (
+      !snapshot ||
+      !Array.isArray(snapshot.events) ||
+      typeof snapshot.skippedEventCount !== "number" ||
+      !Array.isArray(snapshot.skipReasons)
+    ) {
+      return null;
+    }
+    return {
+      ...snapshot,
+      events: snapshot.events.map((event) => ({
+        ...event,
+        calendarLabel,
+        householdLabel
+      }))
+    };
+  } catch {
+    return null;
+  }
+}
+
+function generationCalendarEvent(
+  event: ReturnType<typeof expandAndMergeCalendarFeedEvents>[number]
+): CalendarEvent {
+  return {
+    occurrenceId: `${event.uid.trim().normalize("NFC")}|${event.occurrenceId}`,
+    title: event.summary,
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay,
+    tentative: event.status === "tentative",
+    private: event.summary === "Busy" && event.location === undefined,
+    ownerLabels:
+      event.householdLabels.length > 0 ? event.householdLabels : ["Family"],
+    calendarLabels: event.calendarLabels,
+    ...(event.location ? { location: event.location } : {})
+  };
+}
+
+export async function refreshCalendarFeedsForGeneration(
+  env: CalendarFeedEnvironment,
+  now: Date,
+  timezone: string,
+  concurrency = 4
+): Promise<CalendarFeedGenerationSnapshot> {
+  const feeds = await env.DB.prepare(
+    `SELECT feed.id, feed.encrypted_url, feed.calendar_label,
+            feed.household_label, snapshot.fetched_at, snapshot.events_json,
+            snapshot.etag, snapshot.last_modified, health.last_success_at
+     FROM calendar_feeds AS feed
+     LEFT JOIN calendar_feed_snapshots AS snapshot ON snapshot.feed_id = feed.id
+     LEFT JOIN calendar_feed_health AS health ON health.feed_id = feed.id
+     WHERE feed.enabled = 1
+     ORDER BY feed.created_at, feed.id`
+  ).all<GenerationFeedRow>();
+  if (feeds.results.length === 0) {
+    return { calendar: [], unavailable: true, failures: [] };
+  }
+  const nowIso = now.toISOString();
+
+  const results = await fetchCalendarFeedsBounded(
+    feeds.results,
+    async (feed) => {
+      try {
+        if (!env.CALENDAR_FEED_URL_ENCRYPTION_KEY) {
+          throw new Error("Calendar Feed encryption is not configured");
+        }
+        const fetched = await fetchCalendarFeed(
+          await decryptCalendarFeedUrl(
+            feed.encrypted_url,
+            env.CALENDAR_FEED_URL_ENCRYPTION_KEY!
+          ),
+          {
+            fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
+            resolveHostname:
+              env.CALENDAR_FEED_RESOLVE_HOSTNAME ??
+              resolveCalendarFeedHostname,
+            parse: async (input) =>
+              normalizeICalendarFeed(input, {
+                timezone,
+                calendarLabel: feed.calendar_label,
+                householdLabel: feed.household_label
+              }),
+            etag: feed.etag,
+            lastModified: feed.last_modified
+          }
+        );
+        const snapshot =
+          fetched.kind === "updated"
+            ? fetched.snapshot
+            : feed.events_json
+              ? snapshotWithCurrentLabels(
+                  feed.events_json,
+                  feed.calendar_label,
+                  feed.household_label
+                )
+              : null;
+        if (!snapshot) {
+          throw new CalendarFeedFetchError("invalid_response");
+        }
+        const statements: D1PreparedStatement[] = [];
+        if (fetched.kind === "updated") {
+          statements.push(
+            env.DB.prepare(
+              `INSERT INTO calendar_feed_snapshots
+                 (feed_id, fetched_at, events_json, etag, last_modified)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(feed_id) DO UPDATE SET
+                 fetched_at = excluded.fetched_at,
+                 events_json = excluded.events_json,
+                 etag = excluded.etag,
+                 last_modified = excluded.last_modified`
+            ).bind(
+              feed.id,
+              nowIso,
+              JSON.stringify(snapshot),
+              fetched.etag,
+              fetched.lastModified
+            )
+          );
+        }
+        statements.push(
+          env.DB.prepare(
+            `INSERT INTO calendar_feed_health
+               (feed_id, state, last_attempt_at, last_success_at, failure_code)
+             VALUES (?, 'healthy', ?, ?, NULL)
+             ON CONFLICT(feed_id) DO UPDATE SET
+               state = 'healthy',
+               last_attempt_at = excluded.last_attempt_at,
+               last_success_at = excluded.last_success_at,
+               failure_code = NULL,
+               updated_at = CURRENT_TIMESTAMP`
+          ).bind(feed.id, nowIso, nowIso),
+          env.DB.prepare(
+            `INSERT INTO calendar_feed_health_history
+               (feed_id, state, failure_code)
+             VALUES (?, 'healthy', NULL)`
+          ).bind(feed.id)
+        );
+        await env.DB.batch(statements);
+        return { feed, snapshot, staleAgeMinutes: undefined, failure: null };
+      } catch (error) {
+        const code =
+          error instanceof CalendarFeedFetchError
+            ? error.code
+            : "invalid_response";
+        const lastSuccess = feed.last_success_at ?? feed.fetched_at;
+        const ageMilliseconds = lastSuccess
+          ? Math.max(0, now.getTime() - new Date(lastSuccess).getTime())
+          : Number.POSITIVE_INFINITY;
+        const storedSnapshot = feed.events_json
+          ? snapshotWithCurrentLabels(
+              feed.events_json,
+              feed.calendar_label,
+              feed.household_label
+            )
+          : null;
+        const usable =
+          storedSnapshot !== null &&
+          Number.isFinite(ageMilliseconds) &&
+          ageMilliseconds <= MAXIMUM_STALE_AGE_MS;
+        const state = usable ? "stale" : "unavailable";
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO calendar_feed_health
+               (feed_id, state, last_attempt_at, last_success_at, failure_code)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(feed_id) DO UPDATE SET
+               state = excluded.state,
+               last_attempt_at = excluded.last_attempt_at,
+               last_success_at = excluded.last_success_at,
+               failure_code = excluded.failure_code,
+               updated_at = CURRENT_TIMESTAMP`
+          ).bind(feed.id, state, nowIso, lastSuccess, code),
+          env.DB.prepare(
+            `INSERT INTO calendar_feed_health_history
+               (feed_id, state, failure_code)
+             VALUES (?, ?, ?)`
+          ).bind(feed.id, state, code)
+        ]);
+        return {
+          feed,
+          snapshot: usable ? storedSnapshot : null,
+          staleAgeMinutes: usable
+            ? Math.floor(ageMilliseconds / 60_000)
+            : undefined,
+          failure: { id: feed.id, code }
+        };
+      }
+    },
+    concurrency
+  );
+
+  const usable = results.filter(
+    (
+      result
+    ): result is typeof result & {
+      snapshot: CalendarFeedNormalizationResult;
+    } => result.snapshot !== null
+  );
+  const staleAges = usable.flatMap((result) =>
+    result.staleAgeMinutes === undefined ? [] : [result.staleAgeMinutes]
+  );
+  const calendar = expandAndMergeCalendarFeedEvents(
+    usable.map(({ snapshot }) => snapshot),
+    { now, timezone, days: 3 }
+  ).map(generationCalendarEvent);
+  const failures = results.flatMap(({ failure }) => (failure ? [failure] : []));
+  if (failures.length === 0) {
+    await env.DB.prepare(
+      `UPDATE source_status SET state = 'fresh', last_success_at = ?,
+         error_code = NULL, consecutive_failures = 0,
+         last_failure_slot_key = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE source = 'calendar'`
+    )
+      .bind(nowIso)
+      .run();
+  }
+
+  return {
+    calendar,
+    unavailable: usable.length === 0,
+    ...(staleAges.length > 0
+      ? { staleAgeMinutes: Math.max(...staleAges) }
+      : {}),
+    failures
+  };
+}
