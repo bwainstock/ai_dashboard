@@ -1,7 +1,7 @@
 # Family Dashboard
 
-A shared e-ink dashboard focused on household calendars and dated weather
-forecasts. Lunch and Gmail-derived display sources are currently deferred.
+A shared e-ink dashboard focused on provider-neutral Calendar Feeds and dated
+weather forecasts. School lunch remains deferred.
 
 Target hardware:
 
@@ -14,9 +14,8 @@ Documentation:
 - [Domain glossary](GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
 - [Browser administration and operational status](docs/administration.md)
-- [Google Calendar integration](docs/calendar-integration.md)
-- [Privacy-isolated Gmail processing](docs/gmail-integration.md)
-- [Google OAuth Production cutover](docs/google-oauth-production-cutover.md)
+- [Calendar Feed integration](docs/calendar-integration.md)
+- [Product requirements](docs/product-requirements.md)
 - [Ticket #2 private BYOS acceptance](docs/acceptance/ticket-2-private-byos.md)
 - [Ticket #5 Calendar View acceptance](docs/acceptance/ticket-5-calendar-view.md)
 - [Ticket #11 physical device acceptance](docs/acceptance/ticket-11-physical-device.md)
@@ -77,8 +76,8 @@ unset DEVICE_TOKEN
 
 Changes to `main` are made through pull requests. The required `Validation /
 Validate` check installs dependencies from `package-lock.json`, then runs type
-checking, linting, the complete automated test suite, and dry-run builds for
-both Workers.
+checking, linting, the complete automated test suite, and the production Worker
+dry-run build.
 
 Maintainers may merge after the required check passes. Direct pushes, force
 pushes, branch deletion, and bypassing this requirement are disabled for

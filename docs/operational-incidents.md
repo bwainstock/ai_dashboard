@@ -1,46 +1,15 @@
 # Operational incidents and email
 
-The V1 incident conditions are evaluated after every five-minute scheduled
-run. Device-authentication state changes are evaluated immediately as well:
+Operational incidents are durable fixed-code states for actionable production
+conditions. They never include source content, URLs, exception messages, or
+credentials.
 
-- Google Calendar OAuth is revoked or expired.
-- An active weather or calendar source fails two consecutive scheduled
-  refreshes. Deferred lunch and Gmail sources do not create display incidents.
-- Rendering, image validation, storage, or pointer publication blocks a new
-  generation, including a Notices View render failure.
-- Gmail processing repeatedly fails.
-- Workers AI quota is exhausted.
-- A device presents missing or invalid credentials.
-- A provisioned device has not checked in for 24 hours.
+Active incident classes are repeated weather/calendar source failure,
+publication-blocking rendering failure, suspicious device authentication, and
+missing device check-in. The first scheduled source failure is suppressed; the
+second consecutive failure opens and sends one incident. Recovery resolves the
+active incident so a later recurrence may notify again.
 
-One source failure is recorded as stale but does not alert. Each active
-condition has one durable incident key, so repeated evaluations do not send
-duplicate email. Recovery resolves the active row; a later recurrence creates
-a new incident and sends a new email. Failed email delivery remains pending and
-is retried by the next scheduled evaluation.
-
-Operational email contains only one of these fixed codes:
-
-- `OAUTH_REVOKED_OR_EXPIRED`
-- `SOURCE_SCHEDULED_FAILURE`
-- `GMAIL_PROCESSING_REPEATED_FAILURE`
-- `AI_QUOTA_EXHAUSTED`
-- `GENERATION_PUBLICATION_BLOCKED`
-- `DEVICE_AUTH_SUSPICIOUS`
-- `DEVICE_CHECK_IN_MISSING`
-
-Email directs the operator to the Access-protected status page. It contains no
-account address, source payload, household content, token, exception text, or
-other secret.
-
-## Deployment
-
-Apply migration `0009_operational_incidents.sql`. Configure the
-`INCIDENT_EMAIL` send-email binding with an Email Routing-verified destination,
-then set `OPERATIONAL_EMAIL_FROM` and `OPERATIONAL_EMAIL_TO` to verified
-non-secret addresses. The placeholders in `wrangler.toml` must be replaced
-before deployment.
-
-`GET /admin/status` lists active incidents with their fixed code, occurrence
-time, and notification time. A null notification time means email delivery is
-pending.
+Configure the `INCIDENT_EMAIL` binding and verified
+`OPERATIONAL_EMAIL_FROM`/`OPERATIONAL_EMAIL_TO` values in the production Worker.
+If delivery fails, the incident remains pending and retries on the next check.

@@ -1,132 +1,46 @@
 # Browser administration and operational status
 
-The browser administration surface is served only from `ADMIN_ORIGIN`. The
-device protocol remains on `DEVICE_ORIGIN`; administration routes return 404
-from the device hostname, and device routes return 404 from the administration
-hostname. `workers_dev` is disabled so the Worker cannot bypass the configured
-custom-hostname policies.
+Administration is served only from `ADMIN_ORIGIN` and protected by Cloudflare
+Access. The Worker requires both authenticated identity headers and maps the
+normalized email to an active `administration_users` row. Administrators may
+mutate weather and Calendar Feeds; reviewers have read-only access.
 
-## Cloudflare Access boundary
+## Routes
 
-Create a Cloudflare Access self-hosted application for the administration
-hostname. Do not put the device hostname behind an interactive Access policy.
-The Worker requires both Access identity headers:
+- `GET /admin` and `GET /admin/app.js`: browser interface.
+- `GET|PUT /admin/weather-configuration`: weather and generation slots; `PUT`
+  is administrator-only.
+- `GET /admin/calendar-feeds`: redacted metadata for either role.
+- `POST /admin/calendar-feeds`: create a disabled feed.
+- `PATCH /admin/calendar-feeds/:id`: edit labels or disable.
+- `POST /admin/calendar-feeds/:id/test`: securely test and activate the stored
+  URL or a replacement.
+- `DELETE /admin/calendar-feeds/:id`: purge the feed and retained data.
+- `GET /admin/status`: device, generation, source, and fixed-code incident
+  status.
 
-- `Cf-Access-Authenticated-User-Email`
-- `Cf-Access-Jwt-Assertion`
+JSON administration bodies are limited to 64 KiB. Mutation routes require the
+administrator role.
 
-Access must validate the assertion before forwarding the request. The Worker
-then looks up the normalized email in D1 `administration_users`. An
-`administrator` may mutate configuration and Calendar Feeds; a `reviewer`
-may read weather, safe calendar configuration, Calendar Feed metadata,
-Sender-Domain Allowlist configuration, and status in the structured read-only
-interface. Anonymous, unknown, inactive, and
-device-token-only requests are denied.
+## Calendar Feed contract
 
-After applying migrations, bootstrap the household roles with parameterized D1
-statements equivalent to:
+Set `CALENDAR_FEED_URL_ENCRYPTION_KEY` as a Wrangler secret. Responses expose
+only feed ID, hostname, 12-character fingerprint, labels, enabled state, safe
+timestamps, and Healthy, Stale, Unavailable, or Disabled status. Plaintext and
+encrypted URLs are never returned.
 
-```sql
-INSERT INTO administration_users (email, role)
-VALUES ('administrator@example.com', 'administrator');
-INSERT INTO administration_users (email, role)
-VALUES ('reviewer@example.com', 'reviewer');
-```
+The secure test applies the same initial-request and redirect SSRF validation,
+timeouts, response-size limits, and parser limits used by generation. A failed
+replacement preserves the working URL, snapshot, enabled state, and health.
+Label-only edits do not fetch. Disable retains data; delete removes URL,
+snapshot, and health history.
 
-Use lowercase Access email identities. Role rows are configuration, not
-secrets.
+The current deployment has no provider-account authorization, provider
+discovery, email ingestion/review controls, or email-derived view routes.
 
-## Protected contracts
+## Deployment
 
-- `GET /admin` provides the browser entry point.
-- `GET /admin/configuration` is available to reviewers and administrators.
-- `PUT /admin/configuration` is administrator-only and manages weather
-  coordinates, render slots, Selected Calendars, and the Mom/Dad Household
-  Labels. It remains compatible for existing clients and uses the same
-  validation and replacement services as the section-specific routes.
-- `GET /admin/calendar/oauth/start`, OAuth callback, calendar discovery, and
-  calendar mutations are administrator-only. Reviewers may read
-  `GET /admin/calendar-configuration`.
-- `GET /admin/calendar-feeds` returns redacted Calendar Feed metadata to both
-  roles. `POST /admin/calendar-feeds`, `PATCH /admin/calendar-feeds/:id`, and
-  `DELETE /admin/calendar-feeds/:id` are administrator-only. Creation stores a
-  disabled feed. `POST /admin/calendar-feeds/:id/test` securely tests the
-  stored URL, or an optional replacement URL, and activates it only after a
-  successful fetch. A failed replacement preserves the prior URL, snapshot,
-  enabled state, and health.
-- `GET /admin/status` is available to reviewers and administrators.
-- `GET /admin/gmail-configuration` is available to reviewers and
-  administrators. `PUT` is administrator-only and replaces the complete
-  Sender-Domain Allowlist plus its school/childcare classifications. See
-  [Privacy-isolated Gmail processing](gmail-integration.md).
-- `GET /admin/gmail-review` is available to reviewers and administrators and
-  returns only minimal validated Protected Review Record fields.
-- `POST /admin/gmail-review/:id` is administrator-only. It accepts `dismiss`,
-  `correct`, or `publish`; corrections must contain exactly `category`,
-  `summary`, `relevantDate`, `action`, and `senderOrganization` and pass
-  independent validation. Dismissed records no longer produce Private Notice
-  Markers, while corrected-and-published fields are used by subsequent Daily
-  Brief and Notices View generations.
-
-Status contains only last device check-in, the atomically published current
-generation, the latest slot attempt and retry state, source freshness, OAuth
-state, AI quota state, and active operational incidents with fixed error codes
-and notification timestamps. A source fallback is reported as stale while
-retaining its last-success timestamp. Failed generation attempts show whether
-the one allowed retry is pending or has run, while the current generation
-continues to identify the previous complete published view set. See
-[Operational incidents and email](operational-incidents.md) for alert
-conditions, suppression, recovery, and deployment configuration.
-
-The status and configuration surfaces never return OAuth credentials, device
-tokens, raw provider payloads, household content, exception messages, or other
-content-bearing diagnostics. The protected Gmail review surface returns only
-validated extracted fields and lifecycle metadata; raw Gmail content,
-addresses, identifiers, prompts, and unvalidated output remain absent. Source
-and generation failure storage records only fixed codes; migration `0008`
-clears legacy diagnostic messages from both scheduled generation and
-source-failure records.
-
-Google client credentials, the OAuth token-encryption key, and other deployment
-secrets remain Wrangler secrets. OAuth refresh tokens remain encrypted in D1
-and are never returned by administration contracts.
-
-Calendar Feed URLs use the separate `CALENDAR_FEED_URL_ENCRYPTION_KEY` secret
-and authenticated `calendar-feed-url` encryption contract. Administration
-responses expose only the feed ID, hostname, 12-character stable fingerprint,
-privacy-safe labels, enabled state, and non-sensitive health timestamps/state.
-They never expose plaintext or encrypted URLs. Calendar Label is required and
-limited to 40 characters; Household Label is optional and limited to 20. Both
-trim and collapse whitespace and accept only letters, numbers, spaces,
-ampersand, apostrophe, hyphen, and period. Feed URLs must be direct HTTPS URLs
-without credentials, fragments, or non-standard ports. At most 20 feeds may be
-stored.
-
-New feeds remain disabled until the secure test succeeds. The initial request
-and each of at most three redirects are restricted to HTTPS on port 443,
-reject credentials and fragments, and require every resolved address to be
-public. Fetching has one 10-second deadline, a 2 MiB compressed-body limit, a
-10 MiB decompressed/parser-input limit, and bounded multi-feed concurrency.
-Feed requests send no authorization header or cookie; bearer access remains
-only in the encrypted URL. Refreshes send stored `ETag` and `Last-Modified`
-validators, and `304 Not Modified` retains the existing snapshot.
-
-Relabeling does not replace or decrypt a URL. Disabling preserves retained
-snapshots and health records for later use, while deletion explicitly removes
-the URL, snapshot, current health, and health history. Internal source loading
-selects enabled feeds only. Administration reports only Healthy, Stale,
-Unavailable, or Disabled plus safe timestamps; fetch URLs and response details
-are never returned.
-
-The browser interface has independent Weather, household-account calendar, and
-Gmail Sender-Domain Allowlist saves. Saving one section does not reset another.
-Unsaved section drafts trigger a warning before refresh, reconnect, disconnect,
-or navigation. Responses and browser banners use fixed safe status text only.
-All administration JSON request bodies are limited to 64 KiB; larger bodies
-receive `413`.
-
-Ordinary OAuth callback navigation redirects to `/admin` with a fixed,
-account-specific status code. An explicit `Accept: application/json` retains
-the existing JSON response contract. Provider codes and errors are never
-included in either response. The browser removes the status query after
-displaying its fixed banner.
+`wrangler.toml` defines the single production Worker. Configure the feed URL
+encryption secret separately and replace operational email placeholders with
+verified addresses. Apply every forward D1 migration, including migration
+`0016`, before deploying the cutover.

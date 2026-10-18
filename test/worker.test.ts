@@ -42,7 +42,7 @@ class TestDatabase {
         filename: string;
         objectKey: string;
         byteSize: number;
-        viewType?: "daily_brief" | "calendar" | "lunch" | "notices";
+        viewType?: "daily_brief" | "calendar" | "lunch";
       }
     | undefined;
   incompleteDailyGeneration:
@@ -66,14 +66,6 @@ class TestDatabase {
         objectKey: string;
         byteSize: number;
         viewType: "lunch";
-      }
-    | undefined;
-  noticesGeneration:
-    | {
-        filename: string;
-        objectKey: string;
-        byteSize: number;
-        viewType: "notices";
       }
     | undefined;
   readonly historicalGenerations = new Map<
@@ -142,8 +134,6 @@ class TestDatabase {
               ? this.calendarGeneration
               : requestedView === "lunch"
                 ? this.lunchGeneration
-                : requestedView === "notices"
-                  ? this.noticesGeneration
                 : this.publishedGeneration;
           const generation =
             requestedView === "daily_brief" &&
@@ -290,8 +280,7 @@ class ScheduledTestDatabase {
                 consecutive_failures: this.hasSourceIncident ? 2 : 0
               },
               { source: "calendar", consecutive_failures: 0 },
-              { source: "lunch", consecutive_failures: 0 },
-              { source: "gmail", consecutive_failures: 0 }
+              { source: "lunch", consecutive_failures: 0 }
             ]
           } as { results: T[] };
         }

@@ -28,8 +28,7 @@ npx vitest run \
   test/render-validation.test.ts \
   test/generation.test.ts \
   test/worker.test.ts \
-  test/device-acceptance.test.mjs \
-  test/gmail-privacy.test.ts
+  test/device-acceptance.test.mjs
 ```
 
 Then run the repository-standard full check:
