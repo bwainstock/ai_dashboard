@@ -81,7 +81,7 @@ function compactDateLabel(date: string, timezone: string): string {
 }
 
 function eventPattern(event: CalendarEvent): string {
-  const owner = event.ownerLabels.join("|");
+  const owner = (event.calendarLabels ?? event.ownerLabels).join("|");
   let total = 0;
   for (const character of owner) total += character.charCodeAt(0);
   return ["solid", "hatch", "dots"][total % 3];

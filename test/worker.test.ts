@@ -42,7 +42,7 @@ class TestDatabase {
         filename: string;
         objectKey: string;
         byteSize: number;
-        viewType?: "daily_brief" | "calendar" | "lunch" | "notices";
+        viewType?: "daily_brief" | "calendar" | "lunch";
       }
     | undefined;
   incompleteDailyGeneration:
@@ -66,14 +66,6 @@ class TestDatabase {
         objectKey: string;
         byteSize: number;
         viewType: "lunch";
-      }
-    | undefined;
-  noticesGeneration:
-    | {
-        filename: string;
-        objectKey: string;
-        byteSize: number;
-        viewType: "notices";
       }
     | undefined;
   readonly historicalGenerations = new Map<
@@ -142,8 +134,6 @@ class TestDatabase {
               ? this.calendarGeneration
               : requestedView === "lunch"
                 ? this.lunchGeneration
-                : requestedView === "notices"
-                  ? this.noticesGeneration
                 : this.publishedGeneration;
           const generation =
             requestedView === "daily_brief" &&
@@ -245,6 +235,7 @@ class TestBucket {
 
 class ScheduledTestDatabase {
   readonly publishedViewTypes: string[] = [];
+  calendarFeedGenerationQueries = 0;
 
   constructor(private readonly hasSourceIncident = false) {}
 
@@ -274,6 +265,13 @@ class ScheduledTestDatabase {
         return null;
       },
       all: async <T>() => {
+        if (
+          query.includes("FROM calendar_feeds AS feed") &&
+          query.includes("WHERE feed.enabled = 1")
+        ) {
+          this.calendarFeedGenerationQueries += 1;
+          return { results: [] as T[] };
+        }
         if (query.includes("FROM source_status")) {
           return {
             results: [
@@ -282,8 +280,7 @@ class ScheduledTestDatabase {
                 consecutive_failures: this.hasSourceIncident ? 2 : 0
               },
               { source: "calendar", consecutive_failures: 0 },
-              { source: "lunch", consecutive_failures: 0 },
-              { source: "gmail", consecutive_failures: 0 }
+              { source: "lunch", consecutive_failures: 0 }
             ]
           } as { results: T[] };
         }
@@ -471,6 +468,7 @@ describe("TRMNL BYOS device service", () => {
       "daily_brief",
       "calendar"
     ]);
+    expect(database.calendarFeedGenerationQueries).toBe(1);
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -537,6 +535,7 @@ describe("TRMNL BYOS device service", () => {
       status: "published"
     });
     expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
+    expect(database.calendarFeedGenerationQueries).toBe(1);
   });
 
   test("incident email failure does not mask a forced generation result", async () => {

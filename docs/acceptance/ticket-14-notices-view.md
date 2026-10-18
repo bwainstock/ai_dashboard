@@ -1,8 +1,9 @@
-# Ticket 14 — Notices View
+# Ticket #14 historical acceptance
 
-Notices View and Gmail processing are deferred and are not part of active
-scheduled generation or the device view cycle.
+Ticket #14 previously specified an email-derived Notices View. Ticket #59
+retired that capability, its routes, Worker, controls, tests, configuration,
+runtime, and persisted data. This file remains only as a pointer to the issue
+history; it is not a current product or acceptance contract.
 
-The privacy-isolated Gmail implementation remains in the repository, but it
-must not run as a prerequisite for weather-and-calendar publication or place
-Gmail-derived content on either active display.
+Current view acceptance is documented in
+`docs/acceptance/ticket-5-calendar-view.md`.

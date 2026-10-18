@@ -1,69 +1,61 @@
-# Google Calendar integration
+# Calendar Feed integration
 
-The Calendar source supports exactly two household connections, identified
-internally as `mom` and `dad`. Each connection requests only
-`calendar.readonly`; refresh tokens are AES-GCM encrypted with
-`CALENDAR_TOKEN_ENCRYPTION_KEY` before D1 storage. Google client credentials and
-the encryption key are Wrangler secrets.
+Calendar data comes only from administrator-configured Calendar Feeds. A feed
+is a direct HTTPS iCalendar URL whose bearer value is encrypted at rest with
+the dedicated `CALENDAR_FEED_URL_ENCRYPTION_KEY` contract. Administration
+responses expose only the feed ID, hostname, a short stable fingerprint,
+privacy-safe labels, enabled state, and health.
 
-Administrator endpoints are protected by the same administrator boundary as
-weather configuration:
+Up to 20 feeds may be stored. Calendar Label is required and Household Label is
+optional. A new or replacement URL must pass the secure test before it becomes
+enabled. Label-only edits do not fetch. Disabling retains data but excludes the
+feed from generation; deleting purges its encrypted URL, snapshot, and health
+history.
 
-- `GET /admin/calendar/oauth/start?account=mom|dad`
-- `GET /admin/calendar/oauth/callback`
-- `GET /admin/calendar/discovery?account=mom|dad`
-- `GET|PUT /admin/calendar-configuration`
+## Fetch contract
 
-Discovery follows all provider calendar-list pages, with a hard limit of 20
-pages per household account. Crossing the limit fails discovery without
-returning a partial list. The browser orders Selected Calendars first and then
-sorts case-insensitively by label; its filter is local. Discovery runs
-automatically after a successful OAuth return and is also available through an
-explicit refresh control. A newly connected account initially has no Selected
-Calendars.
+The initial request and every redirect must use HTTPS on port 443, contain no
+credentials or fragment, and resolve only to public addresses. At most three
+redirects are followed. Requests send no cookies or authorization headers and
+use a 10-second deadline, 2 MiB compressed limit, and 10 MiB decompressed/parser
+limit. Generation refreshes at most four feeds concurrently and sends stored
+`ETag` and `Last-Modified` validators.
 
-Configuration stores Selected Calendar provider IDs, Calendar Labels, and each
-Household Label. A Household Label is device-visible and has a 20-character
-limit. A Calendar Label is administrator-only and has a 40-character limit.
-Both accept Unicode letters and numbers, spaces, ampersand, apostrophe, hyphen,
-and period; whitespace is trimmed and collapsed. Symbols, emoji, control
-characters, URLs, and email-like text are rejected. Provider names are
-sanitized only as editable discovery prefills and are not persisted until an
-administrator selects and saves them.
+## Normalization contract
 
-Each household account may have at most 10 Selected Calendars. Newly selected
-provider IDs must appear in a fresh server-side discovery during save. An
-existing Selected Calendar missing from discovery remains visible as
-Unavailable and remains selected until explicitly removed. The same shared
-calendar may be selected under both accounts. Discovery or save failure leaves
-the persisted configuration unchanged. Configuration never returns or exposes
-refresh tokens.
+RFC 5545 `VCALENDAR` input supports `VEVENT`, all-day values, UTC, floating
+local time, embedded `VTIMEZONE`, `RRULE`, `RDATE`, `EXDATE`, and
+`RECURRENCE-ID` overrides or cancellations. Data is normalized into the
+configured dashboard timezone.
 
-Scheduled generation refreshes both selected account sources, normalizes the
-three-local-day window, and persists only the fields used by rendering:
-hashed occurrence identity, safe title, timing, all-day/tentative/private
-flags, household labels, and shortened location. Descriptions, attendees,
-conference data, organizer addresses, and email addresses are not copied into
-normalized snapshots. Daily Brief uses the first three normalized events and
-never renders location.
+Snapshots retain only summary, start/end, all-day state, shortened location,
+event status, UID/occurrence identity, Calendar Label, and Household Label.
+Private or confidential events become `Busy` without location. Descriptions,
+attendees, organizers, addresses, attachments, conference data, and provider
+extensions are discarded. Event-level cancellations are excluded.
 
-A complete household generation has one shared budget of 100 Calendar API
-event-list pages across both accounts and every Selected Calendar. Exceeding
-the budget fails the Calendar source with fixed, content-free failure handling;
-partial provider data is never published. Existing stale fallback and
-generation failure behavior remains in effect.
+A valid empty calendar replaces the prior snapshot. Structural failure rejects
+the refresh. An isolated malformed standalone event may be skipped with a safe
+reason code only when recurrence correctness is unaffected.
 
-Each scheduled publication renders a complete immutable view set. Calendar
-View groups at most twelve normalized events under Today and the following two
-local days, orders all-day events before timed events, uses compact 12-hour
-times, and reports overflow as `+N more`. Shortened locations are rendered only
-on Calendar View; private events remain `Busy` and never retain a location.
+Each successful fetch is a complete replacement snapshot. Event-level
+cancellations are excluded, while same-snapshot cancellation components remove
+the matching UID occurrence or recurring series. Cancellation tombstones are
+not retained across independent successful snapshots because replacement
+already removes events omitted by the new document.
 
-The production device explicitly requests both views from `/api/image`, pins
-both downloads to one generation, and stores the decoded pair in PSRAM.
-Scheduled refresh resets local selection to Daily Brief; Key 3 selects Calendar
-View locally without a request. Daily Brief and Calendar View have distinct
-immutable cache filenames (`daily-brief-<timestamp>.png` and
-`calendar-view-<timestamp>.png`) that remain stable until the next complete
-generation is published. `/api/display` and its persisted cursor remain
-rollback-only compatibility.
+## Merge, health, and publication
+
+Recurrence expands before rendering with a fixed work budget. Events are
+deduplicated by normalized UID plus occurrence identity. Overrides beat
+generated copies; a cancellation removes the occurrence; distinct labels merge
+in configured-feed order.
+
+Each feed is independently Healthy, Stale, Unavailable, or Disabled. A failed
+feed may use its last successful snapshot for at most 72 hours. After that it
+is omitted. If no enabled feed has usable data, both active views show
+`Calendar unavailable`.
+
+Feed refresh precedes every scheduled or forced generation. Daily Brief and
+Calendar View then apply their existing windows, limits, location rules,
+privacy minimization, immutable image writes, and atomic publication.
