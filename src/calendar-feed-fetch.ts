@@ -40,22 +40,8 @@ export type CalendarFeedFetchResult<T> =
   | { kind: "unchanged" };
 
 function safeUrl(value: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new CalendarFeedFetchError("unsafe_url");
-  }
-  if (
-    url.protocol !== "https:" ||
-    url.port !== "" ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.hash !== "" ||
-    !url.hostname
-  ) {
-    throw new CalendarFeedFetchError("unsafe_url");
-  }
+  const url = parseCalendarFeedUrl(value);
+  if (!url) throw new CalendarFeedFetchError("unsafe_url");
   return url;
 }
 
@@ -367,3 +353,4 @@ export async function fetchCalendarFeedsBounded<T, R>(
   );
   return results;
 }
+import { parseCalendarFeedUrl } from "./calendar-feed-url";

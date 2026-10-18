@@ -38,6 +38,12 @@ A valid empty calendar replaces the prior snapshot. Structural failure rejects
 the refresh. An isolated malformed standalone event may be skipped with a safe
 reason code only when recurrence correctness is unaffected.
 
+Each successful fetch is a complete replacement snapshot. Event-level
+cancellations are excluded, while same-snapshot cancellation components remove
+the matching UID occurrence or recurring series. Cancellation tombstones are
+not retained across independent successful snapshots because replacement
+already removes events omitted by the new document.
+
 ## Merge, health, and publication
 
 Recurrence expands before rendering with a fixed work budget. Events are

@@ -31,6 +31,7 @@ export interface NormalizedCalendarFeedEvent {
 export interface CalendarFeedNormalizationResult {
   events: NormalizedCalendarFeedEvent[];
   cancelledOccurrences?: Array<{ uid: string; occurrenceId: string }>;
+  cancelledEventUids?: string[];
   skippedEventCount: number;
   skipReasons: Array<{ reason: string; count: number }>;
 }
@@ -309,30 +310,50 @@ export function normalizeICalendarFeed(
     const uid = stringProperty(component, "uid");
     if (uid) uidCounts.set(uid, (uidCounts.get(uid) ?? 0) + 1);
   }
-  const cancelledOccurrences = components.flatMap((component) => {
+  const cancelledOccurrences: Array<{ uid: string; occurrenceId: string }> = [];
+  const cancelledEventUids: string[] = [];
+  for (const component of components) {
     if (
       stringProperty(component, "status")?.toLowerCase() !== "cancelled"
     ) {
-      return [];
+      continue;
     }
     const recurrenceId = component.getFirstPropertyValue("recurrence-id");
-    if (!recurrenceId) return [];
     const uid = stringProperty(component, "uid");
     try {
       assertKnownTimezones(component);
     } catch {
       throw new CalendarFeedNormalizationError("unsafe-malformed-event");
     }
-    if (!uid || !(recurrenceId instanceof ICAL.Time)) {
+    if (!uid) {
       throw new CalendarFeedNormalizationError("unsafe-malformed-event");
     }
-    return [
-      {
+    if (recurrenceId) {
+      if (!(recurrenceId instanceof ICAL.Time)) {
+        throw new CalendarFeedNormalizationError("unsafe-malformed-event");
+      }
+      cancelledOccurrences.push({
         uid,
         occurrenceId: normalizedTime(recurrenceId, options.timezone)
-      }
-    ];
-  });
+      });
+      continue;
+    }
+    if (
+      ["rrule", "rdate", "exdate"].some((name) => component.hasProperty(name))
+    ) {
+      cancelledEventUids.push(uid);
+      continue;
+    }
+    const start = component.getFirstPropertyValue("dtstart");
+    if (start instanceof ICAL.Time) {
+      cancelledOccurrences.push({
+        uid,
+        occurrenceId: normalizedTime(start, options.timezone)
+      });
+    } else {
+      cancelledEventUids.push(uid);
+    }
+  }
   const events: NormalizedCalendarFeedEvent[] = [];
   let skippedEventCount = 0;
   for (const component of components) {
@@ -357,6 +378,7 @@ export function normalizeICalendarFeed(
   return {
     events,
     ...(cancelledOccurrences.length ? { cancelledOccurrences } : {}),
+    ...(cancelledEventUids.length ? { cancelledEventUids } : {}),
     skippedEventCount,
     skipReasons: skippedEventCount
       ? [{ reason: "invalid-event", count: skippedEventCount }]
