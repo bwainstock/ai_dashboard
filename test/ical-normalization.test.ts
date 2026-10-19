@@ -257,6 +257,45 @@ describe("iCalendar feed normalization", () => {
     });
   });
 
+  test("prunes historical one-off events while retaining recurring and future events", () => {
+    const result = normalizeICalendarFeed(
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Example//Calendar//EN",
+        "BEGIN:VEVENT",
+        "UID:historical-one-off",
+        "DTSTART:20200101T180000Z",
+        "DTEND:20200101T190000Z",
+        "SUMMARY:Historical",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:historical-recurring",
+        "DTSTART:20200101T180000Z",
+        "DTEND:20200101T190000Z",
+        "RRULE:FREQ=YEARLY",
+        "SUMMARY:Recurring",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:future-one-off",
+        "DTSTART:20270101T180000Z",
+        "DTEND:20270101T190000Z",
+        "SUMMARY:Future",
+        "END:VEVENT",
+        "END:VCALENDAR"
+      ].join("\r\n"),
+      {
+        ...options,
+        minimumNonRecurringStart: new Date("2026-10-17T00:00:00.000Z")
+      }
+    );
+
+    expect(result.events.map((event) => event.uid)).toEqual([
+      "historical-recurring",
+      "future-one-off"
+    ]);
+  });
+
   test.each([
     ["not a calendar", "not iCalendar"],
     [

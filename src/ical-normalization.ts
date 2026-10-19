@@ -1,9 +1,13 @@
 import ICAL from "ical.js";
 
+const zonedDateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const timezoneOffsetFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export interface CalendarFeedNormalizationOptions {
   timezone: string;
   calendarLabel: string;
   householdLabel: string | null;
+  minimumNonRecurringStart?: Date;
 }
 
 export interface NormalizedCalendarFeedEvent {
@@ -77,8 +81,9 @@ function dateValue(time: ICAL.Time): string {
 }
 
 function zonedDateTime(value: Date, timezone: string): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
+  let formatter = zonedDateTimeFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
       timeZone: timezone,
       year: "numeric",
       month: "2-digit",
@@ -88,9 +93,11 @@ function zonedDateTime(value: Date, timezone: string): string {
       second: "2-digit",
       hourCycle: "h23",
       timeZoneName: "longOffset"
-    })
-      .formatToParts(value)
-      .map((part) => [part.type, part.value])
+    });
+    zonedDateTimeFormatters.set(timezone, formatter);
+  }
+  const parts = Object.fromEntries(
+    formatter.formatToParts(value).map((part) => [part.type, part.value])
   );
   const offset =
     parts.timeZoneName === "GMT" ? "+00:00" : parts.timeZoneName.slice(3);
@@ -98,10 +105,15 @@ function zonedDateTime(value: Date, timezone: string): string {
 }
 
 function timezoneOffsetMilliseconds(value: Date, timezone: string): number {
-  const name = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    timeZoneName: "longOffset"
-  })
+  let formatter = timezoneOffsetFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "longOffset"
+    });
+    timezoneOffsetFormatters.set(timezone, formatter);
+  }
+  const name = formatter
     .formatToParts(value)
     .find((part) => part.type === "timeZoneName")?.value;
   if (!name || name === "GMT") return 0;
@@ -285,6 +297,26 @@ function safeToSkip(component: ICAL.Component, uidCounts: Map<string, number>) {
   );
 }
 
+function shouldNormalizeComponent(
+  component: ICAL.Component,
+  minimumNonRecurringStart: Date | undefined
+): boolean {
+  if (
+    !minimumNonRecurringStart ||
+    ["rrule", "rdate", "exdate", "recurrence-id"].some((name) =>
+      component.hasProperty(name)
+    )
+  ) {
+    return true;
+  }
+  const start = component.getFirstPropertyValue("dtstart");
+  if (!(start instanceof ICAL.Time)) return true;
+  const startMilliseconds = start.isDate
+    ? Date.UTC(start.year, start.month - 1, start.day)
+    : start.toJSDate().getTime();
+  return startMilliseconds >= minimumNonRecurringStart.getTime();
+}
+
 export function normalizeICalendarFeed(
   document: string,
   options: CalendarFeedNormalizationOptions
@@ -315,6 +347,14 @@ export function normalizeICalendarFeed(
   for (const component of components) {
     if (
       stringProperty(component, "status")?.toLowerCase() !== "cancelled"
+    ) {
+      continue;
+    }
+    if (
+      !shouldNormalizeComponent(
+        component,
+        options.minimumNonRecurringStart
+      )
     ) {
       continue;
     }
@@ -359,6 +399,14 @@ export function normalizeICalendarFeed(
   for (const component of components) {
     if (
       stringProperty(component, "status")?.toLowerCase() === "cancelled"
+    ) {
+      continue;
+    }
+    if (
+      !shouldNormalizeComponent(
+        component,
+        options.minimumNonRecurringStart
+      )
     ) {
       continue;
     }
