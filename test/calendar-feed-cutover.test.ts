@@ -48,6 +48,15 @@ describe("Calendar Feed production cutover", () => {
     expect(wrangler).not.toMatch(
       /GOOGLE_CLIENT|CALENDAR_TOKEN_ENCRYPTION_KEY|NOTICE_GRACE_DAYS/
     );
+    expect(wrangler).not.toContain("example.com");
+    expect(wrangler).toContain(
+      'ADMIN_ORIGIN = "https://dashboard-admin.b4rry.net"'
+    );
+    expect(wrangler).toContain(
+      'OPERATIONAL_EMAIL_FROM = "dashboard@b4rry.net"'
+    );
+    expect(wrangler).toContain('OPERATIONAL_EMAIL_TO = "tigren@gmail.com"');
+    expect(wrangler).toContain('destination_address = "tigren@gmail.com"');
   });
 
   test("purges retired credentials and data with a forward migration", async () => {
