@@ -152,7 +152,8 @@ async function resolveCalendarFeedHostname(
         `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`,
         {
           headers: { accept: "application/dns-json" },
-          redirect: "error"
+          // Workers does not support redirect: "error"; manual preserves no-follow.
+          redirect: "manual"
         }
       );
       if (!response.ok) throw new Error("DNS resolution failed");
