@@ -261,4 +261,51 @@ describe("Calendar Feed management", () => {
       "manual"
     ]);
   });
+
+  test("invokes the default fetch with the Worker global receiver", async () => {
+    const workerFetch = vi.fn(async function (
+      this: typeof globalThis,
+      input: string | URL | Request
+    ) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      const url = String(input);
+      if (url.startsWith("https://cloudflare-dns.com/")) {
+        return Response.json({
+          Answer: [{ type: 1, data: "142.250.191.142" }]
+        });
+      }
+      return new Response(
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "PRODID:-//Example//Calendar//EN",
+          "END:VCALENDAR"
+        ].join("\r\n")
+      );
+    });
+    vi.stubGlobal("fetch", workerFetch);
+    const database = new ActivationDatabase();
+    const response = await handleCalendarFeedAdministration(
+      new Request("https://admin.example.com/admin/calendar-feeds/feed-1/test", {
+        method: "POST",
+        body: JSON.stringify({
+          url: "https://calendar.example.com/replacement.ics"
+        })
+      }),
+      {
+        DB: database as unknown as D1Database,
+        CALENDAR_FEED_URL_ENCRYPTION_KEY: "feed-key"
+      },
+      "administrator"
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      workerFetch.mock.contexts.every(
+        (context) => context === undefined || context === globalThis
+      )
+    ).toBe(true);
+  });
 });

@@ -15,6 +15,9 @@ const FEED_URL_CONTRACT = "calendar-feed-url";
 const FEED_URL_AAD = new TextEncoder().encode(`${FEED_URL_CONTRACT}:v1`);
 const MAXIMUM_FEEDS = 20;
 const MAXIMUM_STALE_AGE_MS = 72 * 60 * 60 * 1000;
+const NON_RECURRING_HISTORY_BUFFER_MS = 2 * 24 * 60 * 60 * 1000;
+const DEFAULT_CALENDAR_FEED_FETCHER: typeof fetch = (input, init) =>
+  fetch(input, init);
 
 export interface CalendarFeedEnvironment {
   DB: D1Database;
@@ -181,13 +184,17 @@ async function dashboardTimezone(db: D1Database): Promise<string> {
 
 function productionFeedParser(
   feed: Pick<CalendarFeedRow, "calendar_label" | "household_label">,
-  timezone: string
+  timezone: string,
+  now: Date
 ): (input: string) => Promise<CalendarFeedNormalizationResult> {
   return async (input) =>
     normalizeICalendarFeed(input, {
       timezone,
       calendarLabel: feed.calendar_label,
-      householdLabel: feed.household_label
+      householdLabel: feed.household_label,
+      minimumNonRecurringStart: new Date(
+        now.getTime() - NON_RECURRING_HISTORY_BUFFER_MS
+      )
     });
 }
 
@@ -477,14 +484,15 @@ async function testAndActivateFeed(
       existing.encrypted_url,
       env.CALENDAR_FEED_URL_ENCRYPTION_KEY
     ));
+  const now = env.CALENDAR_FEED_NOW?.() ?? new Date();
   let result;
   try {
     const timezone = await dashboardTimezone(env.DB);
     result = await fetchCalendarFeed(url, {
-      fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
+      fetcher: env.CALENDAR_FEED_FETCHER ?? DEFAULT_CALENDAR_FEED_FETCHER,
       resolveHostname:
         env.CALENDAR_FEED_RESOLVE_HOSTNAME ?? resolveCalendarFeedHostname,
-      parse: productionFeedParser(existing, timezone)
+      parse: productionFeedParser(existing, timezone, now)
     });
   } catch (error) {
     const code =
@@ -497,7 +505,7 @@ async function testAndActivateFeed(
       422
     );
   }
-  const now = (env.CALENDAR_FEED_NOW?.() ?? new Date()).toISOString();
+  const nowIso = now.toISOString();
   const statements: D1PreparedStatement[] = [];
   if (replacement) {
     const identity = await urlIdentity(replacement.url);
@@ -539,7 +547,7 @@ async function testAndActivateFeed(
          last_modified = excluded.last_modified`
     ).bind(
       id,
-      now,
+      nowIso,
       JSON.stringify(result.snapshot),
       result.etag,
       result.lastModified
@@ -554,7 +562,7 @@ async function testAndActivateFeed(
          last_success_at = excluded.last_success_at,
          failure_code = NULL,
          updated_at = CURRENT_TIMESTAMP`
-    ).bind(id, now, now),
+    ).bind(id, nowIso, nowIso),
     env.DB.prepare(
       `INSERT INTO calendar_feed_health_history (feed_id, state, failure_code)
        VALUES (?, 'healthy', NULL)`
@@ -670,21 +678,26 @@ export async function refreshCalendarFeed(
       etag: string | null;
       last_modified: string | null;
     }>();
+  const now = env.CALENDAR_FEED_NOW?.() ?? new Date();
   const result = await fetchCalendarFeed(
     await decryptCalendarFeedUrl(
       feed.encrypted_url,
       env.CALENDAR_FEED_URL_ENCRYPTION_KEY
     ),
     {
-      fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
+      fetcher: env.CALENDAR_FEED_FETCHER ?? DEFAULT_CALENDAR_FEED_FETCHER,
       resolveHostname:
         env.CALENDAR_FEED_RESOLVE_HOSTNAME ?? resolveCalendarFeedHostname,
-      parse: productionFeedParser(feed, await dashboardTimezone(env.DB)),
+      parse: productionFeedParser(
+        feed,
+        await dashboardTimezone(env.DB),
+        now
+      ),
       etag: snapshot?.etag,
       lastModified: snapshot?.last_modified
     }
   );
-  const now = (env.CALENDAR_FEED_NOW?.() ?? new Date()).toISOString();
+  const nowIso = now.toISOString();
   const statements: D1PreparedStatement[] = [];
   if (result.kind === "updated") {
     statements.push(
@@ -699,7 +712,7 @@ export async function refreshCalendarFeed(
            last_modified = excluded.last_modified`
       ).bind(
         id,
-        now,
+        nowIso,
         JSON.stringify(result.snapshot),
         result.etag,
         result.lastModified
@@ -717,7 +730,7 @@ export async function refreshCalendarFeed(
          last_success_at = excluded.last_success_at,
          failure_code = NULL,
          updated_at = CURRENT_TIMESTAMP`
-    ).bind(id, now, now),
+    ).bind(id, nowIso, nowIso),
     env.DB.prepare(
       `INSERT INTO calendar_feed_health_history (feed_id, state, failure_code)
        VALUES (?, 'healthy', NULL)`
@@ -859,7 +872,8 @@ export async function refreshCalendarFeedsForGeneration(
             env.CALENDAR_FEED_URL_ENCRYPTION_KEY!
           ),
           {
-            fetcher: env.CALENDAR_FEED_FETCHER ?? fetch,
+            fetcher:
+              env.CALENDAR_FEED_FETCHER ?? DEFAULT_CALENDAR_FEED_FETCHER,
             resolveHostname:
               env.CALENDAR_FEED_RESOLVE_HOSTNAME ??
               resolveCalendarFeedHostname,
@@ -867,7 +881,10 @@ export async function refreshCalendarFeedsForGeneration(
               normalizeICalendarFeed(input, {
                 timezone,
                 calendarLabel: feed.calendar_label,
-                householdLabel: feed.household_label
+                householdLabel: feed.household_label,
+                minimumNonRecurringStart: new Date(
+                  now.getTime() - NON_RECURRING_HISTORY_BUFFER_MS
+                )
               }),
             etag: feed.etag,
             lastModified: feed.last_modified
