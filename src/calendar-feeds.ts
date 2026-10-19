@@ -51,6 +51,9 @@ interface CalendarFeedRow {
   health_state: "healthy" | "stale" | "unavailable" | null;
   last_attempt_at: string | null;
   last_success_at: string | null;
+  snapshot_fetched_at: string | null;
+  snapshot_event_count: number | null;
+  snapshot_skipped_event_count: number | null;
   updated_at: string;
 }
 
@@ -311,6 +314,9 @@ function publicFeed(row: CalendarFeedRow) {
       : "Disabled",
     lastAttemptAt: row.last_attempt_at,
     lastSuccessAt: row.last_success_at,
+    snapshotFetchedAt: row.snapshot_fetched_at,
+    eventCount: row.snapshot_event_count,
+    skippedEventCount: row.snapshot_skipped_event_count,
     updatedAt: row.updated_at
   };
 }
@@ -321,9 +327,19 @@ async function feedRows(db: D1Database, id?: string) {
     `SELECT feed.id, feed.encrypted_url, feed.hostname, feed.url_fingerprint,
             feed.calendar_label, feed.household_label, feed.enabled,
             health.state AS health_state, health.last_attempt_at,
-            health.last_success_at, feed.updated_at
+            health.last_success_at, snapshot.fetched_at AS snapshot_fetched_at,
+            CASE WHEN snapshot.events_json IS NULL THEN NULL
+                 ELSE json_array_length(snapshot.events_json, '$.events')
+            END AS snapshot_event_count,
+            CASE WHEN snapshot.events_json IS NULL THEN NULL
+                 ELSE CAST(json_extract(
+                   snapshot.events_json, '$.skippedEventCount'
+                 ) AS INTEGER)
+            END AS snapshot_skipped_event_count,
+            feed.updated_at
      FROM calendar_feeds AS feed
      LEFT JOIN calendar_feed_health AS health ON health.feed_id = feed.id
+     LEFT JOIN calendar_feed_snapshots AS snapshot ON snapshot.feed_id = feed.id
      ${where}
      ORDER BY feed.created_at, feed.id`
   );

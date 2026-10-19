@@ -247,6 +247,11 @@ class ScheduledTestDatabase {
         return statement;
       },
       first: async <T>() => {
+        if (query.includes("FROM administration_users")) {
+          return (parameters[0] === "admin@example.com"
+            ? { role: "administrator" }
+            : null) as T | null;
+        }
         if (query.includes("FROM dashboard_configuration")) {
           return {
             latitude: 37.3382,
@@ -536,6 +541,40 @@ describe("TRMNL BYOS device service", () => {
     });
     expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
     expect(database.calendarFeedGenerationQueries).toBe(1);
+  });
+
+  test("an Access-authenticated administrator can force generation from the admin host", async () => {
+    vi.stubGlobal("fetch", vi.fn(scheduledFetch));
+    const database = new ScheduledTestDatabase();
+    launchBrowser.mockResolvedValue({
+      newPage: vi.fn(async () => ({
+        setViewport: vi.fn(),
+        setContent: vi.fn(),
+        evaluate: vi.fn(async () => validRenderInspection()),
+        screenshot: vi.fn(async () => VALID_FOUR_GRAY_PNG)
+      })),
+      close: vi.fn()
+    });
+
+    const response = await worker.fetch(
+      new Request(
+        "https://dashboard-admin.example.com/admin/generations",
+        {
+          method: "POST",
+          headers: {
+            "Cf-Access-Authenticated-User-Email": "admin@example.com",
+            "Cf-Access-Jwt-Assertion": "validated-by-cloudflare-access"
+          }
+        }
+      ),
+      scheduledEnv(database)
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json<{ status: string }>()).toMatchObject({
+      status: "published"
+    });
+    expect(database.publishedViewTypes).toEqual(["daily_brief", "calendar"]);
   });
 
   test("incident email failure does not mask a forced generation result", async () => {

@@ -22,6 +22,9 @@ class ActivationDatabase {
     health_state: null,
     last_attempt_at: null,
     last_success_at: null,
+    snapshot_fetched_at: "2026-10-18T11:55:00.000Z",
+    snapshot_event_count: 12,
+    snapshot_skipped_event_count: 1,
     updated_at: "2026-10-18T12:00:00.000Z"
   };
 
@@ -61,6 +64,27 @@ afterEach(() => {
 });
 
 describe("Calendar Feed management", () => {
+  test("returns privacy-safe snapshot ingestion metadata", async () => {
+    const response = await handleCalendarFeedAdministration(
+      new Request("https://admin.example.com/admin/calendar-feeds"),
+      {
+        DB: new ActivationDatabase() as unknown as D1Database
+      },
+      "reviewer"
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      feeds: [
+        {
+          snapshotFetchedAt: "2026-10-18T11:55:00.000Z",
+          eventCount: 12,
+          skippedEventCount: 1
+        }
+      ]
+    });
+  });
+
   test("accepts a direct HTTPS iCalendar URL and normalizes privacy-safe labels", () => {
     expect(
       normalizeCalendarFeedInput({
