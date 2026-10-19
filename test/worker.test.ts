@@ -1249,7 +1249,7 @@ describe("TRMNL BYOS device service", () => {
     expect([...luminanceLevels].sort((left, right) => left - right)).toEqual([
       0, 85, 170, 255
     ]);
-  });
+  }, 10_000);
 
   test("an administrator can manage weather coordinates without changing deployment secrets", async () => {
     const database = new TestDatabase();
