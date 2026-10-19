@@ -29,6 +29,8 @@ describe("browser administration", () => {
     expect(script).toContain("ingested events · ");
     expect(page).toContain("Generate dashboard now");
     expect(script).toContain('fetch("/admin/generations",{method:"POST"})');
-    expect(script).toContain("device will fetch within one minute");
+    expect(script).toContain(
+      "device will fetch at the next scheduled refresh"
+    );
   });
 });
