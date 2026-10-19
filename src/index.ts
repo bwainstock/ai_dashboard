@@ -831,6 +831,7 @@ export default {
       if (
         url.pathname === "/admin" ||
         url.pathname === "/admin/app.js" ||
+        url.pathname === "/admin/app.css" ||
         url.pathname === "/admin/status" ||
         url.pathname === "/admin/calendar-feeds" ||
         url.pathname.startsWith("/admin/calendar-feeds/")

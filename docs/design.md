@@ -73,3 +73,8 @@ encrypted with the dedicated feed key and never returned.
 The status surface contains device check-in, generation attempts, source
 freshness, redacted feed health, and fixed-code incidents. Source or rendering
 failures never store content-bearing diagnostics.
+
+The responsive administration client presents these controls as a single-page
+interface. While visible, it polls the redacted status and feed endpoints so
+generation retries and other asynchronous state changes reconcile without a
+manual reload; polling pauses when the page is backgrounded.
