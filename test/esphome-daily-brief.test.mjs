@@ -180,6 +180,15 @@ test("local scheduling refreshes after each server generation", async () => {
   assert.match(config, /id:\s*scheduled_image_refresh/);
 });
 
+test("minute metadata checks discover administrator-forced generations", async () => {
+  const config = await readFile(configUrl, "utf8");
+
+  assert.match(
+    config,
+    /interval:\s*\n\s+- interval:\s*1min[\s\S]*startup_delay:\s*1min[\s\S]*script\.execute:\s*request_view_set_if_ready/,
+  );
+});
+
 test("Key 1 maintenance mode keeps the device available for serial logs and OTA", async () => {
   const config = await readFile(configUrl, "utf8");
 

@@ -797,7 +797,8 @@ export default {
     }
     if (
       request.method === "POST" &&
-      url.pathname === "/admin/generations"
+      url.pathname === "/admin/generations" &&
+      !isAdministrationHost(request, env)
     ) {
       return forceGeneration(request, env);
     }
@@ -815,6 +816,17 @@ export default {
       if (identity instanceof Response) return identity;
       if (await administrationBodyTooLarge(request)) {
         return json({ error: "Administration request is too large" }, 413);
+      }
+      if (
+        request.method === "POST" &&
+        url.pathname === "/admin/generations"
+      ) {
+        if (identity.role !== "administrator") {
+          return json({ error: "Administrator role required" }, 403);
+        }
+        const headers = new Headers(request.headers);
+        headers.set("X-Administration-Role", identity.role);
+        return forceGeneration(new Request(request, { headers }), env);
       }
       if (
         url.pathname === "/admin" ||

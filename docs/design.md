@@ -35,7 +35,8 @@ The device authenticates `GET /api/image` with `ID` and `Access-Token`, selects
 `daily_brief` or `calendar` through `X-Dashboard-View`, and pins both downloads
 to one `X-Dashboard-Generation`. It stages and decodes both four-gray images
 before replacing the active PSRAM slot. Failure leaves the previous complete
-pair active.
+pair active. While awake, it checks metadata once per minute so an
+administrator-forced generation reaches the display without a reboot.
 
 Every due generation:
 
