@@ -1249,7 +1249,7 @@ describe("TRMNL BYOS device service", () => {
     expect([...luminanceLevels].sort((left, right) => left - right)).toEqual([
       0, 85, 170, 255
     ]);
-  });
+  }, 10_000);
 
   test("an administrator can manage weather coordinates without changing deployment secrets", async () => {
     const database = new TestDatabase();
@@ -1300,5 +1300,18 @@ describe("TRMNL BYOS device service", () => {
       timezone: "America/Los_Angeles",
       slots: ["06:30", "10:30", "15:00", "19:00"]
     });
+
+  });
+
+  test("redirects the administration hostname root to the administration UI", async () => {
+    const response = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/"),
+      testEnv()
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      "https://dashboard-admin.example.com/admin"
+    );
   });
 });

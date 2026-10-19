@@ -209,6 +209,25 @@ describe("safe Calendar Feed fetching", () => {
     ).rejects.toMatchObject({ code: "decompressed_too_large" });
   });
 
+  test("accepts a response transparently decompressed by the fetch runtime", async () => {
+    const calendar =
+      "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nEND:VCALENDAR\r\n";
+
+    await expect(
+      fetchCalendarFeed("https://calendar.example.com/feed.ics", {
+        fetcher: async () =>
+          new Response(calendar, {
+            headers: { "content-encoding": "gzip" }
+          }),
+        resolveHostname: async () => ["93.184.216.34"],
+        parse: async (input) => {
+          expect(input).toBe(calendar);
+          return [];
+        }
+      })
+    ).resolves.toMatchObject({ kind: "updated", snapshot: [] });
+  });
+
   test("aborts the complete redirect chain after ten seconds", async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn(
