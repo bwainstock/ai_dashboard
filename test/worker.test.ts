@@ -1300,5 +1300,18 @@ describe("TRMNL BYOS device service", () => {
       timezone: "America/Los_Angeles",
       slots: ["06:30", "10:30", "15:00", "19:00"]
     });
+
+  });
+
+  test("redirects the administration hostname root to the administration UI", async () => {
+    const response = await worker.fetch(
+      new Request("https://dashboard-admin.example.com/"),
+      testEnv()
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      "https://dashboard-admin.example.com/admin"
+    );
   });
 });

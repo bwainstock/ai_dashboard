@@ -789,6 +789,13 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (
+      request.method === "GET" &&
+      url.pathname === "/" &&
+      isAdministrationHost(request, env)
+    ) {
+      return Response.redirect(new URL("/admin", url), 302);
+    }
+    if (
       request.method === "POST" &&
       url.pathname === "/admin/generations"
     ) {
