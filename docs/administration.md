@@ -7,7 +7,8 @@ mutate weather and Calendar Feeds; reviewers have read-only access.
 
 ## Routes
 
-- `GET /admin` and `GET /admin/app.js`: browser interface.
+- `GET /admin`, `GET /admin/app.js`, and `GET /admin/app.css`: responsive
+  single-page browser interface.
 - `GET|PUT /admin/weather-configuration`: weather and generation slots; `PUT`
   is administrator-only.
 - `GET /admin/calendar-feeds`: redacted metadata for either role.
@@ -38,6 +39,13 @@ The browser reports a safe, actionable reason for test failures such as DNS,
 HTTP, timeout, response-size, compression, or invalid-calendar errors.
 Label-only edits do not fetch. Disable retains data; delete removes URL,
 snapshot, and health history.
+
+The browser interface uses hash-based navigation so the overview, Calendar
+Feeds, and settings remain available without page reloads. It polls redacted
+operational status and feed metadata every eight seconds while visible,
+refreshes immediately after mutations, pauses while backgrounded, and resumes
+with an immediate refresh. Feed polling does not replace a form while it has
+focus, so in-progress edits are preserved.
 
 Administrators can force generation from the browser after changing a feed.
 The generated views remain published until the production ESPHome client
