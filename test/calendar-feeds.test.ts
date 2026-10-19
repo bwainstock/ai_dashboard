@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   decryptCalendarFeedUrl,
   encryptCalendarFeedUrl,
@@ -55,6 +55,10 @@ class ActivationDatabase {
     return Promise.all(statements.map((statement) => statement.run()));
   }
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("Calendar Feed management", () => {
   test("accepts a direct HTTPS iCalendar URL and normalizes privacy-safe labels", () => {
@@ -209,6 +213,52 @@ describe("Calendar Feed management", () => {
     expect(response.status).toBe(200);
     expect(database.snapshots.map((snapshot) => JSON.parse(snapshot))).toEqual([
       { events: [], skippedEventCount: 0, skipReasons: [] }
+    ]);
+  });
+
+  test("uses Cloudflare-compatible redirect handling for DNS resolution", async () => {
+    const dnsFetch = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.redirect === "error") {
+          throw new TypeError(
+            'Invalid redirect value, must be one of "follow" or "manual"'
+          );
+        }
+        return Response.json({
+          Answer: [{ type: 1, data: "142.250.191.142" }]
+        });
+      }
+    );
+    vi.stubGlobal("fetch", dnsFetch);
+    const database = new ActivationDatabase();
+    const response = await handleCalendarFeedAdministration(
+      new Request("https://admin.example.com/admin/calendar-feeds/feed-1/test", {
+        method: "POST",
+        body: JSON.stringify({
+          url: "https://calendar.example.com/replacement.ics"
+        })
+      }),
+      {
+        DB: database as unknown as D1Database,
+        CALENDAR_FEED_URL_ENCRYPTION_KEY: "feed-key",
+        CALENDAR_FEED_FETCHER: async () =>
+          new Response(
+            [
+              "BEGIN:VCALENDAR",
+              "VERSION:2.0",
+              "PRODID:-//Example//Calendar//EN",
+              "END:VCALENDAR"
+            ].join("\r\n")
+          )
+      },
+      "administrator"
+    );
+
+    expect(response.status).toBe(200);
+    expect(dnsFetch).toHaveBeenCalledTimes(2);
+    expect(dnsFetch.mock.calls.map((call) => call[1]?.redirect)).toEqual([
+      "manual",
+      "manual"
     ]);
   });
 });
