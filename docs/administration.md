@@ -40,8 +40,8 @@ Label-only edits do not fetch. Disable retains data; delete removes URL,
 snapshot, and health history.
 
 Administrators can force generation from the browser after changing a feed.
-The production ESPHome client checks image metadata once per minute and stages
-both views only when the published generation changes.
+The generated views remain published until the production ESPHome client
+fetches them at its next scheduled refresh or after a reconnect.
 
 The current deployment has no provider-account authorization, provider
 discovery, email ingestion/review controls, or email-derived view routes.

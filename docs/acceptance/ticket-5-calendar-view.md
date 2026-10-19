@@ -27,8 +27,8 @@ Automated coverage verifies:
   rendering. A failed feed contributes only its own last successful snapshot
   for at most 72 hours; older snapshots and disabled feeds are omitted.
 - The administration page exposes privacy-safe snapshot counts and can force a
-  two-view generation. The always-awake device discovers a forced generation
-  through minute metadata checks and stages the complete pair atomically.
+  two-view generation. The device fetches that publication only at its next
+  designed refresh or reconnect and stages the complete pair atomically.
 - If no enabled Calendar Feed has a usable snapshot, Daily Brief and Calendar
   View both show `Calendar unavailable` while the complete two-view generation
   still publishes atomically.
