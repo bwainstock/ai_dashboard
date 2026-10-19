@@ -222,32 +222,52 @@ async function responseText(response: Response): Promise<string> {
   ) {
     throw new CalendarFeedFetchError("compressed_too_large");
   }
-  const compressed = await readLimited(
-    response.body,
-    MAXIMUM_COMPRESSED_BYTES,
-    "compressed_too_large"
-  );
   const encoding = response.headers.get("content-encoding")?.toLowerCase();
-  let decoded = compressed;
-  if (encoding && encoding !== "identity") {
-    if (encoding !== "gzip" && encoding !== "deflate") {
-      throw new CalendarFeedFetchError("unsupported_encoding");
-    }
-    try {
-      const body = compressed.buffer.slice(
-        compressed.byteOffset,
-        compressed.byteOffset + compressed.byteLength
-      ) as ArrayBuffer;
-      decoded = await readLimited(
-        new Response(body).body!.pipeThrough(
-          new DecompressionStream(encoding)
-        ),
-        MAXIMUM_DECOMPRESSED_BYTES,
-        "decompressed_too_large"
-      );
-    } catch (error) {
-      if (error instanceof CalendarFeedFetchError) throw error;
-      throw new CalendarFeedFetchError("invalid_response");
+  if (
+    encoding &&
+    encoding !== "identity" &&
+    encoding !== "gzip" &&
+    encoding !== "deflate"
+  ) {
+    throw new CalendarFeedFetchError("unsupported_encoding");
+  }
+  const compression =
+    encoding === "gzip" || encoding === "deflate" ? encoding : null;
+  const body = await readLimited(
+    response.body,
+    compression ? MAXIMUM_DECOMPRESSED_BYTES : MAXIMUM_COMPRESSED_BYTES,
+    compression
+      ? "decompressed_too_large"
+      : "compressed_too_large"
+  );
+  let decoded = body;
+  if (compression) {
+    const isEncoded =
+      compression === "gzip"
+        ? body[0] === 0x1f && body[1] === 0x8b
+        : body.length >= 2 &&
+          (body[0] & 0x0f) === 8 &&
+          ((body[0] << 8) + body[1]) % 31 === 0;
+    if (isEncoded) {
+      if (body.byteLength > MAXIMUM_COMPRESSED_BYTES) {
+        throw new CalendarFeedFetchError("compressed_too_large");
+      }
+      try {
+        const encoded = body.buffer.slice(
+          body.byteOffset,
+          body.byteOffset + body.byteLength
+        ) as ArrayBuffer;
+        decoded = await readLimited(
+          new Response(encoded).body!.pipeThrough(
+            new DecompressionStream(compression)
+          ),
+          MAXIMUM_DECOMPRESSED_BYTES,
+          "decompressed_too_large"
+        );
+      } catch (error) {
+        if (error instanceof CalendarFeedFetchError) throw error;
+        throw new CalendarFeedFetchError("invalid_response");
+      }
     }
   }
   if (decoded.byteLength > MAXIMUM_DECOMPRESSED_BYTES) {

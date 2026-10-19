@@ -32,6 +32,8 @@ encrypted URLs are never returned.
 The secure test applies the same initial-request and redirect SSRF validation,
 timeouts, response-size limits, and parser limits used by generation. A failed
 replacement preserves the working URL, snapshot, enabled state, and health.
+The browser reports a safe, actionable reason for test failures such as DNS,
+HTTP, timeout, response-size, compression, or invalid-calendar errors.
 Label-only edits do not fetch. Disable retains data; delete removes URL,
 snapshot, and health history.
 
